@@ -1,0 +1,27 @@
+{
+  "name": "@hasna/microservice-inventory",
+  "version": "0.0.1",
+  "description": "Inventory management microservice with SQLite — manage products, stock movements, and locations",
+  "type": "module",
+  "bin": {
+    "microservice-inventory": "./src/cli/index.ts",
+    "microservice-inventory-mcp": "./src/mcp/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run ./src/cli/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "commander": "^12.1.0",
+    "zod": "^3.24.0"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  }
+}
