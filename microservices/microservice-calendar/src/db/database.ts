@@ -1,0 +1,82 @@
+/**
+ * Database connection for microservice-calendar
+ */
+
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { MIGRATIONS } from "./migrations.js";
+
+let _db: Database | null = null;
+
+function getDbPath(): string {
+  if (process.env["MICROSERVICES_DIR"]) {
+    return join(process.env["MICROSERVICES_DIR"], "microservice-calendar", "data.db");
+  }
+
+  let dir = resolve(process.cwd());
+  while (true) {
+    const msDir = join(dir, ".microservices");
+    if (existsSync(msDir)) return join(msDir, "microservice-calendar", "data.db");
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  const home = process.env["HOME"] || process.env["USERPROFILE"] || "~";
+  return join(home, ".microservices", "microservice-calendar", "data.db");
+}
+
+export function getDatabase(): Database {
+  if (_db) return _db;
+
+  const dbPath = getDbPath();
+  const dataDir = dirname(dbPath);
+  if (!existsSync(dataDir)) {
+    mkdirSync(dataDir, { recursive: true });
+  }
+
+  _db = new Database(dbPath);
+  _db.exec("PRAGMA journal_mode = WAL");
+  _db.exec("PRAGMA foreign_keys = ON");
+
+  _db.exec(`
+    CREATE TABLE IF NOT EXISTS _migrations (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  const applied = _db
+    .query("SELECT id FROM _migrations ORDER BY id")
+    .all() as { id: number }[];
+  const appliedIds = new Set(applied.map((r) => r.id));
+
+  for (const migration of MIGRATIONS) {
+    if (appliedIds.has(migration.id)) continue;
+    _db.exec("BEGIN");
+    try {
+      _db.exec(migration.sql);
+      _db.prepare("INSERT INTO _migrations (id, name) VALUES (?, ?)").run(
+        migration.id,
+        migration.name
+      );
+      _db.exec("COMMIT");
+    } catch (error) {
+      _db.exec("ROLLBACK");
+      throw new Error(
+        `Migration ${migration.id} (${migration.name}) failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return _db;
+}
+
+export function closeDatabase(): void {
+  if (_db) {
+    _db.close();
+    _db = null;
+  }
+}
