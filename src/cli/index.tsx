@@ -3,6 +3,9 @@ import React from "react";
 import { render } from "ink";
 import { Command } from "commander";
 import chalk from "chalk";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { App } from "./components/App.js";
 import {
   MICROSERVICES,
@@ -349,6 +352,82 @@ program
 
     const ops = await getMicroserviceOperations(name);
     console.log(ops.helpText);
+  });
+
+// MCP setup command
+program
+  .command("mcp")
+  .description("Register MCP server with AI coding agents")
+  .option("--register <target>", "Register with: claude, codex, gemini, or all", "all")
+  .action((options) => {
+    const target = options.register;
+    const mcpBin = "microservices-mcp";
+    const mcpBinFull = join(homedir(), ".bun", "bin", "microservices-mcp");
+    let registered = 0;
+
+    // Claude Code (~/.claude.json)
+    if (target === "all" || target === "claude") {
+      const claudePath = join(homedir(), ".claude.json");
+      try {
+        const config = existsSync(claudePath)
+          ? JSON.parse(readFileSync(claudePath, "utf-8"))
+          : {};
+        if (!config.mcpServers) config.mcpServers = {};
+        config.mcpServers.microservices = {
+          type: "stdio",
+          command: mcpBin,
+          args: [],
+          env: {},
+        };
+        writeFileSync(claudePath, JSON.stringify(config, null, 2));
+        console.log(chalk.green("  + Claude Code") + chalk.gray(` (${claudePath})`));
+        registered++;
+      } catch (e) {
+        console.log(chalk.red(`  x Claude Code: ${e instanceof Error ? e.message : e}`));
+      }
+    }
+
+    // Codex CLI (~/.codex/config.toml)
+    if (target === "all" || target === "codex") {
+      const codexPath = join(homedir(), ".codex", "config.toml");
+      try {
+        let content = existsSync(codexPath) ? readFileSync(codexPath, "utf-8") : "";
+        if (content.includes("[mcp_servers.microservices]")) {
+          console.log(chalk.yellow("  ~ Codex CLI (already registered)"));
+        } else {
+          content += `\n[mcp_servers.microservices]\ncommand = "${mcpBin}"\n`;
+          writeFileSync(codexPath, content);
+          console.log(chalk.green("  + Codex CLI") + chalk.gray(` (${codexPath})`));
+        }
+        registered++;
+      } catch (e) {
+        console.log(chalk.red(`  x Codex CLI: ${e instanceof Error ? e.message : e}`));
+      }
+    }
+
+    // Gemini CLI (~/.gemini/settings.json)
+    if (target === "all" || target === "gemini") {
+      const geminiPath = join(homedir(), ".gemini", "settings.json");
+      try {
+        const config = existsSync(geminiPath)
+          ? JSON.parse(readFileSync(geminiPath, "utf-8"))
+          : {};
+        if (!config.mcpServers) config.mcpServers = {};
+        config.mcpServers.microservices = {
+          command: mcpBinFull,
+          args: [],
+        };
+        writeFileSync(geminiPath, JSON.stringify(config, null, 2));
+        console.log(chalk.green("  + Gemini CLI") + chalk.gray(` (${geminiPath})`));
+        registered++;
+      } catch (e) {
+        console.log(chalk.red(`  x Gemini CLI: ${e instanceof Error ? e.message : e}`));
+      }
+    }
+
+    if (registered > 0) {
+      console.log(chalk.green(`\nMCP server registered. Restart your agent to activate.`));
+    }
   });
 
 program.parse(process.argv);

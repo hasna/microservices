@@ -8,6 +8,65 @@ Mini business apps for AI agents. Each microservice has its own SQLite database,
 bun install -g @hasna/microservices
 ```
 
+## Setup MCP Server
+
+Register with all AI coding agents in one command:
+
+```bash
+microservices mcp --register all
+```
+
+Or register individually:
+
+```bash
+microservices mcp --register claude    # Claude Code
+microservices mcp --register codex     # Codex CLI
+microservices mcp --register gemini    # Gemini CLI
+```
+
+**Manual setup** if you prefer:
+
+<details>
+<summary>Claude Code (~/.claude.json)</summary>
+
+```json
+{
+  "mcpServers": {
+    "microservices": {
+      "type": "stdio",
+      "command": "microservices-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary>Codex CLI (~/.codex/config.toml)</summary>
+
+```toml
+[mcp_servers.microservices]
+command = "microservices-mcp"
+```
+</details>
+
+<details>
+<summary>Gemini CLI (~/.gemini/settings.json)</summary>
+
+```json
+{
+  "mcpServers": {
+    "microservices": {
+      "command": "microservices-mcp",
+      "args": []
+    }
+  }
+}
+```
+</details>
+
 ## Quick Start
 
 ```bash
