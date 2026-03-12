@@ -4,6 +4,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
 import { getMicroservicesDir } from "./database.js";
 
 export interface RunResult {
@@ -52,39 +53,44 @@ export async function runMicroserviceCommand(
     };
   }
 
-  try {
-    const proc = Bun.spawn(["bun", "run", cliPath, ...args], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...process.env,
-        MICROSERVICES_DIR: getMicroservicesDir(),
+  return new Promise((resolve) => {
+    const child = execFile(
+      "bun",
+      ["run", cliPath, ...args],
+      {
+        timeout,
+        env: {
+          ...process.env,
+          MICROSERVICES_DIR: getMicroservicesDir(),
+        },
+        maxBuffer: 10 * 1024 * 1024,
       },
-    });
+      (error, stdout, stderr) => {
+        if (error && "killed" in error && error.killed) {
+          resolve({
+            success: false,
+            stdout: "",
+            stderr: "Command timed out",
+            exitCode: 1,
+          });
+          return;
+        }
 
-    // Timeout handling
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("Command timed out")), timeout);
-    });
+        const exitCode = error?.code
+          ? typeof error.code === "number"
+            ? error.code
+            : 1
+          : 0;
 
-    const result = await Promise.race([proc.exited, timeoutPromise]);
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-
-    return {
-      success: result === 0,
-      stdout: stdout.trim(),
-      stderr: stderr.trim(),
-      exitCode: result as number,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      stdout: "",
-      stderr: error instanceof Error ? error.message : String(error),
-      exitCode: 1,
-    };
-  }
+        resolve({
+          success: exitCode === 0,
+          stdout: (stdout || "").trim(),
+          stderr: (stderr || "").trim(),
+          exitCode,
+        });
+      }
+    );
+  });
 }
 
 /**
@@ -96,11 +102,11 @@ export async function getMicroserviceOperations(name: string): Promise<{
 }> {
   const result = await runMicroserviceCommand(name, ["--help"]);
 
-  if (!result.success && !result.stdout) {
-    return { commands: [], helpText: result.stderr || "No help available" };
-  }
-
+  // Commander writes help to stdout with exit 0
   const helpText = result.stdout || result.stderr;
+  if (!helpText) {
+    return { commands: [], helpText: "No help available" };
+  }
 
   // Parse commands from help text
   const commands: string[] = [];

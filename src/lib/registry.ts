@@ -130,6 +130,7 @@ export function searchMicroservices(query: string): MicroserviceMeta[] {
       m.name.includes(q) ||
       m.displayName.toLowerCase().includes(q) ||
       m.description.toLowerCase().includes(q) ||
+      m.category.toLowerCase().includes(q) ||
       m.tags.some((t) => t.includes(q))
   );
 }
