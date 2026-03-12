@@ -1,0 +1,27 @@
+{
+  "name": "@hasna/microservice-bookkeeping",
+  "version": "0.0.1",
+  "description": "Double-entry bookkeeping microservice with SQLite — manage accounts, transactions, and financial reports",
+  "type": "module",
+  "bin": {
+    "microservice-bookkeeping": "./src/cli/index.ts",
+    "microservice-bookkeeping-mcp": "./src/mcp/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run ./src/cli/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "commander": "^12.1.0",
+    "zod": "^3.24.0"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  }
+}
