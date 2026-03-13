@@ -10,7 +10,15 @@ export interface Client {
   email: string | null;
   phone: string | null;
   address: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
   tax_id: string | null;
+  vat_number: string | null;
+  language: string | null;
   notes: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -39,7 +47,15 @@ export interface CreateClientInput {
   email?: string;
   phone?: string;
   address?: string;
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
   tax_id?: string;
+  vat_number?: string;
+  language?: string;
   notes?: string;
 }
 
@@ -48,9 +64,18 @@ export function createClient(input: CreateClientInput): Client {
   const id = crypto.randomUUID();
 
   db.prepare(
-    `INSERT INTO clients (id, name, email, phone, address, tax_id, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, input.name, input.email || null, input.phone || null, input.address || null, input.tax_id || null, input.notes || null);
+    `INSERT INTO clients (id, name, email, phone, address, address_line1, address_line2, city, state, postal_code, country, tax_id, vat_number, language, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id, input.name, input.email || null, input.phone || null,
+    input.address || null,
+    input.address_line1 || null, input.address_line2 || null,
+    input.city || null, input.state || null, input.postal_code || null,
+    input.country || null,
+    input.tax_id || null, input.vat_number || null,
+    input.language || null,
+    input.notes || null
+  );
 
   return getClient(id)!;
 }

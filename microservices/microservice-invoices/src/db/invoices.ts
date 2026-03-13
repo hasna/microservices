@@ -8,16 +8,21 @@ export interface Invoice {
   id: string;
   invoice_number: string;
   client_id: string | null;
+  business_profile_id: string | null;
   status: "draft" | "sent" | "paid" | "overdue" | "cancelled" | "refunded";
   issue_date: string;
   due_date: string | null;
   currency: string;
   subtotal: number;
   tax_rate: number;
+  tax_name: string;
   tax_amount: number;
   discount: number;
   total: number;
+  reverse_charge: boolean;
+  language: string;
   notes: string | null;
+  footer_text: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -56,7 +61,15 @@ interface InvoiceRow extends Omit<Invoice, "metadata"> {
 }
 
 function rowToInvoice(row: InvoiceRow): Invoice {
-  return { ...row, metadata: JSON.parse(row.metadata || "{}") } as Invoice;
+  return {
+    ...row,
+    reverse_charge: (row as any).reverse_charge === 1,
+    tax_name: (row as any).tax_name || "Tax",
+    language: (row as any).language || "en",
+    footer_text: (row as any).footer_text || null,
+    business_profile_id: (row as any).business_profile_id || null,
+    metadata: JSON.parse(row.metadata || "{}"),
+  } as Invoice;
 }
 
 function nextInvoiceNumber(): string {
@@ -94,13 +107,18 @@ function recalculateInvoice(invoiceId: string): void {
 
 export interface CreateInvoiceInput {
   client_id?: string;
+  business_profile_id?: string;
   invoice_number?: string;
   issue_date?: string;
   due_date?: string;
   currency?: string;
   tax_rate?: number;
+  tax_name?: string;
   discount?: number;
+  reverse_charge?: boolean;
+  language?: string;
   notes?: string;
+  footer_text?: string;
 }
 
 export function createInvoice(input: CreateInvoiceInput = {}): Invoice {
@@ -109,18 +127,23 @@ export function createInvoice(input: CreateInvoiceInput = {}): Invoice {
   const invoiceNumber = input.invoice_number || nextInvoiceNumber();
 
   db.prepare(
-    `INSERT INTO invoices (id, invoice_number, client_id, issue_date, due_date, currency, tax_rate, discount, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO invoices (id, invoice_number, client_id, business_profile_id, issue_date, due_date, currency, tax_rate, tax_name, discount, reverse_charge, language, notes, footer_text)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     invoiceNumber,
     input.client_id || null,
+    input.business_profile_id || null,
     input.issue_date || new Date().toISOString().split("T")[0],
     input.due_date || null,
     input.currency || "USD",
     input.tax_rate || 0,
+    input.tax_name || "Tax",
     input.discount || 0,
-    input.notes || null
+    input.reverse_charge ? 1 : 0,
+    input.language || "en",
+    input.notes || null,
+    input.footer_text || null
   );
 
   return getInvoice(id)!;

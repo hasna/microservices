@@ -33,4 +33,24 @@ export {
   type CreateClientInput,
 } from "./db/clients.js";
 
+export {
+  createBusinessProfile,
+  getBusinessProfile,
+  getDefaultBusinessProfile,
+  listBusinessProfiles,
+  updateBusinessProfile,
+  deleteBusinessProfile,
+  getTaxRulesForCountry,
+  getDefaultTaxRule,
+  getTaxRule,
+  listAllTaxRules,
+  createTaxRule,
+  deleteTaxRule,
+  determineTax,
+  type BusinessProfile,
+  type CreateBusinessInput,
+  type TaxRule,
+  type CreateTaxRuleInput,
+} from "./db/business.js";
+
 export { getDatabase, closeDatabase } from "./db/database.js";
