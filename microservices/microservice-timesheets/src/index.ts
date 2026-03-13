@@ -29,4 +29,16 @@ export {
   type ClientSummary,
 } from "./db/timesheets.js";
 
+export {
+  getCountryDefaults,
+  listSupportedCountries,
+  getSetting,
+  setSetting,
+  getAllSettings,
+  formatCurrency,
+  checkOvertimeStatus,
+  COUNTRY_DEFAULTS,
+  type CountryDefaults,
+} from "./db/locale.js";
+
 export { getDatabase, closeDatabase } from "./db/database.js";

@@ -41,4 +41,34 @@ export const MIGRATIONS: MigrationEntry[] = [
       CREATE INDEX IF NOT EXISTS idx_time_entries_billable ON time_entries(billable);
     `,
   },
+  {
+    id: 2,
+    name: "locale_and_overtime",
+    sql: `
+      -- Add locale/currency support to projects
+      ALTER TABLE projects ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD';
+      ALTER TABLE projects ADD COLUMN country TEXT NOT NULL DEFAULT 'US';
+      ALTER TABLE projects ADD COLUMN overtime_rate_multiplier REAL NOT NULL DEFAULT 1.5;
+      ALTER TABLE projects ADD COLUMN max_daily_hours REAL NOT NULL DEFAULT 8;
+      ALTER TABLE projects ADD COLUMN max_weekly_hours REAL NOT NULL DEFAULT 40;
+
+      -- Add overtime tracking to time entries
+      ALTER TABLE time_entries ADD COLUMN overtime INTEGER NOT NULL DEFAULT 0;
+
+      -- Settings table for global locale preferences
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      -- Seed default settings
+      INSERT OR IGNORE INTO settings (key, value) VALUES
+        ('locale', 'en-US'),
+        ('default_currency', 'USD'),
+        ('default_country', 'US'),
+        ('date_format', 'YYYY-MM-DD'),
+        ('week_start', 'monday');
+    `,
+  },
 ];
