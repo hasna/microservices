@@ -1,6 +1,6 @@
 {
   "name": "@hasna/microservices",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Mini business apps for AI agents - invoices, contacts, bookkeeping and more, each with its own SQLite database",
   "type": "module",
   "bin": {
@@ -11,7 +11,13 @@
     "bin/",
     "dist/",
     "microservices/",
-    "README.md"
+    "!microservices/**/node_modules",
+    "!microservices/**/bun.lock",
+    "!microservices/**/*.test.ts",
+    "!microservices/**/dashboard/node_modules",
+    "!microservices/**/dashboard/src",
+    "README.md",
+    "LICENSE"
   ],
   "exports": {
     ".": {
