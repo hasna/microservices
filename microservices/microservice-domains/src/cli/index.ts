@@ -30,6 +30,26 @@ import {
   checkAllDomains,
   getDomainByName,
 } from "../db/domains.js";
+import {
+  syncToLocalDb,
+  renewDomain as namecheapRenew,
+  checkAvailability as namecheapCheck,
+} from "../lib/namecheap.js";
+import {
+  syncToLocalDb as godaddySyncToLocalDb,
+  renewDomain as godaddyRenewDomain,
+} from "../lib/godaddy.js";
+import {
+  getAvailableProviders,
+  syncAll,
+  autoDetectRegistrar,
+  getProvider,
+} from "../lib/registrar.js";
+import {
+  monitorBrand,
+  getSimilarDomains,
+  getThreatAssessment,
+} from "../lib/brandsight.js";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const program = new Command();
@@ -684,6 +704,406 @@ alertCmd
       console.log(`Deleted alert ${id}`);
     } else {
       console.error(`Alert '${id}' not found.`);
+      process.exit(1);
+    }
+  });
+
+// --- Namecheap Integration ---
+
+program
+  .command("sync")
+  .description("Sync domains from a provider to local DB")
+  .requiredOption("--provider <provider>", "Provider name (namecheap, godaddy)")
+  .option("--json", "Output as JSON", false)
+  .action(async (opts) => {
+    const provider = opts.provider.toLowerCase();
+
+    if (provider === "namecheap") {
+      try {
+        const result = await syncToLocalDb({
+          getDomainByName,
+          createDomain,
+          updateDomain,
+        });
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Synced ${result.synced} domain(s) from Namecheap`);
+          for (const d of result.domains) {
+            console.log(`  ${d}`);
+          }
+          if (result.errors.length > 0) {
+            console.log("Errors:");
+            for (const e of result.errors) {
+              console.log(`  - ${e}`);
+            }
+          }
+        }
+      } catch (error: unknown) {
+        console.error(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    } else if (provider === "godaddy") {
+      try {
+        const result = await godaddySyncToLocalDb({
+          getDomainByName,
+          createDomain,
+          updateDomain,
+        });
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Synced ${result.synced} domain(s) from GoDaddy (created: ${result.created}, updated: ${result.updated})`);
+          if (result.errors.length > 0) {
+            console.log("Errors:");
+            for (const e of result.errors) {
+              console.log(`  - ${e}`);
+            }
+          }
+        }
+      } catch (error: unknown) {
+        console.error(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    } else {
+      console.error(`Unsupported provider: ${opts.provider}. Supported: namecheap, godaddy`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("renew")
+  .description("Renew a domain via provider")
+  .argument("<name>", "Domain name (e.g. example.com)")
+  .requiredOption("--provider <provider>", "Provider name (namecheap, godaddy)")
+  .option("--years <n>", "Number of years to renew", "1")
+  .option("--json", "Output as JSON", false)
+  .action(async (name, opts) => {
+    const provider = opts.provider.toLowerCase();
+
+    if (provider === "namecheap") {
+      try {
+        const result = await namecheapRenew(name, parseInt(opts.years));
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Renewed ${result.domain} successfully`);
+          if (result.chargedAmount) console.log(`  Charged: $${result.chargedAmount}`);
+          if (result.orderId) console.log(`  Order ID: ${result.orderId}`);
+          if (result.transactionId) console.log(`  Transaction ID: ${result.transactionId}`);
+        }
+      } catch (error: unknown) {
+        console.error(`Renewal failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    } else if (provider === "godaddy") {
+      try {
+        const result = await godaddyRenewDomain(name);
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Renewed ${name} successfully via GoDaddy`);
+          if (result.orderId) console.log(`  Order ID: ${result.orderId}`);
+          if (result.total) console.log(`  Total: $${(result.total / 100).toFixed(2)}`);
+        }
+      } catch (error: unknown) {
+        console.error(`Renewal failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    } else {
+      console.error(`Unsupported provider: ${opts.provider}. Supported: namecheap, godaddy`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("check")
+  .description("Check domain availability")
+  .argument("<name>", "Domain name (e.g. example.com)")
+  .option("--json", "Output as JSON", false)
+  .action(async (name, opts) => {
+    try {
+      const result = await namecheapCheck(name);
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        if (result.available) {
+          console.log(`${result.domain} is AVAILABLE`);
+        } else {
+          console.log(`${result.domain} is NOT available`);
+        }
+      }
+    } catch (error: unknown) {
+      console.error(`Availability check failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+// --- Unified Provider Commands ---
+
+program
+  .command("providers")
+  .description("Show which registrar providers are configured")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const providers = getAvailableProviders();
+
+    if (opts.json) {
+      console.log(JSON.stringify(providers, null, 2));
+    } else {
+      console.log("Registrar Providers:");
+      for (const p of providers) {
+        const status = p.configured ? "CONFIGURED" : "not configured";
+        console.log(`  ${p.name}: ${status}`);
+        if (!p.configured) {
+          console.log(`    Missing: ${p.envVars.join(", ")}`);
+        }
+      }
+    }
+  });
+
+// Override sync command to support --all flag
+program.commands = program.commands.filter((c) => c.name() !== "sync");
+
+program
+  .command("sync")
+  .description("Sync domains from a provider to local DB")
+  .option("--provider <provider>", "Provider name (namecheap, godaddy)")
+  .option("--all", "Sync from all configured providers")
+  .option("--json", "Output as JSON", false)
+  .action(async (opts) => {
+    if (opts.all) {
+      try {
+        const result = await syncAll({
+          getDomainByName,
+          createDomain,
+          updateDomain,
+        });
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Synced ${result.totalSynced} domain(s) from ${result.providers.length} provider(s)`);
+          for (const p of result.providers) {
+            console.log(`  ${p.name}: ${p.result.synced} synced`);
+          }
+          if (result.totalErrors.length > 0) {
+            console.log("Errors:");
+            for (const e of result.totalErrors) {
+              console.log(`  - ${e}`);
+            }
+          }
+        }
+      } catch (error: unknown) {
+        console.error(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+      return;
+    }
+
+    const provider = (opts.provider || "").toLowerCase();
+    if (!provider) {
+      console.error("Specify --provider <name> or --all");
+      process.exit(1);
+    }
+
+    if (provider === "namecheap") {
+      try {
+        const result = await syncToLocalDb({
+          getDomainByName,
+          createDomain,
+          updateDomain,
+        });
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Synced ${result.synced} domain(s) from Namecheap`);
+          for (const d of result.domains) {
+            console.log(`  ${d}`);
+          }
+          if (result.errors.length > 0) {
+            console.log("Errors:");
+            for (const e of result.errors) {
+              console.log(`  - ${e}`);
+            }
+          }
+        }
+      } catch (error: unknown) {
+        console.error(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    } else if (provider === "godaddy") {
+      try {
+        const result = await godaddySyncToLocalDb({
+          getDomainByName,
+          createDomain,
+          updateDomain,
+        });
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Synced ${result.synced} domain(s) from GoDaddy (created: ${result.created}, updated: ${result.updated})`);
+          if (result.errors.length > 0) {
+            console.log("Errors:");
+            for (const e of result.errors) {
+              console.log(`  - ${e}`);
+            }
+          }
+        }
+      } catch (error: unknown) {
+        console.error(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    } else {
+      console.error(`Unsupported provider: ${provider}. Supported: namecheap, godaddy`);
+      process.exit(1);
+    }
+  });
+
+// Override renew command to support auto-detect
+program.commands = program.commands.filter((c) => c.name() !== "renew");
+
+program
+  .command("renew")
+  .description("Renew a domain via provider (auto-detects registrar from DB if --provider not given)")
+  .argument("<name>", "Domain name (e.g. example.com)")
+  .option("--provider <provider>", "Provider name (namecheap, godaddy)")
+  .option("--years <n>", "Number of years to renew", "1")
+  .option("--json", "Output as JSON", false)
+  .action(async (name, opts) => {
+    let provider = (opts.provider || "").toLowerCase();
+
+    if (!provider) {
+      const detected = autoDetectRegistrar(name, getDomainByName);
+      if (!detected) {
+        console.error(`Could not auto-detect registrar for '${name}'. Use --provider.`);
+        process.exit(1);
+      }
+      provider = detected;
+      console.log(`Auto-detected registrar: ${provider}`);
+    }
+
+    if (provider === "namecheap") {
+      try {
+        const result = await namecheapRenew(name, parseInt(opts.years));
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Renewed ${result.domain} successfully via Namecheap`);
+          if (result.chargedAmount) console.log(`  Charged: $${result.chargedAmount}`);
+          if (result.orderId) console.log(`  Order ID: ${result.orderId}`);
+        }
+      } catch (error: unknown) {
+        console.error(`Renewal failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    } else if (provider === "godaddy") {
+      try {
+        const result = await godaddyRenewDomain(name);
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Renewed ${name} successfully via GoDaddy`);
+          if (result.orderId) console.log(`  Order ID: ${result.orderId}`);
+          if (result.total) console.log(`  Total: $${(result.total / 100).toFixed(2)}`);
+        }
+      } catch (error: unknown) {
+        console.error(`Renewal failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    } else {
+      console.error(`Unsupported provider: ${provider}. Supported: namecheap, godaddy`);
+      process.exit(1);
+    }
+  });
+
+// --- Brandsight Commands ---
+
+program
+  .command("monitor")
+  .description("Monitor a brand for similar domain registrations (Brandsight)")
+  .argument("<brand>", "Brand name to monitor")
+  .option("--json", "Output as JSON", false)
+  .action(async (brand, opts) => {
+    try {
+      const result = await monitorBrand(brand);
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        if (result.stub) console.log("(stub data — Brandsight API unreachable)");
+        console.log(`Brand monitoring for "${result.brand}":`);
+        if (result.alerts.length === 0) {
+          console.log("  No alerts.");
+        } else {
+          for (const a of result.alerts) {
+            console.log(`  [${a.type}] ${a.domain} — registered ${a.registered_at}`);
+          }
+        }
+        console.log(`\n${result.alerts.length} alert(s)`);
+      }
+    } catch (error: unknown) {
+      console.error(`Monitor failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("similar")
+  .description("Find typosquat/competing domains similar to a domain (Brandsight)")
+  .argument("<domain>", "Domain to check")
+  .option("--json", "Output as JSON", false)
+  .action(async (domain, opts) => {
+    try {
+      const result = await getSimilarDomains(domain);
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        if (result.stub) console.log("(stub data — Brandsight API unreachable)");
+        console.log(`Similar domains for ${result.domain}:`);
+        for (const d of result.similar) {
+          console.log(`  ${d}`);
+        }
+        console.log(`\n${result.similar.length} similar domain(s)`);
+      }
+    } catch (error: unknown) {
+      console.error(`Similar domains check failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("threats")
+  .description("Get threat assessment for a domain (Brandsight)")
+  .argument("<domain>", "Domain to assess")
+  .option("--json", "Output as JSON", false)
+  .action(async (domain, opts) => {
+    try {
+      const result = await getThreatAssessment(domain);
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        if (result.stub) console.log("(stub data — Brandsight API unreachable)");
+        console.log(`Threat Assessment for ${result.domain}:`);
+        console.log(`  Risk Level: ${result.risk_level}`);
+        if (result.threats.length > 0) {
+          console.log("  Threats:");
+          for (const t of result.threats) {
+            console.log(`    - ${t}`);
+          }
+        } else {
+          console.log("  Threats: none detected");
+        }
+        console.log(`  Recommendation: ${result.recommendation}`);
+      }
+    } catch (error: unknown) {
+      console.error(`Threat assessment failed: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
     }
   });

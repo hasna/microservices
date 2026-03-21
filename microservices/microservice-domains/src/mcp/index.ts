@@ -31,7 +31,26 @@ import {
   validateDns,
   exportPortfolio,
   checkAllDomains,
+  getDomainByName,
 } from "../db/domains.js";
+import {
+  syncToLocalDb,
+  renewDomain as namecheapRenew,
+  checkAvailability as namecheapCheck,
+} from "../lib/namecheap.js";
+import {
+  syncToLocalDb as godaddySyncToLocalDb,
+  renewDomain as godaddyRenewDomain,
+} from "../lib/godaddy.js";
+import {
+  getAvailableProviders,
+  syncAll,
+} from "../lib/registrar.js";
+import {
+  monitorBrand,
+  getSimilarDomains,
+  getThreatAssessment,
+} from "../lib/brandsight.js";
 
 const server = new McpServer({
   name: "microservice-domains",
@@ -520,6 +539,232 @@ server.registerTool(
   async () => {
     const results = checkAllDomains();
     return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+  }
+);
+
+// --- Namecheap Integration ---
+
+server.registerTool(
+  "sync_namecheap",
+  {
+    title: "Sync Namecheap Domains",
+    description: "Sync all domains from Namecheap account to local database. Requires NAMECHEAP_API_KEY, NAMECHEAP_USERNAME, and NAMECHEAP_CLIENT_IP env vars.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const result = await syncToLocalDb({
+        getDomainByName,
+        createDomain,
+        updateDomain,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      return {
+        content: [{ type: "text", text: `Sync failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "renew_via_namecheap",
+  {
+    title: "Renew Domain via Namecheap",
+    description: "Renew a domain through the Namecheap API.",
+    inputSchema: {
+      domain: z.string().describe("Domain name to renew (e.g. example.com)"),
+      years: z.number().default(1).describe("Number of years to renew"),
+    },
+  },
+  async ({ domain, years }) => {
+    try {
+      const result = await namecheapRenew(domain, years);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      return {
+        content: [{ type: "text", text: `Renewal failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "check_availability_namecheap",
+  {
+    title: "Check Domain Availability",
+    description: "Check if a domain name is available for registration via Namecheap.",
+    inputSchema: {
+      domain: z.string().describe("Domain name to check (e.g. example.com)"),
+    },
+  },
+  async ({ domain }) => {
+    try {
+      const result = await namecheapCheck(domain);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      return {
+        content: [{ type: "text", text: `Check failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- GoDaddy Integration ---
+
+server.registerTool(
+  "sync_godaddy",
+  {
+    title: "Sync GoDaddy Domains",
+    description: "Sync all domains from GoDaddy account to local database. Requires GODADDY_API_KEY and GODADDY_API_SECRET env vars.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const result = await godaddySyncToLocalDb({
+        getDomainByName,
+        createDomain,
+        updateDomain,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      return {
+        content: [{ type: "text", text: `Sync failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "renew_via_godaddy",
+  {
+    title: "Renew Domain via GoDaddy",
+    description: "Renew a domain through the GoDaddy API for 1 year.",
+    inputSchema: {
+      domain: z.string().describe("Domain name to renew (e.g. example.com)"),
+    },
+  },
+  async ({ domain }) => {
+    try {
+      const result = await godaddyRenewDomain(domain);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      return {
+        content: [{ type: "text", text: `Renewal failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- Unified Provider Tools ---
+
+server.registerTool(
+  "sync_all_providers",
+  {
+    title: "Sync All Providers",
+    description: "Sync domains from all configured registrar providers (Namecheap, GoDaddy) to local database.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const result = await syncAll({
+        getDomainByName,
+        createDomain,
+        updateDomain,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      return {
+        content: [{ type: "text", text: `Sync failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "list_providers",
+  {
+    title: "List Providers",
+    description: "Show which registrar providers are configured (have API keys set).",
+    inputSchema: {},
+  },
+  async () => {
+    const providers = getAvailableProviders();
+    return { content: [{ type: "text", text: JSON.stringify(providers, null, 2) }] };
+  }
+);
+
+// --- Brandsight Tools ---
+
+server.registerTool(
+  "monitor_brand",
+  {
+    title: "Monitor Brand",
+    description: "Monitor a brand name for new domain registrations that are similar (typosquats, homoglyphs, keyword matches). Uses Brandsight API.",
+    inputSchema: {
+      brand: z.string().describe("Brand name to monitor"),
+    },
+  },
+  async ({ brand }) => {
+    try {
+      const result = await monitorBrand(brand);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      return {
+        content: [{ type: "text", text: `Monitor failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "similar_domains",
+  {
+    title: "Similar Domains",
+    description: "Find typosquat/competing domains similar to the given domain. Uses Brandsight API.",
+    inputSchema: {
+      domain: z.string().describe("Domain to find similar domains for"),
+    },
+  },
+  async ({ domain }) => {
+    try {
+      const result = await getSimilarDomains(domain);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      return {
+        content: [{ type: "text", text: `Similar domains check failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "domain_threats",
+  {
+    title: "Domain Threats",
+    description: "Get a threat assessment for a domain including risk level, threats, and recommendation. Uses Brandsight API.",
+    inputSchema: {
+      domain: z.string().describe("Domain to assess threats for"),
+    },
+  },
+  async ({ domain }) => {
+    try {
+      const result = await getThreatAssessment(domain);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      return {
+        content: [{ type: "text", text: `Threat assessment failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
   }
 );
 

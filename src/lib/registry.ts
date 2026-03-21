@@ -18,6 +18,7 @@ export const CATEGORIES = [
   "Productivity",
   "HR",
   "Analytics",
+  "Management",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
@@ -165,6 +166,15 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     description: "Payroll management with employees, pay periods, pay stubs, deductions, and tax reporting",
     category: "HR",
     tags: ["payroll", "salary", "wages", "deductions", "tax", "employees", "pay-stubs"],
+  },
+
+  // Management
+  {
+    name: "company",
+    displayName: "Company",
+    description: "AI agent control plane for autonomous company operations — organizations, teams, members, customers, and vendors",
+    category: "Management",
+    tags: ["company", "organization", "teams", "members", "customers", "vendors", "management"],
   },
 
   // Productivity
