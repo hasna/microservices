@@ -91,6 +91,13 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     category: "CRM",
     tags: ["social-media", "posts", "scheduling", "engagement", "analytics", "x", "linkedin", "instagram"],
   },
+  {
+    name: "leads",
+    displayName: "Leads",
+    description: "Lead generation, storage, scoring, and data enrichment with pipeline tracking, bulk import/export, and deduplication",
+    category: "CRM",
+    tags: ["leads", "lead-generation", "scoring", "enrichment", "pipeline", "dedup", "import", "export"],
+  },
 
   // Operations
   {

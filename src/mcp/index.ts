@@ -21,10 +21,11 @@ import {
   getMicroserviceOperations,
   getMicroserviceCliPath,
 } from "../lib/runner.js";
+import { getPackageVersion } from "../lib/package-info.js";
 
 const server = new McpServer({
   name: "microservices",
-  version: "0.0.1",
+  version: getPackageVersion(),
 });
 
 // --- Tool: search_microservices ---

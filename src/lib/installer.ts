@@ -40,6 +40,33 @@ export interface InstallOptions {
   overwrite?: boolean;
 }
 
+const PRESERVED_DB_FILES = new Set(["data.db", "data.db-wal", "data.db-shm"]);
+
+function getCliCandidates(baseDir: string): string[] {
+  return [
+    join(baseDir, "src", "cli", "index.ts"),
+    join(baseDir, "cli.ts"),
+    join(baseDir, "src", "index.ts"),
+  ];
+}
+
+function hasInstalledSource(baseDir: string): boolean {
+  return getCliCandidates(baseDir).some((candidate) => existsSync(candidate));
+}
+
+function clearInstalledSource(baseDir: string): void {
+  if (!existsSync(baseDir)) {
+    return;
+  }
+
+  for (const entry of readdirSync(baseDir)) {
+    if (PRESERVED_DB_FILES.has(entry)) {
+      continue;
+    }
+    rmSync(join(baseDir, entry), { recursive: true, force: true });
+  }
+}
+
 /**
  * Get the source path for a microservice in the package
  */
@@ -104,6 +131,11 @@ export function installMicroservice(
       mkdirSync(targetDir, { recursive: true });
     }
 
+    if (existsSync(destPath) && overwrite) {
+      // Fellow agents: overwrite now clears old source files first so reinstalls do not keep stale code.
+      clearInstalledSource(destPath);
+    }
+
     // Copy microservice source
     cpSync(sourcePath, destPath, { recursive: true });
 
@@ -144,7 +176,11 @@ export function getInstalledMicroservices(targetDir?: string): string[] {
   return readdirSync(dir)
     .filter((f: string) => {
       const fullPath = join(dir, f);
-      return f.startsWith("microservice-") && statSync(fullPath).isDirectory();
+      return (
+        f.startsWith("microservice-") &&
+        statSync(fullPath).isDirectory() &&
+        hasInstalledSource(fullPath)
+      );
     })
     .map((f: string) => f.replace("microservice-", ""));
 }
@@ -196,7 +232,7 @@ export function getMicroserviceStatus(name: string): {
   const msPath = join(dir, msName);
   const dbPath = join(msPath, "data.db");
 
-  const installed = existsSync(msPath);
+  const installed = hasInstalledSource(msPath);
   const hasDatabase = existsSync(dbPath);
   let dbSizeBytes = 0;
 

@@ -8,6 +8,13 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { App } from "./components/App.js";
 import {
+  ensureParentDirectory,
+  parseTimeoutMs,
+  upsertClaudeMcpConfig,
+  upsertCodexMcpConfig,
+  upsertGeminiMcpConfig,
+} from "./config-utils.js";
+import {
   MICROSERVICES,
   CATEGORIES,
   getMicroservice,
@@ -26,6 +33,7 @@ import {
   getMicroserviceOperations,
   getMicroserviceCliPath,
 } from "../lib/runner.js";
+import { getPackageVersion } from "../lib/package-info.js";
 
 const isTTY = process.stdout.isTTY ?? false;
 
@@ -34,7 +42,7 @@ const program = new Command();
 program
   .name("microservices")
   .description("Mini business apps for AI agents — invoices, contacts, bookkeeping and more")
-  .version("0.0.1")
+  .version(getPackageVersion())
   .enablePositionalOptions();
 
 // Interactive mode (default)
@@ -325,7 +333,15 @@ program
       process.exit(1);
     }
 
-    const result = await runMicroserviceCommand(name, args, parseInt(options.timeout));
+    let timeout: number;
+    try {
+      timeout = parseTimeoutMs(options.timeout);
+    } catch (error) {
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
+
+    const result = await runMicroserviceCommand(name, args, timeout);
 
     if (result.stdout) console.log(result.stdout);
     if (result.stderr) console.error(result.stderr);
@@ -369,17 +385,8 @@ program
     if (target === "all" || target === "claude") {
       const claudePath = join(homedir(), ".claude.json");
       try {
-        const config = existsSync(claudePath)
-          ? JSON.parse(readFileSync(claudePath, "utf-8"))
-          : {};
-        if (!config.mcpServers) config.mcpServers = {};
-        config.mcpServers.microservices = {
-          type: "stdio",
-          command: mcpBin,
-          args: [],
-          env: {},
-        };
-        writeFileSync(claudePath, JSON.stringify(config, null, 2));
+        const content = existsSync(claudePath) ? readFileSync(claudePath, "utf-8") : undefined;
+        writeFileSync(claudePath, upsertClaudeMcpConfig(content, mcpBin));
         console.log(chalk.green("  + Claude Code") + chalk.gray(` (${claudePath})`));
         registered++;
       } catch (e) {
@@ -391,12 +398,13 @@ program
     if (target === "all" || target === "codex") {
       const codexPath = join(homedir(), ".codex", "config.toml");
       try {
-        let content = existsSync(codexPath) ? readFileSync(codexPath, "utf-8") : "";
-        if (content.includes("[mcp_servers.microservices]")) {
+        const existing = existsSync(codexPath) ? readFileSync(codexPath, "utf-8") : undefined;
+        const updated = upsertCodexMcpConfig(existing, mcpBin);
+        if (updated.alreadyRegistered) {
           console.log(chalk.yellow("  ~ Codex CLI (already registered)"));
         } else {
-          content += `\n[mcp_servers.microservices]\ncommand = "${mcpBin}"\n`;
-          writeFileSync(codexPath, content);
+          ensureParentDirectory(codexPath);
+          writeFileSync(codexPath, updated.content);
           console.log(chalk.green("  + Codex CLI") + chalk.gray(` (${codexPath})`));
         }
         registered++;
@@ -409,15 +417,9 @@ program
     if (target === "all" || target === "gemini") {
       const geminiPath = join(homedir(), ".gemini", "settings.json");
       try {
-        const config = existsSync(geminiPath)
-          ? JSON.parse(readFileSync(geminiPath, "utf-8"))
-          : {};
-        if (!config.mcpServers) config.mcpServers = {};
-        config.mcpServers.microservices = {
-          command: mcpBinFull,
-          args: [],
-        };
-        writeFileSync(geminiPath, JSON.stringify(config, null, 2));
+        const content = existsSync(geminiPath) ? readFileSync(geminiPath, "utf-8") : undefined;
+        ensureParentDirectory(geminiPath);
+        writeFileSync(geminiPath, upsertGeminiMcpConfig(content, mcpBinFull));
         console.log(chalk.green("  + Gemini CLI") + chalk.gray(` (${geminiPath})`));
         registered++;
       } catch (e) {
