@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "microservice-social": "./src/cli/index.ts",
-    "microservice-social-mcp": "./src/mcp/index.ts"
+    "microservice-social-mcp": "./src/mcp/index.ts",
+    "microservice-social-serve": "./src/server/index.ts"
   },
   "exports": {
     ".": "./src/index.ts"

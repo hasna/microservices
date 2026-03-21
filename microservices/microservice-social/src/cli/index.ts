@@ -38,6 +38,61 @@ import {
   type PostStatus,
   type Recurrence,
 } from "../db/social.js";
+import {
+  startScheduler,
+  stopScheduler,
+  getSchedulerStatus,
+} from "../lib/scheduler.js";
+import {
+  syncAllMetrics,
+  syncAccountMetrics,
+  startMetricsSync,
+  stopMetricsSync,
+  getMetricsSyncStatus,
+  getSyncReport,
+} from "../lib/metrics-sync.js";
+import {
+  validateMedia,
+  getSupportedFormats,
+  uploadMedia,
+} from "../lib/media.js";
+import {
+  listMentions,
+  getMention,
+  markRead,
+  markAllRead,
+  getMentionStats,
+  replyToMention,
+  pollMentions,
+  stopPolling,
+  type MentionType,
+} from "../lib/mentions.js";
+import {
+  createThread,
+  getThread,
+  publishThread,
+  deleteThread,
+  createCarousel,
+} from "../lib/threads.js";
+import {
+  generatePost as aiGeneratePost,
+  suggestHashtags as aiSuggestHashtags,
+  optimizePost as aiOptimizePost,
+  generateThread as aiGenerateThread,
+  repurposePost as aiRepurposePost,
+  type Tone,
+} from "../lib/content-ai.js";
+import {
+  syncFollowers,
+  getAudienceInsights,
+  getFollowerGrowthChart,
+  getTopFollowers,
+} from "../lib/audience.js";
+import {
+  analyzeSentiment,
+  getSentimentReport,
+  autoAnalyzeMention,
+} from "../lib/sentiment.js";
 
 const program = new Command();
 
@@ -181,21 +236,34 @@ postCmd
 
 postCmd
   .command("publish")
-  .description("Mark a post as published")
+  .description("Publish a post — sends to the platform API if --live, otherwise marks as published locally")
   .argument("<id>", "Post ID")
-  .option("--platform-id <id>", "Platform post ID")
+  .option("--platform-id <id>", "Platform post ID (for manual/local publish)")
+  .option("--live", "Publish via platform API (X, Meta)", false)
   .option("--json", "Output as JSON", false)
-  .action((id, opts) => {
-    const post = publishPost(id, opts.platformId);
-    if (!post) {
-      console.error(`Post '${id}' not found.`);
-      process.exit(1);
-    }
+  .action(async (id, opts) => {
+    try {
+      let post;
+      if (opts.live) {
+        const { publishToApi } = await import("../lib/publisher.js");
+        post = await publishToApi(id);
+      } else {
+        post = publishPost(id, opts.platformId);
+      }
 
-    if (opts.json) {
-      console.log(JSON.stringify(post, null, 2));
-    } else {
-      console.log(`Published post ${post.id} at ${post.published_at}`);
+      if (!post) {
+        console.error(`Post '${id}' not found.`);
+        process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(post, null, 2));
+      } else {
+        console.log(`Published post ${post.id} at ${post.published_at}${post.platform_post_id ? ` (platform ID: ${post.platform_post_id})` : ""}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
     }
   });
 
@@ -361,6 +429,124 @@ postCmd
       console.log(`Deleted post ${id}`);
     } else {
       console.error(`Post '${id}' not found.`);
+      process.exit(1);
+    }
+  });
+
+postCmd
+  .command("create-thread")
+  .description("Create a thread of multiple posts")
+  .requiredOption("--content <texts...>", "Content for each post in the thread")
+  .requiredOption("--account <id>", "Account ID")
+  .option("--schedule <datetime>", "Schedule date/time")
+  .option("--tags <tags>", "Comma-separated tags")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    try {
+      const result = createThread(opts.content, opts.account, {
+        scheduledAt: opts.schedule,
+        tags: opts.tags ? opts.tags.split(",").map((t: string) => t.trim()) : undefined,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Created thread ${result.threadId} with ${result.posts.length} post(s)`);
+        for (const post of result.posts) {
+          const preview = post.content.substring(0, 60) + (post.content.length > 60 ? "..." : "");
+          console.log(`  [${post.thread_position}] ${preview}`);
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+postCmd
+  .command("get-thread")
+  .description("Get all posts in a thread")
+  .argument("<thread-id>", "Thread ID")
+  .option("--json", "Output as JSON", false)
+  .action((threadId, opts) => {
+    try {
+      const posts = getThread(threadId);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ threadId, posts, count: posts.length }, null, 2));
+      } else {
+        console.log(`Thread ${threadId} (${posts.length} post(s)):`);
+        for (const post of posts) {
+          const preview = post.content.substring(0, 60) + (post.content.length > 60 ? "..." : "");
+          console.log(`  [${post.thread_position}] [${post.status}] ${preview}`);
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+postCmd
+  .command("publish-thread")
+  .description("Publish a thread to the platform API")
+  .argument("<thread-id>", "Thread ID")
+  .option("--live", "Publish via platform API", false)
+  .option("--json", "Output as JSON", false)
+  .action(async (threadId, opts) => {
+    try {
+      if (opts.live) {
+        const result = await publishThread(threadId);
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Published thread ${result.threadId} (${result.posts.length} post(s))`);
+          for (const post of result.posts) {
+            console.log(`  [${post.thread_position}] platform ID: ${post.platform_post_id}`);
+          }
+        }
+      } else {
+        // Local publish — mark all posts as published
+        const posts = getThread(threadId);
+        for (const post of posts) {
+          publishPost(post.id);
+        }
+        if (opts.json) {
+          const updated = getThread(threadId);
+          console.log(JSON.stringify({ threadId, posts: updated }, null, 2));
+        } else {
+          console.log(`Locally published thread ${threadId} (${posts.length} post(s))`);
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+postCmd
+  .command("create-carousel")
+  .description("Create a carousel post with multiple images")
+  .requiredOption("--images <urls>", "Comma-separated image URLs")
+  .requiredOption("--account <id>", "Account ID")
+  .option("--captions <texts>", "Comma-separated captions")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    try {
+      const images = opts.images.split(",").map((u: string) => u.trim());
+      const captions = opts.captions ? opts.captions.split(",").map((c: string) => c.trim()) : [];
+      const post = createCarousel(images, captions, opts.account);
+
+      if (opts.json) {
+        console.log(JSON.stringify(post, null, 2));
+      } else {
+        console.log(`Created carousel post: ${post.id}`);
+        console.log(`  Images: ${post.media_urls.length}`);
+        if (post.content) console.log(`  Content: ${post.content.substring(0, 80)}${post.content.length > 80 ? "..." : ""}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
   });
@@ -684,6 +870,714 @@ program
       console.log(`    Comments: ${stats.engagement.total_comments}`);
       console.log(`    Impressions: ${stats.engagement.total_impressions}`);
     }
+  });
+
+// --- Scheduler ---
+
+const schedulerCmd = program
+  .command("scheduler")
+  .description("Scheduled post publishing worker");
+
+schedulerCmd
+  .command("start")
+  .description("Start the scheduler to auto-publish due posts")
+  .option("--interval <ms>", "Check interval in milliseconds", "60000")
+  .action((opts) => {
+    try {
+      const interval = parseInt(opts.interval);
+      startScheduler(interval);
+      console.log(`Scheduler started (interval: ${interval}ms)`);
+      console.log("Press Ctrl+C to stop.");
+      // Keep process alive
+      process.on("SIGINT", () => {
+        stopScheduler();
+        console.log("\nScheduler stopped.");
+        process.exit(0);
+      });
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+schedulerCmd
+  .command("status")
+  .description("Show scheduler status")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const status = getSchedulerStatus();
+
+    if (opts.json) {
+      console.log(JSON.stringify(status, null, 2));
+    } else {
+      console.log("Scheduler Status:");
+      console.log(`  Running: ${status.running}`);
+      console.log(`  Last check: ${status.lastCheck || "never"}`);
+      console.log(`  Posts processed: ${status.postsProcessed}`);
+      console.log(`  Errors: ${status.errors}`);
+    }
+  });
+
+schedulerCmd
+  .command("stop")
+  .description("Stop the scheduler")
+  .action(() => {
+    stopScheduler();
+    console.log("Scheduler stopped.");
+  });
+
+// --- Media ---
+
+const mediaCmd = program
+  .command("media")
+  .description("Media upload and validation");
+
+mediaCmd
+  .command("upload")
+  .description("Upload a media file to a platform")
+  .argument("<file>", "Path to media file")
+  .requiredOption("--platform <platform>", "Target platform (x/linkedin/instagram/threads/bluesky)")
+  .option("--page-id <id>", "Page ID (required for Meta/LinkedIn)")
+  .option("--json", "Output as JSON", false)
+  .action(async (file, opts) => {
+    const platform = opts.platform as Platform;
+
+    // Validate first
+    const validation = validateMedia(file, platform);
+    if (!validation.valid) {
+      console.error("Validation errors:");
+      for (const err of validation.errors) {
+        console.error(`  - ${err}`);
+      }
+      process.exit(1);
+    }
+
+    try {
+      const result = await uploadMedia(file, platform, opts.pageId);
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Uploaded successfully. Media ID: ${result.mediaId}`);
+        if (result.url) console.log(`  URL: ${result.url}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+mediaCmd
+  .command("formats")
+  .description("Show supported media formats for a platform")
+  .requiredOption("--platform <platform>", "Platform (x/linkedin/instagram/threads/bluesky)")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const platform = opts.platform as Platform;
+    const formats = getSupportedFormats(platform);
+
+    if (opts.json) {
+      console.log(JSON.stringify({ platform, formats }, null, 2));
+    } else {
+      console.log(`Supported formats for ${platform}: ${formats.join(", ")}`);
+    }
+  });
+
+mediaCmd
+  .command("validate")
+  .description("Validate a media file for a platform")
+  .argument("<file>", "Path to media file")
+  .requiredOption("--platform <platform>", "Target platform")
+  .option("--json", "Output as JSON", false)
+  .action((file, opts) => {
+    const platform = opts.platform as Platform;
+    const result = validateMedia(file, platform);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      if (result.valid) {
+        console.log(`File '${file}' is valid for ${platform}.`);
+      } else {
+        console.error(`File '${file}' is NOT valid for ${platform}:`);
+        for (const err of result.errors) {
+          console.error(`  - ${err}`);
+        }
+        process.exit(1);
+      }
+    }
+  });
+
+// --- Metrics Sync ---
+
+const metricsCmd = program
+  .command("metrics")
+  .description("Metrics sync — pull engagement data from platform APIs");
+
+metricsCmd
+  .command("sync")
+  .description("Sync metrics for recent published posts")
+  .option("--watch", "Continuously sync on an interval", false)
+  .option("--interval <ms>", "Sync interval in milliseconds (with --watch)", "300000")
+  .option("--json", "Output as JSON", false)
+  .action(async (opts) => {
+    if (opts.watch) {
+      const interval = parseInt(opts.interval);
+      try {
+        startMetricsSync(interval);
+        console.log(`Metrics sync started (interval: ${interval}ms)`);
+        console.log("Press Ctrl+C to stop.");
+        process.on("SIGINT", () => {
+          stopMetricsSync();
+          const report = getSyncReport();
+          console.log(`\nMetrics sync stopped. Posts synced: ${report.posts_synced}, Errors: ${report.errors.length}`);
+          process.exit(0);
+        });
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    } else {
+      try {
+        const report = await syncAllMetrics();
+
+        if (opts.json) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          console.log(`Metrics sync complete:`);
+          console.log(`  Posts synced: ${report.posts_synced}`);
+          console.log(`  Accounts synced: ${report.accounts_synced}`);
+          if (report.errors.length > 0) {
+            console.log(`  Errors: ${report.errors.length}`);
+            for (const err of report.errors) {
+              console.log(`    [${err.type}] ${err.id}: ${err.message}`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    }
+  });
+
+metricsCmd
+  .command("status")
+  .description("Show metrics sync status")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const status = getMetricsSyncStatus();
+
+    if (opts.json) {
+      console.log(JSON.stringify(status, null, 2));
+    } else {
+      console.log("Metrics Sync Status:");
+      console.log(`  Running: ${status.running}`);
+      console.log(`  Interval: ${status.interval_ms}ms`);
+      console.log(`  Last sync: ${status.last_sync || "never"}`);
+      console.log(`  Posts synced: ${status.posts_synced}`);
+      console.log(`  Accounts synced: ${status.accounts_synced}`);
+      console.log(`  Errors: ${status.errors}`);
+    }
+  });
+
+// --- Mentions ---
+
+const mentionsCmd = program
+  .command("mentions")
+  .description("Mention monitoring");
+
+mentionsCmd
+  .command("list")
+  .description("List mentions")
+  .option("--account <id>", "Filter by account ID")
+  .option("--unread", "Show only unread mentions", false)
+  .option("--type <type>", "Filter by type (mention/reply/quote/dm)")
+  .option("--limit <n>", "Limit results")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const mentions = listMentions(opts.account, {
+      unread: opts.unread ? true : undefined,
+      type: opts.type as MentionType | undefined,
+      limit: opts.limit ? parseInt(opts.limit) : undefined,
+    });
+
+    if (opts.json) {
+      console.log(JSON.stringify(mentions, null, 2));
+    } else {
+      if (mentions.length === 0) {
+        console.log("No mentions found.");
+        return;
+      }
+      for (const m of mentions) {
+        const readFlag = m.read ? " " : "*";
+        const preview = m.content ? m.content.substring(0, 60) + (m.content.length > 60 ? "..." : "") : "(no content)";
+        const author = m.author_handle ? `@${m.author_handle}` : m.author || "unknown";
+        console.log(`  ${readFlag} [${m.type || "?"}] ${author}: ${preview}`);
+      }
+      console.log(`\n${mentions.length} mention(s)`);
+    }
+  });
+
+mentionsCmd
+  .command("reply")
+  .description("Reply to a mention")
+  .argument("<id>", "Mention ID")
+  .requiredOption("--content <text>", "Reply content")
+  .option("--json", "Output as JSON", false)
+  .action(async (id, opts) => {
+    try {
+      const result = await replyToMention(id, opts.content);
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Reply sent. Platform reply ID: ${result.platformReplyId}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+mentionsCmd
+  .command("read")
+  .description("Mark a mention as read")
+  .argument("<id>", "Mention ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const mention = markRead(id);
+    if (!mention) {
+      console.error(`Mention '${id}' not found.`);
+      process.exit(1);
+    }
+    if (opts.json) {
+      console.log(JSON.stringify(mention, null, 2));
+    } else {
+      console.log(`Marked mention ${id} as read.`);
+    }
+  });
+
+mentionsCmd
+  .command("read-all")
+  .description("Mark all mentions for an account as read")
+  .argument("<account-id>", "Account ID")
+  .action((accountId) => {
+    const count = markAllRead(accountId);
+    console.log(`Marked ${count} mention(s) as read.`);
+  });
+
+mentionsCmd
+  .command("watch")
+  .description("Start polling for new mentions")
+  .option("--interval <ms>", "Poll interval in milliseconds", "120000")
+  .action((opts) => {
+    const interval = parseInt(opts.interval);
+    pollMentions(interval);
+    console.log(`Mention poller started (interval: ${interval}ms)`);
+    console.log("Press Ctrl+C to stop.");
+    process.on("SIGINT", () => {
+      stopPolling();
+      console.log("\nMention poller stopped.");
+      process.exit(0);
+    });
+  });
+
+mentionsCmd
+  .command("stats")
+  .description("Get mention statistics for an account")
+  .argument("<account-id>", "Account ID")
+  .option("--json", "Output as JSON", false)
+  .action((accountId, opts) => {
+    const stats = getMentionStats(accountId);
+    if (opts.json) {
+      console.log(JSON.stringify(stats, null, 2));
+    } else {
+      console.log("Mention Stats:");
+      console.log(`  Total: ${stats.total}`);
+      console.log(`  Unread: ${stats.unread}`);
+      if (Object.keys(stats.by_type).length) {
+        console.log("  By type:");
+        for (const [type, count] of Object.entries(stats.by_type)) {
+          console.log(`    ${type}: ${count}`);
+        }
+      }
+      if (Object.keys(stats.by_sentiment).length) {
+        console.log("  By sentiment:");
+        for (const [sentiment, count] of Object.entries(stats.by_sentiment)) {
+          console.log(`    ${sentiment}: ${count}`);
+        }
+      }
+    }
+  });
+
+// --- AI Content Generation ---
+
+const aiCmd = program
+  .command("ai")
+  .description("AI-powered content generation");
+
+aiCmd
+  .command("generate")
+  .description("Generate a post using AI")
+  .requiredOption("--topic <topic>", "Topic to write about")
+  .requiredOption("--platform <platform>", "Target platform (x/linkedin/instagram/threads/bluesky)")
+  .option("--tone <tone>", "Tone: professional, casual, witty", "professional")
+  .option("--no-hashtags", "Disable hashtags")
+  .option("--emoji", "Include emojis", false)
+  .option("--language <lang>", "Language", "English")
+  .option("--json", "Output as JSON", false)
+  .action(async (opts) => {
+    try {
+      const result = await aiGeneratePost(opts.topic, opts.platform as Platform, {
+        tone: opts.tone as Tone,
+        includeHashtags: opts.hashtags,
+        includeEmoji: opts.emoji,
+        language: opts.language,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log("Generated Post:");
+        console.log(`  ${result.content}`);
+        if (result.hashtags.length) {
+          console.log(`  Hashtags: ${result.hashtags.map((h: string) => "#" + h).join(" ")}`);
+        }
+        if (result.suggested_media_prompt) {
+          console.log(`  Media prompt: ${result.suggested_media_prompt}`);
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+aiCmd
+  .command("suggest-hashtags")
+  .description("Suggest hashtags for content")
+  .requiredOption("--content <text>", "Post content to analyze")
+  .requiredOption("--platform <platform>", "Target platform")
+  .option("--count <n>", "Number of hashtags", "5")
+  .option("--json", "Output as JSON", false)
+  .action(async (opts) => {
+    try {
+      const hashtags = await aiSuggestHashtags(opts.content, opts.platform as Platform, parseInt(opts.count));
+
+      if (opts.json) {
+        console.log(JSON.stringify({ hashtags }, null, 2));
+      } else {
+        console.log("Suggested Hashtags:");
+        for (const h of hashtags) {
+          console.log(`  #${h}`);
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+aiCmd
+  .command("optimize")
+  .description("Optimize a post for better engagement")
+  .argument("<post-id>", "Post ID to optimize")
+  .option("--json", "Output as JSON", false)
+  .action(async (postId, opts) => {
+    try {
+      const post = getPost(postId);
+      if (!post) {
+        console.error(`Post '${postId}' not found.`);
+        process.exit(1);
+      }
+
+      const account = getAccount(post.account_id);
+      if (!account) {
+        console.error(`Account '${post.account_id}' not found.`);
+        process.exit(1);
+      }
+
+      const result = await aiOptimizePost(post.content, account.platform);
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log("Optimized Post:");
+        console.log(`  ${result.optimized_content}`);
+        if (result.improvements.length) {
+          console.log("\nImprovements:");
+          for (const imp of result.improvements) {
+            console.log(`  - ${imp}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+aiCmd
+  .command("generate-thread")
+  .description("Generate a multi-tweet thread using AI")
+  .requiredOption("--topic <topic>", "Topic to write about")
+  .option("--tweets <n>", "Number of tweets in thread", "5")
+  .option("--json", "Output as JSON", false)
+  .action(async (opts) => {
+    try {
+      const tweets = await aiGenerateThread(opts.topic, parseInt(opts.tweets));
+
+      if (opts.json) {
+        console.log(JSON.stringify({ tweets }, null, 2));
+      } else {
+        console.log("Generated Thread:");
+        for (let i = 0; i < tweets.length; i++) {
+          console.log(`\n  [${i + 1}/${tweets.length}] ${tweets[i]}`);
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+aiCmd
+  .command("repurpose")
+  .description("Repurpose a post for a different platform")
+  .argument("<post-id>", "Post ID to repurpose")
+  .requiredOption("--to <platform>", "Target platform (x/linkedin/instagram/threads/bluesky)")
+  .option("--json", "Output as JSON", false)
+  .action(async (postId, opts) => {
+    try {
+      const post = getPost(postId);
+      if (!post) {
+        console.error(`Post '${postId}' not found.`);
+        process.exit(1);
+      }
+
+      const account = getAccount(post.account_id);
+      if (!account) {
+        console.error(`Account '${post.account_id}' not found.`);
+        process.exit(1);
+      }
+
+      const result = await aiRepurposePost(post.content, account.platform, opts.to as Platform);
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Repurposed for ${opts.to}:`);
+        console.log(`  ${result.content}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// --- Audience ---
+
+const audienceCmd = program
+  .command("audience")
+  .description("Follower sync and audience insights");
+
+audienceCmd
+  .command("sync")
+  .description("Sync followers from the platform API")
+  .argument("<account-id>", "Account ID")
+  .option("--json", "Output as JSON", false)
+  .action((accountId, opts) => {
+    const result = syncFollowers(accountId);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Follower sync complete:`);
+      console.log(`  Synced: ${result.synced}`);
+      console.log(`  New: ${result.new_followers}`);
+      console.log(`  Unfollowed: ${result.unfollowed}`);
+      if (result.message) console.log(`  Note: ${result.message}`);
+    }
+  });
+
+audienceCmd
+  .command("insights")
+  .description("Get audience insights for an account")
+  .argument("<account-id>", "Account ID")
+  .option("--json", "Output as JSON", false)
+  .action((accountId, opts) => {
+    const insights = getAudienceInsights(accountId);
+
+    if (opts.json) {
+      console.log(JSON.stringify(insights, null, 2));
+    } else {
+      console.log("Audience Insights:");
+      console.log(`  Total followers: ${insights.total_followers}`);
+      console.log(`  Growth (7d): ${insights.growth_rate_7d}%`);
+      console.log(`  Growth (30d): ${insights.growth_rate_30d}%`);
+      console.log(`  New followers (7d): ${insights.new_followers_7d}`);
+      console.log(`  Lost followers (7d): ${insights.lost_followers_7d}`);
+      if (insights.top_followers.length > 0) {
+        console.log("  Top followers:");
+        for (const f of insights.top_followers.slice(0, 5)) {
+          console.log(`    @${f.username || "?"} — ${f.follower_count} followers`);
+        }
+      }
+    }
+  });
+
+audienceCmd
+  .command("growth")
+  .description("Show follower growth chart data")
+  .argument("<account-id>", "Account ID")
+  .option("--days <n>", "Number of days", "30")
+  .option("--json", "Output as JSON", false)
+  .action((accountId, opts) => {
+    const days = parseInt(opts.days);
+    const chart = getFollowerGrowthChart(accountId, days);
+
+    if (opts.json) {
+      console.log(JSON.stringify(chart, null, 2));
+    } else {
+      if (chart.length === 0) {
+        console.log("No snapshot data available.");
+        return;
+      }
+      console.log(`Follower Growth (last ${days} days):`);
+      for (const point of chart) {
+        console.log(`  ${point.date}: ${point.count}`);
+      }
+    }
+  });
+
+audienceCmd
+  .command("top")
+  .description("Show top followers by their follower count")
+  .argument("<account-id>", "Account ID")
+  .option("--limit <n>", "Number of results", "10")
+  .option("--json", "Output as JSON", false)
+  .action((accountId, opts) => {
+    const limit = parseInt(opts.limit);
+    const followers = getTopFollowers(accountId, limit);
+
+    if (opts.json) {
+      console.log(JSON.stringify(followers, null, 2));
+    } else {
+      if (followers.length === 0) {
+        console.log("No followers found.");
+        return;
+      }
+      console.log("Top Followers:");
+      for (const f of followers) {
+        const name = f.display_name ? ` (${f.display_name})` : "";
+        console.log(`  @${f.username || "?"}${name} — ${f.follower_count} followers`);
+      }
+    }
+  });
+
+// --- Sentiment ---
+
+const sentimentCmd = program
+  .command("sentiment")
+  .description("Sentiment analysis for mentions");
+
+sentimentCmd
+  .command("analyze")
+  .description("Analyze sentiment of a text")
+  .requiredOption("--text <text>", "Text to analyze")
+  .option("--json", "Output as JSON", false)
+  .action(async (opts) => {
+    try {
+      const result = await analyzeSentiment(opts.text);
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Sentiment: ${result.sentiment}`);
+        console.log(`Score: ${result.score}`);
+        if (result.keywords.length) {
+          console.log(`Keywords: ${result.keywords.join(", ")}`);
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+sentimentCmd
+  .command("report")
+  .description("Get sentiment report for an account")
+  .argument("<account-id>", "Account ID")
+  .option("--days <n>", "Number of days to analyze", "30")
+  .option("--json", "Output as JSON", false)
+  .action((accountId, opts) => {
+    const days = parseInt(opts.days);
+    const report = getSentimentReport(accountId, days);
+
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      if (report.total_analyzed === 0) {
+        console.log("No analyzed mentions found.");
+        return;
+      }
+      console.log(`Sentiment Report (last ${days} days):`);
+      console.log(`  Total analyzed: ${report.total_analyzed}`);
+      console.log(`  Positive: ${report.positive_pct}%`);
+      console.log(`  Neutral: ${report.neutral_pct}%`);
+      console.log(`  Negative: ${report.negative_pct}%`);
+      if (report.trending_keywords.length) {
+        console.log(`  Trending keywords: ${report.trending_keywords.join(", ")}`);
+      }
+      if (report.most_positive) {
+        const preview = report.most_positive.content.substring(0, 60);
+        console.log(`  Most positive: ${preview}${report.most_positive.content.length > 60 ? "..." : ""}`);
+      }
+      if (report.most_negative) {
+        const preview = report.most_negative.content.substring(0, 60);
+        console.log(`  Most negative: ${preview}${report.most_negative.content.length > 60 ? "..." : ""}`);
+      }
+    }
+  });
+
+sentimentCmd
+  .command("auto")
+  .description("Auto-analyze sentiment for a mention")
+  .argument("<mention-id>", "Mention ID")
+  .option("--json", "Output as JSON", false)
+  .action(async (mentionId, opts) => {
+    try {
+      const result = await autoAnalyzeMention(mentionId);
+      if (!result) {
+        console.error("Analysis returned no result.");
+        process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Analyzed mention ${mentionId}:`);
+        console.log(`  Sentiment: ${result.sentiment}`);
+        console.log(`  Score: ${result.score}`);
+        if (result.keywords.length) {
+          console.log(`  Keywords: ${result.keywords.join(", ")}`);
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// --- Serve ---
+
+program
+  .command("serve")
+  .description("Start REST API server with web dashboard")
+  .option("--port <port>", "Port to listen on", "19650")
+  .action(async (opts) => {
+    process.env["PORT"] = opts.port;
+    await import("../server/index.js");
   });
 
 program.parse(process.argv);

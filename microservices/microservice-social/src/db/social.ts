@@ -99,6 +99,8 @@ export interface Post {
   engagement: Engagement;
   tags: string[];
   recurrence: Recurrence | null;
+  thread_id: string | null;
+  thread_position: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -115,6 +117,8 @@ interface PostRow {
   engagement: string;
   tags: string;
   recurrence: string | null;
+  thread_id: string | null;
+  thread_position: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -127,6 +131,8 @@ function rowToPost(row: PostRow): Post {
     engagement: JSON.parse(row.engagement || "{}"),
     tags: JSON.parse(row.tags || "[]"),
     recurrence: (row.recurrence as Recurrence) || null,
+    thread_id: row.thread_id || null,
+    thread_position: row.thread_position ?? null,
   };
 }
 
@@ -299,6 +305,8 @@ export interface CreatePostInput {
   scheduled_at?: string;
   tags?: string[];
   recurrence?: Recurrence;
+  thread_id?: string;
+  thread_position?: number;
 }
 
 export function createPost(input: CreatePostInput): Post {
@@ -308,8 +316,8 @@ export function createPost(input: CreatePostInput): Post {
   const tags = JSON.stringify(input.tags || []);
 
   db.prepare(
-    `INSERT INTO posts (id, account_id, content, media_urls, status, scheduled_at, tags, recurrence)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO posts (id, account_id, content, media_urls, status, scheduled_at, tags, recurrence, thread_id, thread_position)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.account_id,
@@ -318,7 +326,9 @@ export function createPost(input: CreatePostInput): Post {
     input.status || "draft",
     input.scheduled_at || null,
     tags,
-    input.recurrence || null
+    input.recurrence || null,
+    input.thread_id || null,
+    input.thread_position ?? null
   );
 
   return getPost(id)!;
@@ -460,6 +470,26 @@ export function countPosts(): number {
   const db = getDatabase();
   const row = db.prepare("SELECT COUNT(*) as count FROM posts").get() as { count: number };
   return row.count;
+}
+
+/**
+ * Get all posts in a thread, ordered by thread_position
+ */
+export function getThreadPosts(threadId: string): Post[] {
+  const db = getDatabase();
+  const rows = db.prepare(
+    "SELECT * FROM posts WHERE thread_id = ? ORDER BY thread_position ASC"
+  ).all(threadId) as PostRow[];
+  return rows.map(rowToPost);
+}
+
+/**
+ * Delete all posts in a thread
+ */
+export function deleteThreadPosts(threadId: string): number {
+  const db = getDatabase();
+  const result = db.prepare("DELETE FROM posts WHERE thread_id = ?").run(threadId);
+  return result.changes;
 }
 
 /**

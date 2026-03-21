@@ -85,4 +85,76 @@ export const MIGRATIONS: MigrationEntry[] = [
       CREATE INDEX IF NOT EXISTS idx_posts_recurrence ON posts(recurrence);
     `,
   },
+  {
+    id: 3,
+    name: "add_mentions",
+    sql: `
+      CREATE TABLE IF NOT EXISTS mentions (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        platform TEXT NOT NULL,
+        author TEXT,
+        author_handle TEXT,
+        content TEXT,
+        type TEXT CHECK (type IN ('mention', 'reply', 'quote', 'dm')),
+        platform_post_id TEXT,
+        sentiment TEXT,
+        read INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT,
+        fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_mentions_account ON mentions(account_id);
+      CREATE INDEX IF NOT EXISTS idx_mentions_read ON mentions(read);
+      CREATE INDEX IF NOT EXISTS idx_mentions_type ON mentions(type);
+    `,
+  },
+  {
+    id: 4,
+    name: "add_last_metrics_sync",
+    sql: `
+      ALTER TABLE posts ADD COLUMN last_metrics_sync TEXT;
+      CREATE INDEX IF NOT EXISTS idx_posts_last_metrics_sync ON posts(last_metrics_sync);
+    `,
+  },
+  {
+    id: 5,
+    name: "add_thread_support",
+    sql: `
+      ALTER TABLE posts ADD COLUMN thread_id TEXT;
+      ALTER TABLE posts ADD COLUMN thread_position INTEGER;
+      CREATE INDEX IF NOT EXISTS idx_posts_thread ON posts(thread_id);
+    `,
+  },
+  {
+    id: 6,
+    name: "add_followers_and_audience_snapshots",
+    sql: `
+      CREATE TABLE IF NOT EXISTS followers (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        platform_user_id TEXT,
+        username TEXT,
+        display_name TEXT,
+        follower_count INTEGER DEFAULT 0,
+        following INTEGER DEFAULT 1,
+        followed_at TEXT,
+        unfollowed_at TEXT,
+        metadata TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS audience_snapshots (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        follower_count INTEGER DEFAULT 0,
+        following_count INTEGER DEFAULT 0,
+        snapshot_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_followers_account ON followers(account_id);
+      CREATE INDEX IF NOT EXISTS idx_followers_following ON followers(following);
+      CREATE INDEX IF NOT EXISTS idx_snapshots_account ON audience_snapshots(account_id);
+    `,
+  },
 ];
