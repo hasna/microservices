@@ -491,3 +491,307 @@ export function getPlatforms(): string[] {
   ).all() as { platform: string }[];
   return rows.map((r) => r.platform);
 }
+
+// --- QoL Features ---
+
+// 1. Bulk pause/resume by platform
+export interface BulkUpdateResult {
+  updated_count: number;
+  platform: Platform;
+  new_status: CampaignStatus;
+}
+
+export function bulkPause(platform: Platform): BulkUpdateResult {
+  const db = getDatabase();
+  const result = db.prepare(
+    "UPDATE campaigns SET status = 'paused', updated_at = datetime('now') WHERE platform = ? AND status = 'active'"
+  ).run(platform);
+  return { updated_count: result.changes, platform, new_status: "paused" };
+}
+
+export function bulkResume(platform: Platform): BulkUpdateResult {
+  const db = getDatabase();
+  const result = db.prepare(
+    "UPDATE campaigns SET status = 'active', updated_at = datetime('now') WHERE platform = ? AND status = 'paused'"
+  ).run(platform);
+  return { updated_count: result.changes, platform, new_status: "active" };
+}
+
+// 2. Performance ranking
+export type RankMetric = "roas" | "ctr" | "spend";
+
+export function getRankedCampaigns(sortBy: RankMetric = "roas", limit: number = 10): Campaign[] {
+  const db = getDatabase();
+  let orderExpr: string;
+
+  switch (sortBy) {
+    case "roas":
+      orderExpr = "roas DESC";
+      break;
+    case "ctr":
+      // CTR = clicks / impressions (handle division by zero)
+      orderExpr = "CASE WHEN impressions > 0 THEN CAST(clicks AS REAL) / impressions ELSE 0 END DESC";
+      break;
+    case "spend":
+      orderExpr = "spend DESC";
+      break;
+    default:
+      orderExpr = "roas DESC";
+  }
+
+  const rows = db.prepare(
+    `SELECT * FROM campaigns ORDER BY ${orderExpr} LIMIT ?`
+  ).all(limit) as CampaignRow[];
+  return rows.map(rowToCampaign);
+}
+
+// 3. Budget alerts
+export interface BudgetStatus {
+  campaign_id: string;
+  campaign_name: string;
+  over_budget: boolean;
+  daily_remaining: number;
+  total_remaining: number;
+  pct_used: number;
+  days_active: number;
+  expected_spend: number;
+}
+
+export function checkBudgetStatus(id: string): BudgetStatus | null {
+  const campaign = getCampaign(id);
+  if (!campaign) return null;
+
+  const now = new Date();
+  let daysActive = 1;
+
+  if (campaign.start_date) {
+    const start = new Date(campaign.start_date);
+    const diffMs = now.getTime() - start.getTime();
+    daysActive = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+  }
+
+  const expectedSpend = campaign.budget_daily * daysActive;
+  const overBudget = campaign.budget_total > 0
+    ? campaign.spend > campaign.budget_total
+    : campaign.spend > expectedSpend;
+
+  const dailySpentToday = daysActive > 0 ? campaign.spend / daysActive : campaign.spend;
+  const dailyRemaining = Math.max(0, campaign.budget_daily - dailySpentToday);
+
+  const totalRemaining = campaign.budget_total > 0
+    ? Math.max(0, campaign.budget_total - campaign.spend)
+    : Math.max(0, expectedSpend - campaign.spend);
+
+  const pctUsed = campaign.budget_total > 0
+    ? (campaign.spend / campaign.budget_total) * 100
+    : expectedSpend > 0 ? (campaign.spend / expectedSpend) * 100 : 0;
+
+  return {
+    campaign_id: id,
+    campaign_name: campaign.name,
+    over_budget: overBudget,
+    daily_remaining: Math.round(dailyRemaining * 100) / 100,
+    total_remaining: Math.round(totalRemaining * 100) / 100,
+    pct_used: Math.round(pctUsed * 100) / 100,
+    days_active: daysActive,
+    expected_spend: Math.round(expectedSpend * 100) / 100,
+  };
+}
+
+// 4. Cross-platform comparison
+export interface PlatformComparison {
+  platform: Platform;
+  campaign_count: number;
+  total_spend: number;
+  total_impressions: number;
+  total_clicks: number;
+  total_conversions: number;
+  avg_roas: number;
+  avg_ctr: number;
+  avg_cpa: number;
+}
+
+export function comparePlatforms(): PlatformComparison[] {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT
+      platform,
+      COUNT(*) as campaign_count,
+      COALESCE(SUM(spend), 0) as total_spend,
+      COALESCE(SUM(impressions), 0) as total_impressions,
+      COALESCE(SUM(clicks), 0) as total_clicks,
+      COALESCE(SUM(conversions), 0) as total_conversions,
+      COALESCE(AVG(CASE WHEN roas > 0 THEN roas END), 0) as avg_roas,
+      CASE WHEN SUM(impressions) > 0
+        THEN CAST(SUM(clicks) AS REAL) / SUM(impressions) * 100
+        ELSE 0
+      END as avg_ctr,
+      CASE WHEN SUM(conversions) > 0
+        THEN SUM(spend) / SUM(conversions)
+        ELSE 0
+      END as avg_cpa
+    FROM campaigns
+    GROUP BY platform
+    ORDER BY total_spend DESC
+  `).all() as PlatformComparison[];
+  return rows;
+}
+
+// 5. CSV export
+export function exportCampaigns(format: "csv" | "json" = "csv"): string {
+  const campaigns = listCampaigns();
+
+  if (format === "json") {
+    return JSON.stringify(campaigns, null, 2);
+  }
+
+  // CSV format
+  const headers = [
+    "id", "platform", "name", "status", "budget_daily", "budget_total",
+    "spend", "impressions", "clicks", "conversions", "roas",
+    "start_date", "end_date", "created_at", "updated_at",
+  ];
+
+  const rows = campaigns.map((c) =>
+    headers.map((h) => {
+      const val = c[h as keyof Campaign];
+      if (val === null || val === undefined) return "";
+      if (typeof val === "object") return JSON.stringify(val);
+      const str = String(val);
+      // Escape CSV fields that contain commas or quotes
+      if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    }).join(",")
+  );
+
+  return [headers.join(","), ...rows].join("\n");
+}
+
+// 6. Campaign cloning
+export function cloneCampaign(id: string, newName: string): Campaign | null {
+  const original = getCampaign(id);
+  if (!original) return null;
+
+  const db = getDatabase();
+
+  // Clone the campaign itself (reset metrics)
+  const cloned = createCampaign({
+    platform: original.platform,
+    name: newName,
+    status: "draft",
+    budget_daily: original.budget_daily,
+    budget_total: original.budget_total,
+    start_date: original.start_date || undefined,
+    end_date: original.end_date || undefined,
+    metadata: original.metadata,
+  });
+
+  // Clone ad groups and their ads
+  const adGroups = listAdGroups(id);
+  for (const ag of adGroups) {
+    const clonedGroup = createAdGroup({
+      campaign_id: cloned.id,
+      name: ag.name,
+      targeting: ag.targeting,
+      status: "draft",
+    });
+
+    const ads = listAds(ag.id);
+    for (const ad of ads) {
+      createAd({
+        ad_group_id: clonedGroup.id,
+        headline: ad.headline,
+        description: ad.description || undefined,
+        creative_url: ad.creative_url || undefined,
+        status: "draft",
+        metrics: {},
+      });
+    }
+  }
+
+  return getCampaign(cloned.id)!;
+}
+
+// 7. Budget remaining (reuses checkBudgetStatus but provides a focused view)
+export interface BudgetRemaining {
+  campaign_id: string;
+  campaign_name: string;
+  budget_daily: number;
+  budget_total: number;
+  spend: number;
+  daily_remaining: number;
+  total_remaining: number;
+  days_remaining_at_daily_rate: number;
+}
+
+export function getBudgetRemaining(id: string): BudgetRemaining | null {
+  const campaign = getCampaign(id);
+  if (!campaign) return null;
+
+  const now = new Date();
+  let daysActive = 1;
+  if (campaign.start_date) {
+    const start = new Date(campaign.start_date);
+    const diffMs = now.getTime() - start.getTime();
+    daysActive = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+  }
+
+  const avgDailySpend = campaign.spend / daysActive;
+  const dailyRemaining = Math.max(0, campaign.budget_daily - avgDailySpend);
+  const totalRemaining = campaign.budget_total > 0
+    ? Math.max(0, campaign.budget_total - campaign.spend)
+    : 0;
+  const daysRemainingAtRate = avgDailySpend > 0 && campaign.budget_total > 0
+    ? Math.floor(totalRemaining / avgDailySpend)
+    : 0;
+
+  return {
+    campaign_id: id,
+    campaign_name: campaign.name,
+    budget_daily: campaign.budget_daily,
+    budget_total: campaign.budget_total,
+    spend: campaign.spend,
+    daily_remaining: Math.round(dailyRemaining * 100) / 100,
+    total_remaining: Math.round(totalRemaining * 100) / 100,
+    days_remaining_at_daily_rate: daysRemainingAtRate,
+  };
+}
+
+// 8. Ad group stats — aggregate metrics for ads in a group
+export interface AdGroupStats {
+  ad_group_id: string;
+  ad_group_name: string;
+  campaign_id: string;
+  total_ads: number;
+  active_ads: number;
+  metrics: Record<string, number>;
+}
+
+export function getAdGroupStats(adGroupId: string): AdGroupStats | null {
+  const adGroup = getAdGroup(adGroupId);
+  if (!adGroup) return null;
+
+  const ads = listAds(adGroupId);
+  const activeAds = ads.filter((a) => a.status === "active").length;
+
+  // Aggregate numeric metrics from all ads
+  const aggregated: Record<string, number> = {};
+  for (const ad of ads) {
+    for (const [key, value] of Object.entries(ad.metrics)) {
+      if (typeof value === "number") {
+        aggregated[key] = (aggregated[key] || 0) + value;
+      }
+    }
+  }
+
+  return {
+    ad_group_id: adGroupId,
+    ad_group_name: adGroup.name,
+    campaign_id: adGroup.campaign_id,
+    total_ads: ads.length,
+    active_ads: activeAds,
+    metrics: aggregated,
+  };
+}

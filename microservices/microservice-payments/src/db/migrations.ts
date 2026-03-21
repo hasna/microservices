@@ -60,4 +60,22 @@ export const MIGRATIONS: MigrationEntry[] = [
       CREATE INDEX IF NOT EXISTS idx_payouts_status ON payouts(status);
     `,
   },
+  {
+    id: 2,
+    name: "retry_attempts",
+    sql: `
+      CREATE TABLE IF NOT EXISTS retry_attempts (
+        id TEXT PRIMARY KEY,
+        payment_id TEXT NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+        attempt INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'retrying', 'succeeded', 'failed')),
+        attempted_at TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_retry_attempts_payment_id ON retry_attempts(payment_id);
+      CREATE INDEX IF NOT EXISTS idx_retry_attempts_status ON retry_attempts(status);
+    `,
+  },
 ];

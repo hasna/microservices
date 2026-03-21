@@ -7,7 +7,46 @@ import { getDatabase } from "./database.js";
 // ---- Types ----
 
 export type Platform = "x" | "linkedin" | "instagram" | "threads" | "bluesky";
-export type PostStatus = "draft" | "scheduled" | "published" | "failed";
+export type PostStatus = "draft" | "scheduled" | "published" | "failed" | "pending_review";
+
+export type Recurrence = "daily" | "weekly" | "biweekly" | "monthly";
+
+/**
+ * Platform character limits for post content validation
+ */
+export const PLATFORM_LIMITS: Record<Platform, number> = {
+  x: 280,
+  linkedin: 3000,
+  instagram: 2200,
+  threads: 500,
+  bluesky: 300,
+};
+
+export interface PlatformLimitWarning {
+  platform: Platform;
+  limit: number;
+  content_length: number;
+  over_by: number;
+}
+
+/**
+ * Check if content exceeds platform character limit for a given account
+ */
+export function checkPlatformLimit(content: string, accountId: string): PlatformLimitWarning | null {
+  const account = getAccount(accountId);
+  if (!account) return null;
+
+  const limit = PLATFORM_LIMITS[account.platform];
+  if (content.length > limit) {
+    return {
+      platform: account.platform,
+      limit,
+      content_length: content.length,
+      over_by: content.length - limit,
+    };
+  }
+  return null;
+}
 
 export interface Account {
   id: string;
@@ -59,6 +98,7 @@ export interface Post {
   platform_post_id: string | null;
   engagement: Engagement;
   tags: string[];
+  recurrence: Recurrence | null;
   created_at: string;
   updated_at: string;
 }
@@ -74,6 +114,7 @@ interface PostRow {
   platform_post_id: string | null;
   engagement: string;
   tags: string;
+  recurrence: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -85,6 +126,7 @@ function rowToPost(row: PostRow): Post {
     media_urls: JSON.parse(row.media_urls || "[]"),
     engagement: JSON.parse(row.engagement || "{}"),
     tags: JSON.parse(row.tags || "[]"),
+    recurrence: (row.recurrence as Recurrence) || null,
   };
 }
 
@@ -256,6 +298,7 @@ export interface CreatePostInput {
   status?: PostStatus;
   scheduled_at?: string;
   tags?: string[];
+  recurrence?: Recurrence;
 }
 
 export function createPost(input: CreatePostInput): Post {
@@ -265,8 +308,8 @@ export function createPost(input: CreatePostInput): Post {
   const tags = JSON.stringify(input.tags || []);
 
   db.prepare(
-    `INSERT INTO posts (id, account_id, content, media_urls, status, scheduled_at, tags)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO posts (id, account_id, content, media_urls, status, scheduled_at, tags, recurrence)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.account_id,
@@ -274,7 +317,8 @@ export function createPost(input: CreatePostInput): Post {
     media_urls,
     input.status || "draft",
     input.scheduled_at || null,
-    tags
+    tags,
+    input.recurrence || null
   );
 
   return getPost(id)!;
@@ -348,6 +392,7 @@ export interface UpdatePostInput {
   platform_post_id?: string;
   engagement?: Engagement;
   tags?: string[];
+  recurrence?: Recurrence | null;
 }
 
 export function updatePost(id: string, input: UpdatePostInput): Post | null {
@@ -389,6 +434,10 @@ export function updatePost(id: string, input: UpdatePostInput): Post | null {
   if (input.tags !== undefined) {
     sets.push("tags = ?");
     params.push(JSON.stringify(input.tags));
+  }
+  if (input.recurrence !== undefined) {
+    sets.push("recurrence = ?");
+    params.push(input.recurrence);
   }
 
   if (sets.length === 0) return existing;
@@ -669,4 +718,329 @@ export function getOverallStats(): {
     total_templates,
     engagement,
   };
+}
+
+// ---- Bulk Schedule ----
+
+export interface BatchScheduleInput {
+  account_id: string;
+  content: string;
+  scheduled_at: string;
+  media_urls?: string[];
+  tags?: string[];
+  recurrence?: Recurrence;
+}
+
+export interface BatchScheduleResult {
+  scheduled: Post[];
+  errors: { index: number; error: string }[];
+  warnings: PlatformLimitWarning[];
+}
+
+/**
+ * Schedule multiple posts at once from an array of post definitions
+ */
+export function batchSchedule(posts: BatchScheduleInput[]): BatchScheduleResult {
+  const scheduled: Post[] = [];
+  const errors: { index: number; error: string }[] = [];
+  const warnings: PlatformLimitWarning[] = [];
+
+  for (let i = 0; i < posts.length; i++) {
+    const input = posts[i];
+    try {
+      // Validate account exists
+      const account = getAccount(input.account_id);
+      if (!account) {
+        errors.push({ index: i, error: `Account '${input.account_id}' not found` });
+        continue;
+      }
+
+      // Check platform limit
+      const warning = checkPlatformLimit(input.content, input.account_id);
+      if (warning) {
+        warnings.push(warning);
+      }
+
+      const post = createPost({
+        account_id: input.account_id,
+        content: input.content,
+        media_urls: input.media_urls,
+        status: "scheduled",
+        scheduled_at: input.scheduled_at,
+        tags: input.tags,
+        recurrence: input.recurrence,
+      });
+
+      scheduled.push(post);
+    } catch (err) {
+      errors.push({ index: i, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  return { scheduled, errors, warnings };
+}
+
+// ---- Cross-Post ----
+
+export interface CrossPostResult {
+  posts: Post[];
+  warnings: PlatformLimitWarning[];
+}
+
+/**
+ * Create identical post on multiple platform accounts
+ */
+export function crossPost(
+  content: string,
+  platforms: Platform[],
+  options?: { media_urls?: string[]; tags?: string[]; scheduled_at?: string }
+): CrossPostResult {
+  const posts: Post[] = [];
+  const warnings: PlatformLimitWarning[] = [];
+
+  for (const platform of platforms) {
+    // Find an account for this platform
+    const accounts = listAccounts({ platform });
+    if (accounts.length === 0) {
+      throw new Error(`No account found for platform '${platform}'`);
+    }
+
+    const account = accounts[0]; // Use first matching account
+
+    // Check platform limit
+    const limit = PLATFORM_LIMITS[platform];
+    if (content.length > limit) {
+      warnings.push({
+        platform,
+        limit,
+        content_length: content.length,
+        over_by: content.length - limit,
+      });
+    }
+
+    const post = createPost({
+      account_id: account.id,
+      content,
+      media_urls: options?.media_urls,
+      status: options?.scheduled_at ? "scheduled" : "draft",
+      scheduled_at: options?.scheduled_at,
+      tags: options?.tags,
+    });
+
+    posts.push(post);
+  }
+
+  return { posts, warnings };
+}
+
+// ---- Best Time to Post ----
+
+export interface BestTimeSlot {
+  day_of_week: number; // 0=Sunday, 6=Saturday
+  day_name: string;
+  hour: number;
+  avg_engagement: number;
+  post_count: number;
+}
+
+export interface BestTimeResult {
+  best_hours: BestTimeSlot[];
+  best_days: { day_of_week: number; day_name: string; avg_engagement: number; post_count: number }[];
+  total_analyzed: number;
+}
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * Analyze historical engagement data to find best time to post
+ */
+export function getBestTimeToPost(accountId: string): BestTimeResult {
+  const db = getDatabase();
+  const rows = db.prepare(
+    "SELECT published_at, engagement FROM posts WHERE account_id = ? AND status = 'published' AND published_at IS NOT NULL"
+  ).all(accountId) as { published_at: string; engagement: string }[];
+
+  if (rows.length === 0) {
+    return { best_hours: [], best_days: [], total_analyzed: 0 };
+  }
+
+  // Group by day of week and hour
+  const hourBuckets: Record<string, { total_engagement: number; count: number; day: number; hour: number }> = {};
+  const dayBuckets: Record<number, { total_engagement: number; count: number }> = {};
+
+  for (const row of rows) {
+    const date = new Date(row.published_at.replace(" ", "T"));
+    const dayOfWeek = date.getUTCDay();
+    const hour = date.getUTCHours();
+    const engagement = JSON.parse(row.engagement || "{}") as Engagement;
+    const totalEng = (engagement.likes || 0) + (engagement.shares || 0) * 2 +
+      (engagement.comments || 0) * 3 + (engagement.clicks || 0);
+
+    const key = `${dayOfWeek}-${hour}`;
+    if (!hourBuckets[key]) {
+      hourBuckets[key] = { total_engagement: 0, count: 0, day: dayOfWeek, hour };
+    }
+    hourBuckets[key].total_engagement += totalEng;
+    hourBuckets[key].count += 1;
+
+    if (!dayBuckets[dayOfWeek]) {
+      dayBuckets[dayOfWeek] = { total_engagement: 0, count: 0 };
+    }
+    dayBuckets[dayOfWeek].total_engagement += totalEng;
+    dayBuckets[dayOfWeek].count += 1;
+  }
+
+  // Sort hours by avg engagement
+  const best_hours: BestTimeSlot[] = Object.values(hourBuckets)
+    .map((b) => ({
+      day_of_week: b.day,
+      day_name: DAY_NAMES[b.day],
+      hour: b.hour,
+      avg_engagement: b.count > 0 ? Math.round(b.total_engagement / b.count) : 0,
+      post_count: b.count,
+    }))
+    .sort((a, b) => b.avg_engagement - a.avg_engagement)
+    .slice(0, 10);
+
+  // Sort days by avg engagement
+  const best_days = Object.entries(dayBuckets)
+    .map(([day, b]) => ({
+      day_of_week: parseInt(day),
+      day_name: DAY_NAMES[parseInt(day)],
+      avg_engagement: b.count > 0 ? Math.round(b.total_engagement / b.count) : 0,
+      post_count: b.count,
+    }))
+    .sort((a, b) => b.avg_engagement - a.avg_engagement);
+
+  return { best_hours, best_days, total_analyzed: rows.length };
+}
+
+// ---- Reschedule ----
+
+/**
+ * Update scheduled_at on a post without delete/recreate
+ */
+export function reschedulePost(id: string, newDate: string): Post | null {
+  const post = getPost(id);
+  if (!post) return null;
+
+  if (post.status !== "scheduled" && post.status !== "draft") {
+    throw new Error(`Cannot reschedule post with status '${post.status}'. Must be 'draft' or 'scheduled'.`);
+  }
+
+  return updatePost(id, { scheduled_at: newDate, status: "scheduled" });
+}
+
+// ---- Approval Workflow ----
+
+/**
+ * Submit a draft post for review — moves draft→pending_review
+ */
+export function submitPostForReview(id: string): Post | null {
+  const post = getPost(id);
+  if (!post) return null;
+
+  if (post.status !== "draft") {
+    throw new Error(`Cannot submit post with status '${post.status}'. Must be 'draft'.`);
+  }
+
+  return updatePost(id, { status: "pending_review" });
+}
+
+/**
+ * Approve a post — moves pending_review→scheduled (requires scheduled_at)
+ */
+export function approvePost(id: string, scheduledAt?: string): Post | null {
+  const post = getPost(id);
+  if (!post) return null;
+
+  if (post.status !== "pending_review") {
+    throw new Error(`Cannot approve post with status '${post.status}'. Must be 'pending_review'.`);
+  }
+
+  const targetDate = scheduledAt || post.scheduled_at;
+  if (!targetDate) {
+    throw new Error("Cannot approve post without a scheduled date. Provide --at <datetime>.");
+  }
+
+  return updatePost(id, { status: "scheduled", scheduled_at: targetDate });
+}
+
+// ---- Recurring Posts ----
+
+/**
+ * Create a recurring post — sets recurrence and schedules the first instance
+ */
+export function createRecurringPost(input: CreatePostInput & { recurrence: Recurrence }): Post {
+  if (!input.scheduled_at) {
+    throw new Error("Recurring posts must have a scheduled_at date for the first occurrence.");
+  }
+
+  return createPost({
+    ...input,
+    status: "scheduled",
+  });
+}
+
+// ---- Hashtag Analytics ----
+
+export interface HashtagStat {
+  hashtag: string;
+  post_count: number;
+  total_likes: number;
+  total_shares: number;
+  total_comments: number;
+  total_impressions: number;
+  avg_engagement: number;
+}
+
+/**
+ * Extract hashtags from published posts and correlate with engagement
+ */
+export function getHashtagStats(accountId: string): HashtagStat[] {
+  const db = getDatabase();
+  const rows = db.prepare(
+    "SELECT content, engagement FROM posts WHERE account_id = ? AND status = 'published'"
+  ).all(accountId) as { content: string; engagement: string }[];
+
+  const hashtagMap: Record<string, {
+    count: number;
+    likes: number;
+    shares: number;
+    comments: number;
+    impressions: number;
+  }> = {};
+
+  const hashtagRegex = /#(\w+)/g;
+
+  for (const row of rows) {
+    const engagement = JSON.parse(row.engagement || "{}") as Engagement;
+    const matches = row.content.matchAll(hashtagRegex);
+
+    for (const match of matches) {
+      const tag = match[1].toLowerCase();
+      if (!hashtagMap[tag]) {
+        hashtagMap[tag] = { count: 0, likes: 0, shares: 0, comments: 0, impressions: 0 };
+      }
+      hashtagMap[tag].count += 1;
+      hashtagMap[tag].likes += engagement.likes || 0;
+      hashtagMap[tag].shares += engagement.shares || 0;
+      hashtagMap[tag].comments += engagement.comments || 0;
+      hashtagMap[tag].impressions += engagement.impressions || 0;
+    }
+  }
+
+  return Object.entries(hashtagMap)
+    .map(([hashtag, data]) => ({
+      hashtag,
+      post_count: data.count,
+      total_likes: data.likes,
+      total_shares: data.shares,
+      total_comments: data.comments,
+      total_impressions: data.impressions,
+      avg_engagement: data.count > 0
+        ? Math.round((data.likes + data.shares * 2 + data.comments * 3) / data.count)
+        : 0,
+    }))
+    .sort((a, b) => b.avg_engagement - a.avg_engagement);
 }

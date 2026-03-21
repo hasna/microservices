@@ -32,6 +32,41 @@ import {
   listPendingReminders,
   markReminderSent,
 } from "./contracts";
+import {
+  createObligation,
+  getObligation,
+  listObligations,
+  completeObligation,
+  listOverdueObligations,
+} from "./contracts";
+import {
+  submitForReview,
+  approveContract,
+} from "./contracts";
+import {
+  getContractHistory,
+} from "./contracts";
+import {
+  recordSignature,
+  getSignature,
+  listSignatures,
+} from "./contracts";
+import {
+  saveClauseTemplate,
+  getClauseTemplate,
+  getClauseTemplateByName,
+  listClauseTemplates,
+  addClauseFromTemplate,
+} from "./contracts";
+import {
+  setMultiReminders,
+} from "./contracts";
+import {
+  compareContracts,
+} from "./contracts";
+import {
+  exportContract,
+} from "./contracts";
 import { closeDatabase } from "./database";
 
 afterAll(() => {
@@ -387,5 +422,529 @@ describe("Reminders", () => {
 
     deleteContract(contract.id);
     expect(getReminder(reminder.id)).toBeNull();
+  });
+});
+
+// --- New QoL feature tests ---
+
+describe("Obligations", () => {
+  test("create and get obligation", () => {
+    const contract = createContract({ title: "Obligation Contract" });
+    const clause = createClause({
+      contract_id: contract.id,
+      name: "Delivery",
+      text: "Deliver goods within 30 days.",
+    });
+
+    const obligation = createObligation({
+      clause_id: clause.id,
+      description: "Deliver initial batch",
+      due_date: "2025-06-15",
+      assigned_to: "John Doe",
+    });
+
+    expect(obligation.id).toBeTruthy();
+    expect(obligation.clause_id).toBe(clause.id);
+    expect(obligation.description).toBe("Deliver initial batch");
+    expect(obligation.due_date).toBe("2025-06-15");
+    expect(obligation.status).toBe("pending");
+    expect(obligation.assigned_to).toBe("John Doe");
+
+    const fetched = getObligation(obligation.id);
+    expect(fetched).toBeDefined();
+    expect(fetched!.description).toBe("Deliver initial batch");
+  });
+
+  test("create obligation with minimal fields", () => {
+    const contract = createContract({ title: "Min Obligation" });
+    const clause = createClause({
+      contract_id: contract.id,
+      name: "Payment",
+      text: "Pay on time.",
+    });
+
+    const obligation = createObligation({
+      clause_id: clause.id,
+      description: "Make first payment",
+    });
+
+    expect(obligation.due_date).toBeNull();
+    expect(obligation.assigned_to).toBeNull();
+    expect(obligation.status).toBe("pending");
+  });
+
+  test("list obligations for a clause", () => {
+    const contract = createContract({ title: "Multi-Obligation" });
+    const clause = createClause({
+      contract_id: contract.id,
+      name: "Terms",
+      text: "Terms text.",
+    });
+
+    createObligation({ clause_id: clause.id, description: "Obligation A" });
+    createObligation({ clause_id: clause.id, description: "Obligation B" });
+
+    const obligations = listObligations(clause.id);
+    expect(obligations.length).toBe(2);
+    expect(obligations[0].description).toBe("Obligation A");
+    expect(obligations[1].description).toBe("Obligation B");
+  });
+
+  test("complete obligation", () => {
+    const contract = createContract({ title: "Complete Obligation" });
+    const clause = createClause({
+      contract_id: contract.id,
+      name: "Task",
+      text: "Do the task.",
+    });
+
+    const obligation = createObligation({
+      clause_id: clause.id,
+      description: "Complete me",
+    });
+
+    expect(obligation.status).toBe("pending");
+    const completed = completeObligation(obligation.id);
+    expect(completed).toBeDefined();
+    expect(completed!.status).toBe("completed");
+  });
+
+  test("complete nonexistent obligation returns null", () => {
+    expect(completeObligation("nonexistent-id")).toBeNull();
+  });
+
+  test("list overdue obligations", () => {
+    const contract = createContract({ title: "Overdue Contract" });
+    const clause = createClause({
+      contract_id: contract.id,
+      name: "Overdue Clause",
+      text: "This has overdue obligations.",
+    });
+
+    // Create obligation with past due date
+    createObligation({
+      clause_id: clause.id,
+      description: "This is overdue",
+      due_date: "2020-01-01",
+    });
+
+    const overdue = listOverdueObligations();
+    expect(overdue.length).toBeGreaterThanOrEqual(1);
+    expect(overdue.some((o) => o.description === "This is overdue")).toBe(true);
+    expect(overdue.every((o) => o.status === "overdue")).toBe(true);
+  });
+
+  test("deleting clause cascades to obligations", () => {
+    const contract = createContract({ title: "Cascade Obligation" });
+    const clause = createClause({
+      contract_id: contract.id,
+      name: "Cascade Clause",
+      text: "Will be deleted.",
+    });
+
+    const obligation = createObligation({
+      clause_id: clause.id,
+      description: "Will cascade away",
+    });
+
+    deleteClause(clause.id);
+    expect(getObligation(obligation.id)).toBeNull();
+  });
+});
+
+describe("Approval Workflow", () => {
+  test("full approval flow: draft -> pending_review -> pending_signature -> active", () => {
+    const contract = createContract({ title: "Approval Flow Test" });
+    expect(contract.status).toBe("draft");
+
+    // Submit for review
+    const reviewed = submitForReview(contract.id);
+    expect(reviewed).toBeDefined();
+    expect(reviewed!.status).toBe("pending_review");
+
+    // Approve (pending_review -> pending_signature)
+    const pendingSig = approveContract(contract.id);
+    expect(pendingSig).toBeDefined();
+    expect(pendingSig!.status).toBe("pending_signature");
+
+    // Approve again (pending_signature -> active)
+    const active = approveContract(contract.id);
+    expect(active).toBeDefined();
+    expect(active!.status).toBe("active");
+  });
+
+  test("cannot submit non-draft contract for review", () => {
+    const contract = createContract({ title: "Already Active", status: "active" });
+    expect(() => submitForReview(contract.id)).toThrow("Cannot submit for review");
+  });
+
+  test("cannot approve an active contract", () => {
+    const contract = createContract({ title: "Already Active 2", status: "active" });
+    expect(() => approveContract(contract.id)).toThrow("Cannot approve");
+  });
+
+  test("submitForReview returns null for nonexistent contract", () => {
+    expect(submitForReview("nonexistent-id")).toBeNull();
+  });
+
+  test("approveContract returns null for nonexistent contract", () => {
+    expect(approveContract("nonexistent-id")).toBeNull();
+  });
+});
+
+describe("Version History", () => {
+  test("updateContract saves version history", () => {
+    const contract = createContract({
+      title: "Version Test",
+      value: 1000,
+      status: "draft",
+    });
+
+    // First update
+    updateContract(contract.id, { title: "Version Test v2", value: 2000 });
+
+    // Second update
+    updateContract(contract.id, { title: "Version Test v3", status: "active" });
+
+    const history = getContractHistory(contract.id);
+    expect(history.length).toBe(2);
+
+    // First version should be the original state
+    expect(history[0].title).toBe("Version Test");
+    expect(history[0].value).toBe(1000);
+    expect(history[0].status).toBe("draft");
+
+    // Second version should be the first-updated state
+    expect(history[1].title).toBe("Version Test v2");
+    expect(history[1].value).toBe(2000);
+  });
+
+  test("no version saved for no-op update", () => {
+    const contract = createContract({ title: "No-Op Version" });
+    updateContract(contract.id, {}); // no changes
+
+    const history = getContractHistory(contract.id);
+    // Should have no versions since no actual update occurred
+    const versions = history.filter((v) => v.contract_id === contract.id);
+    expect(versions.length).toBe(0);
+  });
+
+  test("history is empty for new contract", () => {
+    const contract = createContract({ title: "Brand New" });
+    const history = getContractHistory(contract.id);
+    expect(history.length).toBe(0);
+  });
+
+  test("version metadata_snapshot stores contract metadata", () => {
+    const contract = createContract({
+      title: "Meta Version",
+      metadata: { dept: "legal" },
+    });
+
+    updateContract(contract.id, { title: "Meta Version Updated", metadata: { dept: "finance" } });
+
+    const history = getContractHistory(contract.id);
+    expect(history.length).toBe(1);
+    expect(history[0].metadata_snapshot).toEqual({ dept: "legal" });
+  });
+});
+
+describe("Signatures", () => {
+  test("record and get signature", () => {
+    const contract = createContract({ title: "Signature Contract" });
+    const sig = recordSignature({
+      contract_id: contract.id,
+      signer_name: "Jane Smith",
+      signer_email: "jane@example.com",
+      method: "digital",
+    });
+
+    expect(sig.id).toBeTruthy();
+    expect(sig.contract_id).toBe(contract.id);
+    expect(sig.signer_name).toBe("Jane Smith");
+    expect(sig.signer_email).toBe("jane@example.com");
+    expect(sig.method).toBe("digital");
+    expect(sig.signed_at).toBeTruthy();
+
+    const fetched = getSignature(sig.id);
+    expect(fetched).toBeDefined();
+    expect(fetched!.signer_name).toBe("Jane Smith");
+  });
+
+  test("record signature with defaults", () => {
+    const contract = createContract({ title: "Default Sig" });
+    const sig = recordSignature({
+      contract_id: contract.id,
+      signer_name: "Bob",
+    });
+
+    expect(sig.method).toBe("digital");
+    expect(sig.signer_email).toBeNull();
+  });
+
+  test("record signature with wet and docusign methods", () => {
+    const contract = createContract({ title: "Multi-Method Sigs" });
+
+    const wet = recordSignature({
+      contract_id: contract.id,
+      signer_name: "Alice",
+      method: "wet",
+    });
+    expect(wet.method).toBe("wet");
+
+    const docu = recordSignature({
+      contract_id: contract.id,
+      signer_name: "Charlie",
+      method: "docusign",
+    });
+    expect(docu.method).toBe("docusign");
+  });
+
+  test("list signatures for contract", () => {
+    const contract = createContract({ title: "Multi-Sig Contract" });
+    recordSignature({ contract_id: contract.id, signer_name: "Signer A" });
+    recordSignature({ contract_id: contract.id, signer_name: "Signer B" });
+
+    const sigs = listSignatures(contract.id);
+    expect(sigs.length).toBe(2);
+    expect(sigs[0].signer_name).toBe("Signer A");
+    expect(sigs[1].signer_name).toBe("Signer B");
+  });
+
+  test("deleting contract cascades to signatures", () => {
+    const contract = createContract({ title: "Cascade Sig" });
+    const sig = recordSignature({
+      contract_id: contract.id,
+      signer_name: "Will Cascade",
+    });
+
+    deleteContract(contract.id);
+    expect(getSignature(sig.id)).toBeNull();
+  });
+});
+
+describe("Clause Templates", () => {
+  test("save and get clause template", () => {
+    const template = saveClauseTemplate({
+      name: "Standard NDA",
+      text: "Both parties agree to maintain confidentiality of all shared information.",
+      type: "standard",
+    });
+
+    expect(template.id).toBeTruthy();
+    expect(template.name).toBe("Standard NDA");
+    expect(template.type).toBe("standard");
+
+    const fetched = getClauseTemplate(template.id);
+    expect(fetched).toBeDefined();
+    expect(fetched!.name).toBe("Standard NDA");
+  });
+
+  test("get clause template by name", () => {
+    const template = getClauseTemplateByName("Standard NDA");
+    expect(template).toBeDefined();
+    expect(template!.name).toBe("Standard NDA");
+  });
+
+  test("list clause templates", () => {
+    saveClauseTemplate({
+      name: "Non-Compete",
+      text: "Employee agrees not to compete for 12 months.",
+      type: "negotiated",
+    });
+
+    const templates = listClauseTemplates();
+    expect(templates.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("add clause from template", () => {
+    const contract = createContract({ title: "Template Clause Contract" });
+    const clause = addClauseFromTemplate(contract.id, "Standard NDA");
+
+    expect(clause.name).toBe("Standard NDA");
+    expect(clause.text).toBe("Both parties agree to maintain confidentiality of all shared information.");
+    expect(clause.type).toBe("standard");
+    expect(clause.contract_id).toBe(contract.id);
+  });
+
+  test("add clause from nonexistent template throws", () => {
+    const contract = createContract({ title: "No Template" });
+    expect(() => addClauseFromTemplate(contract.id, "Nonexistent")).toThrow("not found");
+  });
+
+  test("duplicate template name throws", () => {
+    expect(() =>
+      saveClauseTemplate({ name: "Standard NDA", text: "Duplicate" })
+    ).toThrow();
+  });
+});
+
+describe("Multi-Stage Reminders", () => {
+  test("set multi reminders based on days before end date", () => {
+    const contract = createContract({
+      title: "Multi-Remind Contract",
+      end_date: "2025-12-31",
+    });
+
+    const reminders = setMultiReminders(contract.id, [60, 30, 7]);
+    expect(reminders.length).toBe(3);
+
+    // Check that reminders are created at the right dates
+    // end_date is 2025-12-31 so:
+    // 60 days before = 2025-11-01
+    // 30 days before = 2025-12-01
+    // 7 days before = 2025-12-24
+    expect(reminders[0].remind_at).toBe("2025-11-01T09:00:00");
+    expect(reminders[1].remind_at).toBe("2025-12-01T09:00:00");
+    expect(reminders[2].remind_at).toBe("2025-12-24T09:00:00");
+
+    // Check messages
+    expect(reminders[0].message).toContain("60 day(s)");
+    expect(reminders[1].message).toContain("30 day(s)");
+    expect(reminders[2].message).toContain("7 day(s)");
+  });
+
+  test("set multi reminders on contract without end_date throws", () => {
+    const contract = createContract({ title: "No End Date" });
+    expect(() => setMultiReminders(contract.id, [30])).toThrow("no end_date");
+  });
+
+  test("set multi reminders on nonexistent contract throws", () => {
+    expect(() => setMultiReminders("nonexistent-id", [30])).toThrow("not found");
+  });
+});
+
+describe("Contract Comparison", () => {
+  test("compare two contracts with different fields", () => {
+    const c1 = createContract({
+      title: "Contract Alpha",
+      type: "nda",
+      value: 1000,
+      counterparty: "Acme",
+    });
+    const c2 = createContract({
+      title: "Contract Beta",
+      type: "service",
+      value: 2000,
+      counterparty: "Acme",
+    });
+
+    const diff = compareContracts(c1.id, c2.id);
+    expect(diff.contract1.title).toBe("Contract Alpha");
+    expect(diff.contract2.title).toBe("Contract Beta");
+
+    // Should have differences for title, type, value
+    const fieldNames = diff.field_differences.map((d) => d.field);
+    expect(fieldNames).toContain("title");
+    expect(fieldNames).toContain("type");
+    expect(fieldNames).toContain("value");
+
+    // counterparty should NOT be different
+    expect(fieldNames).not.toContain("counterparty");
+  });
+
+  test("compare contracts with clause differences", () => {
+    const c1 = createContract({ title: "Clause Compare A" });
+    const c2 = createContract({ title: "Clause Compare B" });
+
+    createClause({ contract_id: c1.id, name: "Shared", text: "Version A text" });
+    createClause({ contract_id: c1.id, name: "Only in A", text: "Exclusive" });
+
+    createClause({ contract_id: c2.id, name: "Shared", text: "Version B text" });
+    createClause({ contract_id: c2.id, name: "Only in B", text: "Exclusive" });
+
+    const diff = compareContracts(c1.id, c2.id);
+
+    expect(diff.clause_only_in_1.length).toBe(1);
+    expect(diff.clause_only_in_1[0].name).toBe("Only in A");
+
+    expect(diff.clause_only_in_2.length).toBe(1);
+    expect(diff.clause_only_in_2[0].name).toBe("Only in B");
+
+    expect(diff.clause_differences.length).toBe(1);
+    expect(diff.clause_differences[0].name).toBe("Shared");
+    expect(diff.clause_differences[0].contract1_text).toBe("Version A text");
+    expect(diff.clause_differences[0].contract2_text).toBe("Version B text");
+  });
+
+  test("compare identical contracts shows no differences", () => {
+    const c1 = createContract({ title: "Identical A", type: "nda", value: 500 });
+    const c2 = createContract({ title: "Identical A", type: "nda", value: 500 });
+
+    const diff = compareContracts(c1.id, c2.id);
+    expect(diff.field_differences.length).toBe(0);
+    expect(diff.clause_only_in_1.length).toBe(0);
+    expect(diff.clause_only_in_2.length).toBe(0);
+    expect(diff.clause_differences.length).toBe(0);
+  });
+
+  test("compare with nonexistent contract throws", () => {
+    const c1 = createContract({ title: "Real" });
+    expect(() => compareContracts(c1.id, "nonexistent")).toThrow("not found");
+    expect(() => compareContracts("nonexistent", c1.id)).toThrow("not found");
+  });
+});
+
+describe("Markdown Export", () => {
+  test("export contract as markdown", () => {
+    const contract = createContract({
+      title: "Export Test",
+      type: "service",
+      status: "active",
+      counterparty: "Test Corp",
+      counterparty_email: "test@corp.com",
+      start_date: "2025-01-01",
+      end_date: "2026-01-01",
+      value: 10000,
+      currency: "USD",
+    });
+
+    createClause({
+      contract_id: contract.id,
+      name: "Payment Terms",
+      text: "Net 30 days from invoice date.",
+      type: "standard",
+    });
+
+    recordSignature({
+      contract_id: contract.id,
+      signer_name: "John",
+      signer_email: "john@corp.com",
+      method: "digital",
+    });
+
+    const md = exportContract(contract.id, "md");
+
+    expect(md).toContain("# Export Test");
+    expect(md).toContain("| Type | service |");
+    expect(md).toContain("| Status | active |");
+    expect(md).toContain("| Counterparty | Test Corp |");
+    expect(md).toContain("## Clauses");
+    expect(md).toContain("### Payment Terms (standard)");
+    expect(md).toContain("Net 30 days from invoice date.");
+    expect(md).toContain("## Signatures");
+    expect(md).toContain("**John**");
+    expect(md).toContain("(john@corp.com)");
+  });
+
+  test("export contract as JSON", () => {
+    const contract = createContract({ title: "JSON Export" });
+    const json = exportContract(contract.id, "json");
+    const parsed = JSON.parse(json);
+
+    expect(parsed.contract.title).toBe("JSON Export");
+    expect(Array.isArray(parsed.clauses)).toBe(true);
+    expect(Array.isArray(parsed.signatures)).toBe(true);
+    expect(Array.isArray(parsed.reminders)).toBe(true);
+  });
+
+  test("export nonexistent contract throws", () => {
+    expect(() => exportContract("nonexistent-id")).toThrow("not found");
+  });
+
+  test("export contract defaults to markdown", () => {
+    const contract = createContract({ title: "Default Format" });
+    const output = exportContract(contract.id);
+    expect(output).toContain("# Default Format");
   });
 });

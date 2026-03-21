@@ -16,6 +16,17 @@ import {
   getPayrollReport,
   getYtdReport,
   getTaxSummary,
+  createBenefit,
+  listBenefits,
+  removeBenefit,
+  generateAchFile,
+  generateW2,
+  generate1099,
+  setSchedule,
+  getNextPayPeriod,
+  auditPayroll,
+  forecastPayroll,
+  checkOvertime,
 } from "../db/payroll.js";
 
 const program = new Command();
@@ -368,6 +379,264 @@ program
       for (const entry of summary) {
         console.log(`  ${entry.employee_name}: gross=$${entry.total_gross} fed=$${entry.total_federal_tax} state=$${entry.total_state_tax} net=$${entry.total_net}`);
       }
+    }
+  });
+
+// --- Benefits ---
+
+const benefitCmd = program
+  .command("benefit")
+  .description("Employee benefit management");
+
+benefitCmd
+  .command("add")
+  .description("Add a benefit to an employee")
+  .requiredOption("--employee <id>", "Employee ID")
+  .requiredOption("--type <type>", "Benefit type: health, dental, vision, retirement, hsa, other")
+  .requiredOption("--amount <amount>", "Deduction amount")
+  .option("--description <desc>", "Description")
+  .option("--frequency <freq>", "Frequency: per_period, monthly, annual", "per_period")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    try {
+      const benefit = createBenefit({
+        employee_id: opts.employee,
+        type: opts.type,
+        amount: parseFloat(opts.amount),
+        description: opts.description,
+        frequency: opts.frequency,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(benefit, null, 2));
+      } else {
+        console.log(`Created benefit: ${benefit.type} $${benefit.amount}/${benefit.frequency} (${benefit.id})`);
+      }
+    } catch (error) {
+      console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+benefitCmd
+  .command("list")
+  .description("List benefits")
+  .option("--employee <id>", "Filter by employee ID")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const benefits = listBenefits(opts.employee);
+
+    if (opts.json) {
+      console.log(JSON.stringify(benefits, null, 2));
+    } else {
+      if (benefits.length === 0) {
+        console.log("No benefits found.");
+        return;
+      }
+      for (const b of benefits) {
+        const status = b.active ? "" : " [INACTIVE]";
+        console.log(`  ${b.type} — $${b.amount}/${b.frequency} (${b.employee_id})${status}`);
+      }
+      console.log(`\n${benefits.length} benefit(s)`);
+    }
+  });
+
+benefitCmd
+  .command("remove")
+  .description("Deactivate a benefit")
+  .argument("<id>", "Benefit ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const removed = removeBenefit(id);
+    if (opts.json) {
+      console.log(JSON.stringify({ removed }));
+    } else {
+      console.log(removed ? `Benefit ${id} deactivated.` : `Benefit '${id}' not found.`);
+    }
+  });
+
+// --- ACH File Generation ---
+
+program
+  .command("generate-ach")
+  .description("Generate NACHA-format ACH file for a pay period")
+  .requiredOption("--period <id>", "Pay period ID")
+  .requiredOption("--routing <number>", "Bank routing number")
+  .requiredOption("--account <number>", "Bank account number")
+  .option("--company <name>", "Company name", "PAYROLL CO")
+  .action((opts) => {
+    try {
+      const achContent = generateAchFile(opts.period, opts.routing, opts.account, opts.company);
+      console.log(achContent);
+    } catch (error) {
+      console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+// --- W-2 Generation ---
+
+program
+  .command("w2")
+  .description("Generate W-2 data for an employee")
+  .requiredOption("--year <year>", "Tax year")
+  .requiredOption("--employee <id>", "Employee ID")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const w2 = generateW2(opts.employee, parseInt(opts.year));
+    if (!w2) {
+      console.error("No W-2 data found (employee not found, is a contractor, or has no pay stubs).");
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(w2, null, 2));
+    } else {
+      console.log(`W-2 for ${w2.employee_name} (${w2.year})`);
+      console.log(`  Gross Wages: $${w2.gross}`);
+      console.log(`  Federal Tax Withheld: $${w2.federal_withheld}`);
+      console.log(`  State Tax Withheld: $${w2.state_withheld}`);
+      console.log(`  Social Security: $${w2.social_security}`);
+      console.log(`  Medicare: $${w2.medicare}`);
+    }
+  });
+
+// --- 1099-NEC Generation ---
+
+program
+  .command("1099")
+  .description("Generate 1099-NEC data for contractors")
+  .requiredOption("--year <year>", "Tax year")
+  .option("--employee <id>", "Specific contractor ID (optional)")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const forms = generate1099(opts.employee || null, parseInt(opts.year));
+
+    if (opts.json) {
+      console.log(JSON.stringify(forms, null, 2));
+    } else {
+      if (forms.length === 0) {
+        console.log("No 1099-NEC forms to generate (no contractors with >$600 compensation).");
+        return;
+      }
+      for (const f of forms) {
+        console.log(`  ${f.employee_name}: $${f.total_compensation} (${f.year})`);
+      }
+      console.log(`\n${forms.length} form(s)`);
+    }
+  });
+
+// --- Payroll Schedule ---
+
+const scheduleCmd = program
+  .command("schedule")
+  .description("Payroll schedule management");
+
+scheduleCmd
+  .command("set")
+  .description("Set the payroll schedule")
+  .requiredOption("--frequency <freq>", "Frequency: weekly, biweekly, semimonthly, monthly")
+  .requiredOption("--anchor <date>", "Anchor date (YYYY-MM-DD)")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const schedule = setSchedule(opts.frequency, opts.anchor);
+
+    if (opts.json) {
+      console.log(JSON.stringify(schedule, null, 2));
+    } else {
+      console.log(`Schedule set: ${schedule.frequency} starting ${schedule.anchor_date}`);
+    }
+  });
+
+scheduleCmd
+  .command("next")
+  .description("Get the next pay period dates based on schedule")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const next = getNextPayPeriod();
+    if (!next) {
+      console.error("No payroll schedule configured. Use 'schedule set' first.");
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(next, null, 2));
+    } else {
+      console.log(`Next pay period: ${next.start_date} to ${next.end_date}`);
+    }
+  });
+
+// --- Audit ---
+
+program
+  .command("audit")
+  .description("Audit a payroll period for issues")
+  .requiredOption("--period <id>", "Pay period ID")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    try {
+      const result = auditPayroll(opts.period);
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        if (result.passed) {
+          console.log("PASSED — No issues found.");
+        } else {
+          console.log(`FAILED — ${result.issues.length} issue(s):`);
+          for (const issue of result.issues) {
+            console.log(`  - ${issue}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+// --- Forecast ---
+
+program
+  .command("forecast")
+  .description("Forecast future payroll costs")
+  .option("--months <n>", "Number of months to forecast", "3")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const result = forecastPayroll(parseInt(opts.months));
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Payroll Forecast (${result.months} months):`);
+      for (const p of result.periods) {
+        console.log(`  ${p.month}: gross=$${p.estimated_gross} deductions=$${p.estimated_deductions} net=$${p.estimated_net}`);
+      }
+      console.log(`\nTotal: gross=$${result.total_estimated_gross} deductions=$${result.total_estimated_deductions} net=$${result.total_estimated_net}`);
+    }
+  });
+
+// --- Overtime Check ---
+
+program
+  .command("overtime-check")
+  .description("Check for employees exceeding weekly hours threshold")
+  .option("--threshold <hours>", "Hours threshold", "40")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const alerts = checkOvertime(parseFloat(opts.threshold));
+
+    if (opts.json) {
+      console.log(JSON.stringify(alerts, null, 2));
+    } else {
+      if (alerts.length === 0) {
+        console.log("No overtime alerts.");
+        return;
+      }
+      for (const a of alerts) {
+        console.log(`  ${a.employee_name}: ${a.total_hours}h total (${a.overtime_hours}h over ${a.threshold}h threshold)`);
+      }
+      console.log(`\n${alerts.length} alert(s)`);
     }
   });
 

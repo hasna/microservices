@@ -48,4 +48,33 @@ export {
   type ListInterviewsOptions,
 } from "./db/hiring.js";
 
+export {
+  bulkImportApplicants,
+  generateOffer,
+  getHiringForecast,
+  submitStructuredFeedback,
+  bulkReject,
+  getReferralStats,
+  saveJobAsTemplate,
+  getJobTemplate,
+  getJobTemplateByName,
+  listJobTemplates,
+  createJobFromTemplate,
+  deleteJobTemplate,
+  type BulkImportResult,
+  type OfferDetails,
+  type HiringForecast,
+  type StructuredFeedback,
+  type BulkRejectResult,
+  type ReferralStats,
+  type JobTemplate,
+} from "./db/hiring.js";
+
+export {
+  scoreApplicant,
+  rankApplicants,
+  type ScoreResult,
+  type RankEntry,
+} from "./lib/scoring.js";
+
 export { getDatabase, closeDatabase } from "./db/database.js";

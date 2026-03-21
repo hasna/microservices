@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command } from "commander";
+import { readFileSync } from "node:fs";
 import {
   createOrder,
   getOrder,
@@ -9,6 +10,9 @@ import {
   deleteOrder,
   searchOrders,
   listByStatus,
+  bulkImportOrders,
+  exportOrders,
+  getOrderTimeline,
 } from "../db/shipping.js";
 import {
   createShipment,
@@ -25,6 +29,11 @@ import {
 import {
   getShippingStats,
   getCostsByCarrier,
+  getDeliveryStats,
+  listOverdueShipments,
+  getCustomerHistory,
+  getCarrierPerformance,
+  optimizeCost,
 } from "../db/shipping.js";
 
 const program = new Command();
@@ -152,6 +161,61 @@ orderCmd
     }
   });
 
+orderCmd
+  .command("import")
+  .description("Bulk import orders from a CSV file")
+  .requiredOption("--file <path>", "Path to CSV file")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const csvData = readFileSync(opts.file, "utf-8");
+    const result = bulkImportOrders(csvData);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Imported ${result.imported} order(s)`);
+      if (result.errors.length > 0) {
+        console.log(`Errors:`);
+        for (const err of result.errors) {
+          console.log(`  Line ${err.line}: ${err.message}`);
+        }
+      }
+    }
+  });
+
+orderCmd
+  .command("export")
+  .description("Export orders to CSV or JSON")
+  .option("--format <format>", "Output format (csv/json)", "csv")
+  .option("--from <date>", "Filter from date (YYYY-MM-DD)")
+  .option("--to <date>", "Filter to date (YYYY-MM-DD)")
+  .action((opts) => {
+    const output = exportOrders(opts.format as "csv" | "json", opts.from, opts.to);
+    console.log(output);
+  });
+
+orderCmd
+  .command("timeline")
+  .description("Show full event timeline for an order")
+  .argument("<id>", "Order ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const timeline = getOrderTimeline(id);
+    if (timeline.length === 0) {
+      console.error(`No events found for order '${id}'.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(timeline, null, 2));
+    } else {
+      console.log(`Timeline for order ${id}:`);
+      for (const event of timeline) {
+        console.log(`  [${event.timestamp}] ${event.type}: ${event.details}`);
+      }
+    }
+  });
+
 // --- Ship (create shipment) ---
 
 program
@@ -259,17 +323,20 @@ returnCmd
   .description("Create a return request")
   .requiredOption("--order <id>", "Order ID")
   .option("--reason <reason>", "Return reason")
+  .option("--auto-rma", "Auto-generate RMA code", false)
   .option("--json", "Output as JSON", false)
   .action((opts) => {
     const ret = createReturn({
       order_id: opts.order,
       reason: opts.reason,
+      auto_rma: opts.autoRma,
     });
 
     if (opts.json) {
       console.log(JSON.stringify(ret, null, 2));
     } else {
       console.log(`Created return: ${ret.id} for order ${ret.order_id} [${ret.status}]`);
+      if (ret.rma_code) console.log(`  RMA Code: ${ret.rma_code}`);
     }
   });
 
@@ -347,9 +414,11 @@ program
 
 // --- Stats ---
 
-program
-  .command("stats")
-  .description("Show shipping statistics")
+const statsCmd = program.command("stats").description("Shipping statistics and analytics");
+
+statsCmd
+  .command("overview")
+  .description("Show overall shipping statistics")
   .option("--json", "Output as JSON", false)
   .action((opts) => {
     const stats = getShippingStats();
@@ -372,6 +441,56 @@ program
     }
   });
 
+statsCmd
+  .command("delivery-times")
+  .description("Delivery timeline analytics per carrier/service")
+  .option("--carrier <carrier>", "Filter by carrier")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const stats = getDeliveryStats(opts.carrier);
+
+    if (opts.json) {
+      console.log(JSON.stringify(stats, null, 2));
+    } else {
+      if (stats.length === 0) {
+        console.log("No delivery data available (need shipments with shipped_at and delivered_at).");
+        return;
+      }
+      console.log("Delivery Timeline Analytics:");
+      for (const s of stats) {
+        console.log(`  ${s.carrier.toUpperCase()}/${s.service}:`);
+        console.log(`    Shipments: ${s.total_shipments} (${s.delivered_count} delivered)`);
+        console.log(`    Avg delivery: ${s.avg_delivery_days.toFixed(1)} days`);
+        console.log(`    On-time: ${s.on_time_pct.toFixed(1)}%, Late: ${s.late_pct.toFixed(1)}%`);
+      }
+    }
+  });
+
+statsCmd
+  .command("carrier-performance")
+  .description("Rank carriers by on-time %, avg cost, avg delivery days")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const perf = getCarrierPerformance();
+
+    if (opts.json) {
+      console.log(JSON.stringify(perf, null, 2));
+    } else {
+      if (perf.length === 0) {
+        console.log("No carrier data available.");
+        return;
+      }
+      console.log("Carrier Performance (ranked by on-time %):");
+      for (const p of perf) {
+        console.log(`  ${p.carrier.toUpperCase()}:`);
+        console.log(`    Shipments: ${p.total_shipments} (${p.delivered_count} delivered)`);
+        console.log(`    On-time: ${p.on_time_pct.toFixed(1)}%`);
+        console.log(`    Avg cost: $${p.avg_cost.toFixed(2)}`);
+        console.log(`    Avg delivery: ${p.avg_delivery_days.toFixed(1)} days`);
+      }
+    }
+  });
+
 // --- Costs ---
 
 program
@@ -391,6 +510,95 @@ program
       console.log("Costs by Carrier:");
       for (const c of costs) {
         console.log(`  ${c.carrier.toUpperCase()}: $${c.total_cost.toFixed(2)} total, ${c.shipment_count} shipments, $${c.avg_cost.toFixed(2)} avg`);
+      }
+    }
+  });
+
+// --- Late Delivery Alerts ---
+
+program
+  .command("check-late")
+  .description("List overdue shipments past estimated delivery + grace days")
+  .option("--days <n>", "Grace days beyond estimated delivery", "0")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const overdue = listOverdueShipments(parseInt(opts.days));
+
+    if (opts.json) {
+      console.log(JSON.stringify(overdue, null, 2));
+    } else {
+      if (overdue.length === 0) {
+        console.log("No overdue shipments found.");
+        return;
+      }
+      console.log(`Overdue Shipments (grace: ${opts.days} day(s)):`);
+      for (const s of overdue) {
+        const tracking = s.tracking_number ? ` (${s.tracking_number})` : "";
+        console.log(`  ${s.shipment_id.slice(0, 8)}... ${s.carrier}/${s.service}${tracking}`);
+        console.log(`    ETA: ${s.estimated_delivery}, ${s.days_overdue} day(s) overdue [${s.status}]`);
+      }
+      console.log(`\n${overdue.length} overdue shipment(s)`);
+    }
+  });
+
+// --- Customer History ---
+
+program
+  .command("customer-history")
+  .description("Show all orders, shipments, and returns for a customer")
+  .argument("<email>", "Customer email")
+  .option("--json", "Output as JSON", false)
+  .action((email, opts) => {
+    const history = getCustomerHistory(email);
+
+    if (opts.json) {
+      console.log(JSON.stringify(history, null, 2));
+    } else {
+      console.log(`Customer History for ${email}:`);
+      console.log(`  Orders: ${history.orders.length}`);
+      for (const o of history.orders) {
+        console.log(`    [${o.status}] ${o.id.slice(0, 8)}... $${o.total_value} ${o.currency}`);
+      }
+      console.log(`  Shipments: ${history.shipments.length}`);
+      for (const s of history.shipments) {
+        console.log(`    [${s.status}] ${s.id.slice(0, 8)}... ${s.carrier}/${s.service}`);
+      }
+      console.log(`  Returns: ${history.returns.length}`);
+      for (const r of history.returns) {
+        const rma = r.rma_code ? ` (${r.rma_code})` : "";
+        console.log(`    [${r.status}] ${r.id.slice(0, 8)}...${rma}`);
+      }
+    }
+  });
+
+// --- Cost Optimizer ---
+
+program
+  .command("optimize-cost")
+  .description("Recommend cheapest carrier/service based on historical data")
+  .requiredOption("--weight <kg>", "Package weight in kg")
+  .option("--from <zip>", "Origin zip code")
+  .option("--to <zip>", "Destination zip code")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const recommendations = optimizeCost(
+      parseFloat(opts.weight),
+      opts.from,
+      opts.to
+    );
+
+    if (opts.json) {
+      console.log(JSON.stringify(recommendations, null, 2));
+    } else {
+      if (recommendations.length === 0) {
+        console.log("No historical shipping data found for the given weight range.");
+        return;
+      }
+      console.log(`Cost recommendations for ${opts.weight}kg package:`);
+      for (let i = 0; i < recommendations.length; i++) {
+        const r = recommendations[i];
+        const deliveryInfo = r.avg_delivery_days ? `, ~${r.avg_delivery_days.toFixed(1)} days` : "";
+        console.log(`  ${i + 1}. ${r.carrier.toUpperCase()}/${r.service}: $${r.avg_cost.toFixed(2)} avg (${r.shipment_count} samples${deliveryInfo})`);
       }
     }
   });

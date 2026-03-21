@@ -11,6 +11,9 @@ import {
   deleteOrder,
   searchOrders,
   listByStatus,
+  bulkImportOrders,
+  exportOrders,
+  getOrderTimeline,
 } from "../db/shipping.js";
 import {
   createShipment,
@@ -28,6 +31,11 @@ import {
 import {
   getShippingStats,
   getCostsByCarrier,
+  getDeliveryStats,
+  listOverdueShipments,
+  getCustomerHistory,
+  getCarrierPerformance,
+  optimizeCost,
 } from "../db/shipping.js";
 
 const server = new McpServer({
@@ -275,10 +283,11 @@ server.registerTool(
   "create_return",
   {
     title: "Create Return",
-    description: "Create a return request for an order.",
+    description: "Create a return request for an order. Set auto_rma to true to generate a unique RMA code.",
     inputSchema: {
       order_id: z.string(),
       reason: z.string().optional(),
+      auto_rma: z.boolean().optional(),
     },
   },
   async (params) => {
@@ -369,6 +378,145 @@ server.registerTool(
   async () => {
     const costs = getCostsByCarrier();
     return { content: [{ type: "text", text: JSON.stringify(costs, null, 2) }] };
+  }
+);
+
+// ─── Bulk Import/Export ──────────────────────────────────────────────────────
+
+server.registerTool(
+  "bulk_import_orders",
+  {
+    title: "Bulk Import Orders",
+    description: "Import orders from CSV data. Columns: customer_name,customer_email,street,city,state,zip,country,items_json,total_value.",
+    inputSchema: {
+      csv_data: z.string().describe("CSV data with header row"),
+    },
+  },
+  async ({ csv_data }) => {
+    const result = bulkImportOrders(csv_data);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "export_orders",
+  {
+    title: "Export Orders",
+    description: "Export orders in CSV or JSON format, optionally filtered by date range.",
+    inputSchema: {
+      format: z.enum(["csv", "json"]).describe("Output format"),
+      date_from: z.string().optional().describe("Filter from date (YYYY-MM-DD)"),
+      date_to: z.string().optional().describe("Filter to date (YYYY-MM-DD)"),
+    },
+  },
+  async ({ format, date_from, date_to }) => {
+    const output = exportOrders(format, date_from, date_to);
+    return { content: [{ type: "text", text: output }] };
+  }
+);
+
+// ─── Delivery Timeline Analytics ────────────────────────────────────────────
+
+server.registerTool(
+  "delivery_timeline_stats",
+  {
+    title: "Delivery Timeline Stats",
+    description: "Get delivery time analytics (avg days, on-time %, late %) per carrier and service level.",
+    inputSchema: {
+      carrier: z.string().optional().describe("Filter by carrier"),
+    },
+  },
+  async ({ carrier }) => {
+    const stats = getDeliveryStats(carrier);
+    return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
+  }
+);
+
+// ─── Late Delivery Alerts ───────────────────────────────────────────────────
+
+server.registerTool(
+  "list_overdue_shipments",
+  {
+    title: "List Overdue Shipments",
+    description: "Find shipments past their estimated delivery date + grace period that are not yet delivered.",
+    inputSchema: {
+      grace_days: z.number().optional().describe("Grace days beyond estimated delivery (default 0)"),
+    },
+  },
+  async ({ grace_days }) => {
+    const overdue = listOverdueShipments(grace_days ?? 0);
+    return { content: [{ type: "text", text: JSON.stringify({ overdue, count: overdue.length }, null, 2) }] };
+  }
+);
+
+// ─── Customer History ───────────────────────────────────────────────────────
+
+server.registerTool(
+  "customer_shipping_history",
+  {
+    title: "Customer Shipping History",
+    description: "Get all orders, shipments, and returns for a customer by email.",
+    inputSchema: {
+      email: z.string().describe("Customer email address"),
+    },
+  },
+  async ({ email }) => {
+    const history = getCustomerHistory(email);
+    return { content: [{ type: "text", text: JSON.stringify(history, null, 2) }] };
+  }
+);
+
+// ─── Carrier Performance ────────────────────────────────────────────────────
+
+server.registerTool(
+  "carrier_performance",
+  {
+    title: "Carrier Performance",
+    description: "Rank carriers by on-time delivery %, average cost, and average delivery days.",
+    inputSchema: {},
+  },
+  async () => {
+    const perf = getCarrierPerformance();
+    return { content: [{ type: "text", text: JSON.stringify(perf, null, 2) }] };
+  }
+);
+
+// ─── Cost Optimizer ─────────────────────────────────────────────────────────
+
+server.registerTool(
+  "optimize_shipping_cost",
+  {
+    title: "Optimize Shipping Cost",
+    description: "Recommend cheapest carrier/service based on historical cost data for a given package weight.",
+    inputSchema: {
+      weight: z.number().describe("Package weight in kg"),
+      from_zip: z.string().optional().describe("Origin zip code"),
+      to_zip: z.string().optional().describe("Destination zip code"),
+    },
+  },
+  async ({ weight, from_zip, to_zip }) => {
+    const recommendations = optimizeCost(weight, from_zip, to_zip);
+    return { content: [{ type: "text", text: JSON.stringify(recommendations, null, 2) }] };
+  }
+);
+
+// ─── Order Timeline ─────────────────────────────────────────────────────────
+
+server.registerTool(
+  "order_timeline",
+  {
+    title: "Order Timeline",
+    description: "Get the full event history for an order, including shipments and returns.",
+    inputSchema: {
+      order_id: z.string().describe("Order ID"),
+    },
+  },
+  async ({ order_id }) => {
+    const timeline = getOrderTimeline(order_id);
+    if (timeline.length === 0) {
+      return { content: [{ type: "text", text: `No events found for order '${order_id}'.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(timeline, null, 2) }] };
   }
 );
 

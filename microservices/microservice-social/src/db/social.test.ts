@@ -31,6 +31,16 @@ import {
   getStatsByPlatform,
   getCalendar,
   getOverallStats,
+  batchSchedule,
+  crossPost,
+  getBestTimeToPost,
+  reschedulePost,
+  submitPostForReview,
+  approvePost,
+  createRecurringPost,
+  getHashtagStats,
+  checkPlatformLimit,
+  PLATFORM_LIMITS,
 } from "./social";
 import { closeDatabase } from "./database";
 
@@ -453,5 +463,480 @@ describe("Edge Cases", () => {
     const result = updatePost(post.id, {});
     expect(result).toBeDefined();
     expect(result!.id).toBe(post.id);
+  });
+});
+
+// ---- Platform Limits ----
+
+describe("Platform Limits", () => {
+  test("PLATFORM_LIMITS has all platforms", () => {
+    expect(PLATFORM_LIMITS.x).toBe(280);
+    expect(PLATFORM_LIMITS.linkedin).toBe(3000);
+    expect(PLATFORM_LIMITS.instagram).toBe(2200);
+    expect(PLATFORM_LIMITS.threads).toBe(500);
+    expect(PLATFORM_LIMITS.bluesky).toBe(300);
+  });
+
+  test("checkPlatformLimit warns when over limit", () => {
+    const account = createAccount({ platform: "x", handle: "charlimit" });
+    const longContent = "a".repeat(300); // Over X's 280 limit
+    const warning = checkPlatformLimit(longContent, account.id);
+
+    expect(warning).not.toBeNull();
+    expect(warning!.platform).toBe("x");
+    expect(warning!.limit).toBe(280);
+    expect(warning!.content_length).toBe(300);
+    expect(warning!.over_by).toBe(20);
+  });
+
+  test("checkPlatformLimit returns null when within limit", () => {
+    const account = createAccount({ platform: "linkedin", handle: "charlimit2" });
+    const shortContent = "Hello world!";
+    const warning = checkPlatformLimit(shortContent, account.id);
+    expect(warning).toBeNull();
+  });
+
+  test("checkPlatformLimit returns null for non-existent account", () => {
+    const warning = checkPlatformLimit("hello", "non-existent-id");
+    expect(warning).toBeNull();
+  });
+});
+
+// ---- Batch Schedule ----
+
+describe("Batch Schedule", () => {
+  let accountId: string;
+
+  test("setup: create account for batch", () => {
+    const account = createAccount({ platform: "x", handle: "batchposter" });
+    accountId = account.id;
+  });
+
+  test("batch schedule multiple posts", () => {
+    const result = batchSchedule([
+      { account_id: accountId, content: "Batch post 1", scheduled_at: "2026-05-01 10:00:00" },
+      { account_id: accountId, content: "Batch post 2", scheduled_at: "2026-05-01 14:00:00" },
+      { account_id: accountId, content: "Batch post 3", scheduled_at: "2026-05-02 09:00:00" },
+    ]);
+
+    expect(result.scheduled.length).toBe(3);
+    expect(result.errors.length).toBe(0);
+    expect(result.scheduled[0].status).toBe("scheduled");
+    expect(result.scheduled[0].scheduled_at).toBe("2026-05-01 10:00:00");
+  });
+
+  test("batch schedule with invalid account", () => {
+    const result = batchSchedule([
+      { account_id: "non-existent", content: "Will fail", scheduled_at: "2026-05-01 10:00:00" },
+      { account_id: accountId, content: "Will succeed", scheduled_at: "2026-05-01 11:00:00" },
+    ]);
+
+    expect(result.scheduled.length).toBe(1);
+    expect(result.errors.length).toBe(1);
+    expect(result.errors[0].index).toBe(0);
+    expect(result.errors[0].error).toContain("not found");
+  });
+
+  test("batch schedule with platform limit warning", () => {
+    const result = batchSchedule([
+      { account_id: accountId, content: "a".repeat(300), scheduled_at: "2026-06-01 10:00:00" },
+    ]);
+
+    expect(result.scheduled.length).toBe(1);
+    expect(result.warnings.length).toBe(1);
+    expect(result.warnings[0].platform).toBe("x");
+    expect(result.warnings[0].over_by).toBe(20);
+  });
+
+  test("batch schedule with recurrence", () => {
+    const result = batchSchedule([
+      { account_id: accountId, content: "Recurring batch", scheduled_at: "2026-05-01 10:00:00", recurrence: "weekly" },
+    ]);
+
+    expect(result.scheduled.length).toBe(1);
+    expect(result.scheduled[0].recurrence).toBe("weekly");
+  });
+});
+
+// ---- Cross-Post ----
+
+describe("Cross-Post", () => {
+  test("setup: create accounts for cross-posting", () => {
+    createAccount({ platform: "x", handle: "crossx" });
+    createAccount({ platform: "linkedin", handle: "crosslinkedin" });
+    createAccount({ platform: "bluesky", handle: "crossbsky.social" });
+  });
+
+  test("cross-post to multiple platforms", () => {
+    const result = crossPost("Hello cross-post world!", ["x", "linkedin"]);
+
+    expect(result.posts.length).toBe(2);
+    expect(result.posts[0].content).toBe("Hello cross-post world!");
+    expect(result.posts[1].content).toBe("Hello cross-post world!");
+  });
+
+  test("cross-post with scheduling", () => {
+    const result = crossPost("Scheduled cross-post", ["x", "linkedin"], {
+      scheduled_at: "2026-06-01 12:00:00",
+      tags: ["crosspost"],
+    });
+
+    expect(result.posts.length).toBe(2);
+    expect(result.posts[0].status).toBe("scheduled");
+    expect(result.posts[0].scheduled_at).toBe("2026-06-01 12:00:00");
+    expect(result.posts[0].tags).toEqual(["crosspost"]);
+  });
+
+  test("cross-post warns on platform limit", () => {
+    const longContent = "a".repeat(350); // Over both X (280) and Bluesky (300)
+    const result = crossPost(longContent, ["x", "bluesky"]);
+
+    expect(result.posts.length).toBe(2);
+    expect(result.warnings.length).toBe(2);
+  });
+
+  test("cross-post throws for platform with no accounts", () => {
+    // Delete all threads accounts first to ensure none exist
+    const threadsAccounts = listAccounts({ platform: "threads" });
+    for (const a of threadsAccounts) {
+      deleteAccount(a.id);
+    }
+
+    expect(() => {
+      crossPost("Hello", ["threads"]);
+    }).toThrow("No account found for platform 'threads'");
+
+    // Re-create a threads account for other tests
+    createAccount({ platform: "threads", handle: "restored_threads" });
+  });
+});
+
+// ---- Best Time to Post ----
+
+describe("Best Time to Post", () => {
+  let accountId: string;
+
+  test("setup: create account with published posts at various times", () => {
+    const account = createAccount({ platform: "x", handle: "besttime" });
+    accountId = account.id;
+
+    // Create and publish posts at different times
+    const post1 = createPost({ account_id: accountId, content: "Monday morning post" });
+    publishPost(post1.id);
+    // Manually set published_at to control the time
+    updatePost(post1.id, {
+      published_at: "2026-03-02 09:00:00", // Monday 9AM
+      engagement: { likes: 100, shares: 20, comments: 10, impressions: 1000, clicks: 50 },
+    });
+
+    const post2 = createPost({ account_id: accountId, content: "Friday afternoon post" });
+    publishPost(post2.id);
+    updatePost(post2.id, {
+      published_at: "2026-03-06 15:00:00", // Friday 3PM
+      engagement: { likes: 200, shares: 50, comments: 25, impressions: 3000, clicks: 100 },
+    });
+
+    const post3 = createPost({ account_id: accountId, content: "Monday evening post" });
+    publishPost(post3.id);
+    updatePost(post3.id, {
+      published_at: "2026-03-02 18:00:00", // Monday 6PM
+      engagement: { likes: 50, shares: 5, comments: 2, impressions: 300, clicks: 10 },
+    });
+  });
+
+  test("get best time to post", () => {
+    const result = getBestTimeToPost(accountId);
+
+    expect(result.total_analyzed).toBe(3);
+    expect(result.best_hours.length).toBeGreaterThan(0);
+    expect(result.best_days.length).toBeGreaterThan(0);
+
+    // Friday should be the best day (highest engagement)
+    expect(result.best_days[0].day_name).toBe("Friday");
+  });
+
+  test("best time to post with no data", () => {
+    const account = createAccount({ platform: "x", handle: "nopublished" });
+    const result = getBestTimeToPost(account.id);
+
+    expect(result.total_analyzed).toBe(0);
+    expect(result.best_hours.length).toBe(0);
+    expect(result.best_days.length).toBe(0);
+  });
+});
+
+// ---- Reschedule ----
+
+describe("Reschedule", () => {
+  let accountId: string;
+
+  test("setup: create account for rescheduling", () => {
+    const account = createAccount({ platform: "x", handle: "rescheduler" });
+    accountId = account.id;
+  });
+
+  test("reschedule a scheduled post", () => {
+    const post = createPost({ account_id: accountId, content: "Reschedule me" });
+    schedulePost(post.id, "2026-05-01 10:00:00");
+
+    const rescheduled = reschedulePost(post.id, "2026-05-02 14:00:00");
+    expect(rescheduled).toBeDefined();
+    expect(rescheduled!.scheduled_at).toBe("2026-05-02 14:00:00");
+    expect(rescheduled!.status).toBe("scheduled");
+  });
+
+  test("reschedule a draft post", () => {
+    const post = createPost({ account_id: accountId, content: "Draft reschedule" });
+
+    const rescheduled = reschedulePost(post.id, "2026-06-01 12:00:00");
+    expect(rescheduled).toBeDefined();
+    expect(rescheduled!.scheduled_at).toBe("2026-06-01 12:00:00");
+    expect(rescheduled!.status).toBe("scheduled");
+  });
+
+  test("reschedule published post throws error", () => {
+    const post = createPost({ account_id: accountId, content: "Already published" });
+    publishPost(post.id);
+
+    expect(() => {
+      reschedulePost(post.id, "2026-06-01 12:00:00");
+    }).toThrow("Cannot reschedule post with status 'published'");
+  });
+
+  test("reschedule non-existent post returns null", () => {
+    const result = reschedulePost("non-existent", "2026-06-01 12:00:00");
+    expect(result).toBeNull();
+  });
+});
+
+// ---- Approval Workflow ----
+
+describe("Approval Workflow", () => {
+  let accountId: string;
+
+  test("setup: create account for approval", () => {
+    const account = createAccount({ platform: "x", handle: "approver" });
+    accountId = account.id;
+  });
+
+  test("submit draft for review", () => {
+    const post = createPost({ account_id: accountId, content: "Review this" });
+    expect(post.status).toBe("draft");
+
+    const submitted = submitPostForReview(post.id);
+    expect(submitted).toBeDefined();
+    expect(submitted!.status).toBe("pending_review");
+  });
+
+  test("submit non-draft throws error", () => {
+    const post = createPost({ account_id: accountId, content: "Already scheduled" });
+    schedulePost(post.id, "2026-07-01 10:00:00");
+
+    expect(() => {
+      submitPostForReview(post.id);
+    }).toThrow("Cannot submit post with status 'scheduled'");
+  });
+
+  test("approve pending_review post with date", () => {
+    const post = createPost({ account_id: accountId, content: "Approve me" });
+    submitPostForReview(post.id);
+
+    const approved = approvePost(post.id, "2026-07-01 10:00:00");
+    expect(approved).toBeDefined();
+    expect(approved!.status).toBe("scheduled");
+    expect(approved!.scheduled_at).toBe("2026-07-01 10:00:00");
+  });
+
+  test("approve pending_review post with existing scheduled_at", () => {
+    const post = createPost({
+      account_id: accountId,
+      content: "Approve with existing date",
+      scheduled_at: "2026-08-01 10:00:00",
+    });
+    submitPostForReview(post.id);
+
+    const approved = approvePost(post.id);
+    expect(approved).toBeDefined();
+    expect(approved!.status).toBe("scheduled");
+    expect(approved!.scheduled_at).toBe("2026-08-01 10:00:00");
+  });
+
+  test("approve post without date throws error", () => {
+    const post = createPost({ account_id: accountId, content: "No date" });
+    submitPostForReview(post.id);
+
+    expect(() => {
+      approvePost(post.id);
+    }).toThrow("Cannot approve post without a scheduled date");
+  });
+
+  test("approve non-pending post throws error", () => {
+    const post = createPost({ account_id: accountId, content: "Not pending" });
+
+    expect(() => {
+      approvePost(post.id, "2026-07-01 10:00:00");
+    }).toThrow("Cannot approve post with status 'draft'");
+  });
+
+  test("submit non-existent post returns null", () => {
+    const result = submitPostForReview("non-existent");
+    expect(result).toBeNull();
+  });
+
+  test("approve non-existent post returns null", () => {
+    const result = approvePost("non-existent", "2026-07-01 10:00:00");
+    expect(result).toBeNull();
+  });
+});
+
+// ---- Recurring Posts ----
+
+describe("Recurring Posts", () => {
+  let accountId: string;
+
+  test("setup: create account for recurring", () => {
+    const account = createAccount({ platform: "linkedin", handle: "recurring" });
+    accountId = account.id;
+  });
+
+  test("create recurring weekly post", () => {
+    const post = createRecurringPost({
+      account_id: accountId,
+      content: "Weekly update!",
+      scheduled_at: "2026-05-01 09:00:00",
+      recurrence: "weekly",
+    });
+
+    expect(post.id).toBeTruthy();
+    expect(post.recurrence).toBe("weekly");
+    expect(post.status).toBe("scheduled");
+    expect(post.scheduled_at).toBe("2026-05-01 09:00:00");
+  });
+
+  test("create recurring daily post", () => {
+    const post = createRecurringPost({
+      account_id: accountId,
+      content: "Daily tip!",
+      scheduled_at: "2026-05-01 08:00:00",
+      recurrence: "daily",
+      tags: ["tips"],
+    });
+
+    expect(post.recurrence).toBe("daily");
+    expect(post.tags).toEqual(["tips"]);
+  });
+
+  test("create recurring monthly post", () => {
+    const post = createRecurringPost({
+      account_id: accountId,
+      content: "Monthly newsletter",
+      scheduled_at: "2026-05-01 10:00:00",
+      recurrence: "monthly",
+    });
+
+    expect(post.recurrence).toBe("monthly");
+  });
+
+  test("create recurring post without scheduled_at throws", () => {
+    expect(() => {
+      createRecurringPost({
+        account_id: accountId,
+        content: "No date",
+        recurrence: "weekly",
+      } as any);
+    }).toThrow("Recurring posts must have a scheduled_at date");
+  });
+
+  test("recurrence persists on read", () => {
+    const post = createRecurringPost({
+      account_id: accountId,
+      content: "Persist check",
+      scheduled_at: "2026-05-01 10:00:00",
+      recurrence: "biweekly",
+    });
+
+    const fetched = getPost(post.id);
+    expect(fetched).toBeDefined();
+    expect(fetched!.recurrence).toBe("biweekly");
+  });
+
+  test("update post recurrence", () => {
+    const post = createPost({ account_id: accountId, content: "Change recurrence" });
+    const updated = updatePost(post.id, { recurrence: "monthly" });
+    expect(updated!.recurrence).toBe("monthly");
+
+    const cleared = updatePost(post.id, { recurrence: null });
+    expect(cleared!.recurrence).toBeNull();
+  });
+});
+
+// ---- Hashtag Analytics ----
+
+describe("Hashtag Analytics", () => {
+  let accountId: string;
+
+  test("setup: create account with hashtag posts", () => {
+    const account = createAccount({ platform: "x", handle: "hashtagger" });
+    accountId = account.id;
+
+    // Post with #launch and #product
+    const post1 = createPost({ account_id: accountId, content: "Excited about #launch of #product!" });
+    publishPost(post1.id);
+    updatePost(post1.id, {
+      engagement: { likes: 100, shares: 30, comments: 10, impressions: 2000 },
+    });
+
+    // Another post with #launch
+    const post2 = createPost({ account_id: accountId, content: "Big day for #launch! #excited" });
+    publishPost(post2.id);
+    updatePost(post2.id, {
+      engagement: { likes: 200, shares: 50, comments: 20, impressions: 5000 },
+    });
+
+    // Post with #product only
+    const post3 = createPost({ account_id: accountId, content: "#product update coming soon" });
+    publishPost(post3.id);
+    updatePost(post3.id, {
+      engagement: { likes: 50, shares: 5, comments: 2, impressions: 500 },
+    });
+  });
+
+  test("get hashtag stats", () => {
+    const stats = getHashtagStats(accountId);
+
+    expect(stats.length).toBeGreaterThanOrEqual(3);
+
+    const launchStat = stats.find((s) => s.hashtag === "launch");
+    expect(launchStat).toBeDefined();
+    expect(launchStat!.post_count).toBe(2);
+    expect(launchStat!.total_likes).toBe(300);
+    expect(launchStat!.total_shares).toBe(80);
+
+    const productStat = stats.find((s) => s.hashtag === "product");
+    expect(productStat).toBeDefined();
+    expect(productStat!.post_count).toBe(2);
+  });
+
+  test("hashtag stats sorted by avg engagement", () => {
+    const stats = getHashtagStats(accountId);
+    for (let i = 1; i < stats.length; i++) {
+      expect(stats[i - 1].avg_engagement).toBeGreaterThanOrEqual(stats[i].avg_engagement);
+    }
+  });
+
+  test("hashtag stats with no published posts returns empty", () => {
+    const account = createAccount({ platform: "x", handle: "nohashtags" });
+    const stats = getHashtagStats(account.id);
+    expect(stats).toEqual([]);
+  });
+
+  test("hashtag stats with posts but no hashtags returns empty", () => {
+    const account = createAccount({ platform: "x", handle: "nohashtags2" });
+    const post = createPost({ account_id: account.id, content: "No hashtags here" });
+    publishPost(post.id);
+    updatePost(post.id, { engagement: { likes: 10 } });
+
+    const stats = getHashtagStats(account.id);
+    expect(stats).toEqual([]);
   });
 });

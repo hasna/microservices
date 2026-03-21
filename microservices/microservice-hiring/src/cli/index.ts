@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command } from "commander";
+import { readFileSync } from "node:fs";
 import {
   createJob,
   getJob,
@@ -17,7 +18,17 @@ import {
   createInterview,
   listInterviews,
   addInterviewFeedback,
+  bulkImportApplicants,
+  generateOffer,
+  getHiringForecast,
+  submitStructuredFeedback,
+  bulkReject,
+  getReferralStats,
+  saveJobAsTemplate,
+  createJobFromTemplate,
+  listJobTemplates,
 } from "../db/hiring.js";
+import { scoreApplicant, rankApplicants } from "../lib/scoring.js";
 
 const program = new Command();
 
@@ -291,6 +302,142 @@ applicantCmd
     }
   });
 
+// --- Bulk Import ---
+
+applicantCmd
+  .command("bulk-import")
+  .description("Bulk import applicants from a CSV file")
+  .requiredOption("--file <path>", "Path to CSV file (name,email,phone,job_id,source,resume_url)")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const csvData = readFileSync(opts.file, "utf-8");
+    const result = bulkImportApplicants(csvData);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Imported: ${result.imported}`);
+      console.log(`Skipped: ${result.skipped}`);
+      if (result.errors.length > 0) {
+        console.log("Errors:");
+        for (const e of result.errors) {
+          console.log(`  - ${e}`);
+        }
+      }
+    }
+  });
+
+// --- AI Scoring ---
+
+applicantCmd
+  .command("score")
+  .description("AI-score an applicant against job requirements")
+  .argument("<id>", "Applicant ID")
+  .option("--json", "Output as JSON", false)
+  .action(async (id, opts) => {
+    try {
+      const score = await scoreApplicant(id);
+
+      if (opts.json) {
+        console.log(JSON.stringify(score, null, 2));
+      } else {
+        console.log(`Match: ${score.match_pct}%`);
+        console.log(`Recommendation: ${score.recommendation}`);
+        if (score.strengths.length) console.log(`Strengths: ${score.strengths.join(", ")}`);
+        if (score.gaps.length) console.log(`Gaps: ${score.gaps.join(", ")}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// --- AI Bulk Ranking ---
+
+applicantCmd
+  .command("rank")
+  .description("AI-rank all applicants for a job by fit score")
+  .requiredOption("--job <id>", "Job ID")
+  .option("--json", "Output as JSON", false)
+  .action(async (opts) => {
+    try {
+      const ranked = await rankApplicants(opts.job);
+
+      if (opts.json) {
+        console.log(JSON.stringify(ranked, null, 2));
+      } else {
+        if (ranked.length === 0) {
+          console.log("No applicants to rank.");
+          return;
+        }
+        console.log("Ranking:");
+        for (let i = 0; i < ranked.length; i++) {
+          const { applicant, score } = ranked[i];
+          console.log(`  ${i + 1}. ${applicant.name} — ${score.match_pct}% (${score.recommendation})`);
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// --- Offer Letter ---
+
+applicantCmd
+  .command("offer")
+  .description("Generate a Markdown offer letter")
+  .argument("<id>", "Applicant ID")
+  .requiredOption("--salary <amount>", "Annual salary")
+  .requiredOption("--start-date <date>", "Start date (YYYY-MM-DD)")
+  .option("--title <title>", "Position title override")
+  .option("--department <dept>", "Department override")
+  .option("--benefits <text>", "Benefits description")
+  .option("--equity <text>", "Equity details")
+  .option("--signing-bonus <amount>", "Signing bonus")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    try {
+      const letter = generateOffer(id, {
+        salary: parseInt(opts.salary),
+        start_date: opts.startDate,
+        position_title: opts.title,
+        department: opts.department,
+        benefits: opts.benefits,
+        equity: opts.equity,
+        signing_bonus: opts.signingBonus ? parseInt(opts.signingBonus) : undefined,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify({ offer_letter: letter }, null, 2));
+      } else {
+        console.log(letter);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// --- Bulk Rejection ---
+
+applicantCmd
+  .command("reject-batch")
+  .description("Bulk reject applicants for a job by status")
+  .requiredOption("--job <id>", "Job ID")
+  .requiredOption("--status <status>", "Status to reject (applied/screening/etc.)")
+  .option("--reason <reason>", "Rejection reason")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const result = bulkReject(opts.job, opts.status, opts.reason);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Rejected ${result.rejected} applicant(s)`);
+    }
+  });
+
 // --- Interviews ---
 
 const interviewCmd = program
@@ -356,17 +503,46 @@ interviewCmd
 
 interviewCmd
   .command("feedback")
-  .description("Add feedback to an interview")
+  .description("Add feedback to an interview (supports structured scoring dimensions)")
   .argument("<id>", "Interview ID")
-  .requiredOption("--feedback <text>", "Feedback text")
-  .option("--rating <n>", "Rating (1-5)")
+  .option("--feedback <text>", "Feedback text")
+  .option("--rating <n>", "Overall rating (1-5)")
+  .option("--technical <n>", "Technical score (1-5)")
+  .option("--communication <n>", "Communication score (1-5)")
+  .option("--culture-fit <n>", "Culture fit score (1-5)")
+  .option("--problem-solving <n>", "Problem solving score (1-5)")
+  .option("--leadership <n>", "Leadership score (1-5)")
   .option("--json", "Output as JSON", false)
   .action((id, opts) => {
-    const interview = addInterviewFeedback(
-      id,
-      opts.feedback,
-      opts.rating ? parseInt(opts.rating) : undefined
-    );
+    const hasStructured = opts.technical || opts.communication || opts.cultureFit ||
+      opts.problemSolving || opts.leadership;
+
+    let interview;
+    if (hasStructured) {
+      interview = submitStructuredFeedback(
+        id,
+        {
+          technical: opts.technical ? parseInt(opts.technical) : undefined,
+          communication: opts.communication ? parseInt(opts.communication) : undefined,
+          culture_fit: opts.cultureFit ? parseInt(opts.cultureFit) : undefined,
+          problem_solving: opts.problemSolving ? parseInt(opts.problemSolving) : undefined,
+          leadership: opts.leadership ? parseInt(opts.leadership) : undefined,
+          overall: opts.rating ? parseInt(opts.rating) : undefined,
+        },
+        opts.feedback
+      );
+    } else {
+      if (!opts.feedback) {
+        console.error("Either --feedback or structured scores (--technical, --communication, etc.) are required.");
+        process.exit(1);
+      }
+      interview = addInterviewFeedback(
+        id,
+        opts.feedback,
+        opts.rating ? parseInt(opts.rating) : undefined
+      );
+    }
+
     if (!interview) {
       console.error(`Interview '${id}' not found.`);
       process.exit(1);
@@ -425,6 +601,140 @@ program
           console.log(`    ${s.status}: ${s.count}`);
         }
       }
+    }
+  });
+
+// --- Referral Stats ---
+
+const statsCmd = program
+  .command("stats-referrals")
+  .description("Show referral/source conversion rates")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const stats = getReferralStats();
+
+    if (opts.json) {
+      console.log(JSON.stringify(stats, null, 2));
+    } else {
+      if (stats.length === 0) {
+        console.log("No applicant source data.");
+        return;
+      }
+      console.log("Referral Stats:");
+      for (const s of stats) {
+        console.log(`  ${s.source}: ${s.total} total, ${s.hired} hired, ${s.conversion_rate}% conversion`);
+      }
+    }
+  });
+
+// --- Forecast ---
+
+program
+  .command("forecast")
+  .description("Estimate days-to-fill based on pipeline velocity")
+  .argument("<job-id>", "Job ID")
+  .option("--json", "Output as JSON", false)
+  .action((jobId, opts) => {
+    try {
+      const forecast = getHiringForecast(jobId);
+
+      if (opts.json) {
+        console.log(JSON.stringify(forecast, null, 2));
+      } else {
+        console.log(`Forecast for: ${forecast.job_title}`);
+        console.log(`  Total applicants: ${forecast.total_applicants}`);
+        console.log(`  Estimated days to fill: ${forecast.estimated_days_to_fill ?? "N/A"}`);
+
+        if (Object.keys(forecast.avg_days_per_stage).length) {
+          console.log("  Avg days per transition:");
+          for (const [stage, days] of Object.entries(forecast.avg_days_per_stage)) {
+            console.log(`    ${stage}: ${days} days`);
+          }
+        }
+
+        if (Object.keys(forecast.conversion_rates).length) {
+          console.log("  Conversion rates:");
+          for (const [stage, rate] of Object.entries(forecast.conversion_rates)) {
+            console.log(`    ${stage}: ${rate}%`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// --- Job Templates ---
+
+jobCmd
+  .command("save-template")
+  .description("Save a job as a reusable template")
+  .argument("<id>", "Job ID")
+  .requiredOption("--name <name>", "Template name")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    try {
+      const template = saveJobAsTemplate(id, opts.name);
+
+      if (opts.json) {
+        console.log(JSON.stringify(template, null, 2));
+      } else {
+        console.log(`Saved template: ${template.name} (${template.id})`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+jobCmd
+  .command("from-template")
+  .description("Create a job from a template")
+  .requiredOption("--template <name>", "Template name")
+  .option("--title <title>", "Override title")
+  .option("--department <dept>", "Override department")
+  .option("--location <loc>", "Override location")
+  .option("--salary-range <range>", "Override salary range")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    try {
+      const job = createJobFromTemplate(opts.template, {
+        title: opts.title,
+        department: opts.department,
+        location: opts.location,
+        salary_range: opts.salaryRange,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(job, null, 2));
+      } else {
+        console.log(`Created job from template: ${job.title} (${job.id})`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+jobCmd
+  .command("templates")
+  .description("List all job templates")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const templates = listJobTemplates();
+
+    if (opts.json) {
+      console.log(JSON.stringify(templates, null, 2));
+    } else {
+      if (templates.length === 0) {
+        console.log("No templates found.");
+        return;
+      }
+      for (const t of templates) {
+        console.log(`  ${t.name} — ${t.title} (${t.id})`);
+      }
+      console.log(`\n${templates.length} template(s)`);
     }
   });
 

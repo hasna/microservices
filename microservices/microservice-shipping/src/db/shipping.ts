@@ -83,6 +83,7 @@ export interface Return {
   id: string;
   order_id: string;
   reason: string | null;
+  rma_code: string | null;
   status: "requested" | "approved" | "received" | "refunded";
   created_at: string;
   updated_at: string;
@@ -92,6 +93,7 @@ interface ReturnRow {
   id: string;
   order_id: string;
   reason: string | null;
+  rma_code: string | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -476,20 +478,32 @@ export interface CreateReturnInput {
   order_id: string;
   reason?: string;
   status?: Return["status"];
+  auto_rma?: boolean;
+}
+
+function generateRmaCode(): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let code = "RMA-";
+  for (let i = 0; i < 8; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
 }
 
 export function createReturn(input: CreateReturnInput): Return {
   const db = getDatabase();
   const id = crypto.randomUUID();
+  const rmaCode = input.auto_rma ? generateRmaCode() : null;
 
   db.prepare(
-    `INSERT INTO returns (id, order_id, reason, status)
-     VALUES (?, ?, ?, ?)`
+    `INSERT INTO returns (id, order_id, reason, status, rma_code)
+     VALUES (?, ?, ?, ?, ?)`
   ).run(
     id,
     input.order_id,
     input.reason || null,
-    input.status || "requested"
+    input.status || "requested",
+    rmaCode
   );
 
   return getReturn(id)!;
@@ -640,4 +654,440 @@ export function getCostsByCarrier(): CarrierCosts[] {
      FROM shipments GROUP BY carrier ORDER BY total_cost DESC`
   ).all() as CarrierCosts[];
   return rows;
+}
+
+// ─── Bulk Import/Export ─────────────────────────────────────────────────────
+
+export interface BulkImportResult {
+  imported: number;
+  errors: { line: number; message: string }[];
+}
+
+export function bulkImportOrders(csvData: string): BulkImportResult {
+  const lines = csvData.trim().split("\n");
+  if (lines.length < 2) return { imported: 0, errors: [{ line: 1, message: "No data rows found" }] };
+
+  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const result: BulkImportResult = { imported: 0, errors: [] };
+
+  for (let i = 1; i < lines.length; i++) {
+    try {
+      const values = parseCSVLine(lines[i]);
+      const row: Record<string, string> = {};
+      header.forEach((h, idx) => {
+        row[h] = (values[idx] || "").trim();
+      });
+
+      const address: Address = {
+        street: row["street"] || "",
+        city: row["city"] || "",
+        state: row["state"] || "",
+        zip: row["zip"] || "",
+        country: row["country"] || "US",
+      };
+
+      let items: OrderItem[] = [];
+      if (row["items_json"]) {
+        try {
+          items = JSON.parse(row["items_json"]);
+        } catch {
+          items = [];
+        }
+      }
+
+      createOrder({
+        customer_name: row["customer_name"] || "Unknown",
+        customer_email: row["customer_email"] || undefined,
+        address,
+        items,
+        total_value: row["total_value"] ? parseFloat(row["total_value"]) : undefined,
+      });
+
+      result.imported++;
+    } catch (err) {
+      result.errors.push({
+        line: i + 1,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return result;
+}
+
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ",") {
+        result.push(current);
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+export function exportOrders(
+  format: "csv" | "json",
+  dateFrom?: string,
+  dateTo?: string
+): string {
+  const db = getDatabase();
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (dateFrom) {
+    conditions.push("created_at >= ?");
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    conditions.push("created_at <= ?");
+    params.push(dateTo);
+  }
+
+  let sql = "SELECT * FROM orders";
+  if (conditions.length > 0) {
+    sql += " WHERE " + conditions.join(" AND ");
+  }
+  sql += " ORDER BY created_at DESC";
+
+  const rows = db.prepare(sql).all(...params) as OrderRow[];
+  const orders = rows.map(rowToOrder);
+
+  if (format === "json") {
+    return JSON.stringify(orders, null, 2);
+  }
+
+  // CSV format
+  const csvHeader = "id,customer_name,customer_email,street,city,state,zip,country,items_json,total_value,currency,status,created_at";
+  const csvRows = orders.map((o) => {
+    const itemsJson = JSON.stringify(o.items).replace(/"/g, '""');
+    return [
+      o.id,
+      escapeCSV(o.customer_name),
+      o.customer_email || "",
+      escapeCSV(o.address.street),
+      escapeCSV(o.address.city),
+      escapeCSV(o.address.state),
+      o.address.zip,
+      o.address.country,
+      `"${itemsJson}"`,
+      o.total_value.toString(),
+      o.currency,
+      o.status,
+      o.created_at,
+    ].join(",");
+  });
+
+  return [csvHeader, ...csvRows].join("\n");
+}
+
+function escapeCSV(value: string): string {
+  if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+// ─── Delivery Timeline Analytics ────────────────────────────────────────────
+
+export interface DeliveryStats {
+  carrier: string;
+  service: string;
+  total_shipments: number;
+  delivered_count: number;
+  avg_delivery_days: number;
+  on_time_pct: number;
+  late_pct: number;
+}
+
+export function getDeliveryStats(carrier?: string): DeliveryStats[] {
+  const db = getDatabase();
+  const conditions: string[] = ["delivered_at IS NOT NULL", "shipped_at IS NOT NULL"];
+  const params: unknown[] = [];
+
+  if (carrier) {
+    conditions.push("carrier = ?");
+    params.push(carrier);
+  }
+
+  const sql = `
+    SELECT
+      carrier,
+      service,
+      COUNT(*) as total_shipments,
+      SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered_count,
+      AVG(julianday(delivered_at) - julianday(shipped_at)) as avg_delivery_days,
+      SUM(CASE WHEN estimated_delivery IS NOT NULL AND delivered_at <= estimated_delivery THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as on_time_pct,
+      SUM(CASE WHEN estimated_delivery IS NOT NULL AND delivered_at > estimated_delivery THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as late_pct
+    FROM shipments
+    WHERE ${conditions.join(" AND ")}
+    GROUP BY carrier, service
+    ORDER BY carrier, service
+  `;
+
+  return db.prepare(sql).all(...params) as DeliveryStats[];
+}
+
+// ─── Late Delivery Alerts ───────────────────────────────────────────────────
+
+export interface OverdueShipment {
+  shipment_id: string;
+  order_id: string;
+  carrier: string;
+  service: string;
+  tracking_number: string | null;
+  estimated_delivery: string;
+  days_overdue: number;
+  status: string;
+}
+
+export function listOverdueShipments(graceDays: number = 0): OverdueShipment[] {
+  const db = getDatabase();
+
+  const sql = `
+    SELECT
+      id as shipment_id,
+      order_id,
+      carrier,
+      service,
+      tracking_number,
+      estimated_delivery,
+      CAST(julianday('now') - julianday(estimated_delivery) - ? AS INTEGER) as days_overdue,
+      status
+    FROM shipments
+    WHERE estimated_delivery IS NOT NULL
+      AND status != 'delivered'
+      AND julianday('now') > julianday(estimated_delivery) + ?
+    ORDER BY days_overdue DESC
+  `;
+
+  return db.prepare(sql).all(graceDays, graceDays) as OverdueShipment[];
+}
+
+// ─── Customer History ───────────────────────────────────────────────────────
+
+export interface CustomerHistory {
+  customer_email: string;
+  orders: Order[];
+  shipments: Shipment[];
+  returns: Return[];
+}
+
+export function getCustomerHistory(email: string): CustomerHistory {
+  const db = getDatabase();
+
+  const orderRows = db.prepare(
+    "SELECT * FROM orders WHERE customer_email = ? ORDER BY created_at DESC"
+  ).all(email) as OrderRow[];
+  const orders = orderRows.map(rowToOrder);
+
+  const orderIds = orders.map((o) => o.id);
+  let shipments: Shipment[] = [];
+  let returns: Return[] = [];
+
+  if (orderIds.length > 0) {
+    const placeholders = orderIds.map(() => "?").join(",");
+
+    const shipmentRows = db.prepare(
+      `SELECT * FROM shipments WHERE order_id IN (${placeholders}) ORDER BY created_at DESC`
+    ).all(...orderIds) as ShipmentRow[];
+    shipments = shipmentRows.map(rowToShipment);
+
+    const returnRows = db.prepare(
+      `SELECT * FROM returns WHERE order_id IN (${placeholders}) ORDER BY created_at DESC`
+    ).all(...orderIds) as ReturnRow[];
+    returns = returnRows.map(rowToReturn);
+  }
+
+  return { customer_email: email, orders, shipments, returns };
+}
+
+// ─── Carrier Performance ────────────────────────────────────────────────────
+
+export interface CarrierPerformance {
+  carrier: string;
+  total_shipments: number;
+  delivered_count: number;
+  on_time_pct: number;
+  avg_cost: number;
+  avg_delivery_days: number;
+}
+
+export function getCarrierPerformance(): CarrierPerformance[] {
+  const db = getDatabase();
+
+  const sql = `
+    SELECT
+      carrier,
+      COUNT(*) as total_shipments,
+      SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered_count,
+      COALESCE(
+        SUM(CASE WHEN estimated_delivery IS NOT NULL AND delivered_at IS NOT NULL AND delivered_at <= estimated_delivery THEN 1 ELSE 0 END) * 100.0
+        / NULLIF(SUM(CASE WHEN estimated_delivery IS NOT NULL AND delivered_at IS NOT NULL THEN 1 ELSE 0 END), 0),
+        0
+      ) as on_time_pct,
+      COALESCE(AVG(cost), 0) as avg_cost,
+      COALESCE(
+        AVG(CASE WHEN delivered_at IS NOT NULL AND shipped_at IS NOT NULL THEN julianday(delivered_at) - julianday(shipped_at) END),
+        0
+      ) as avg_delivery_days
+    FROM shipments
+    GROUP BY carrier
+    ORDER BY on_time_pct DESC
+  `;
+
+  return db.prepare(sql).all() as CarrierPerformance[];
+}
+
+// ─── Cost Optimizer ─────────────────────────────────────────────────────────
+
+export interface CostRecommendation {
+  carrier: string;
+  service: string;
+  avg_cost: number;
+  avg_delivery_days: number;
+  shipment_count: number;
+}
+
+export function optimizeCost(
+  weight: number,
+  _fromZip?: string,
+  _toZip?: string
+): CostRecommendation[] {
+  const db = getDatabase();
+
+  // Find historical shipments with similar weight (within 50% range)
+  const minWeight = weight * 0.5;
+  const maxWeight = weight * 1.5;
+
+  const sql = `
+    SELECT
+      carrier,
+      service,
+      AVG(cost) as avg_cost,
+      AVG(CASE WHEN delivered_at IS NOT NULL AND shipped_at IS NOT NULL THEN julianday(delivered_at) - julianday(shipped_at) END) as avg_delivery_days,
+      COUNT(*) as shipment_count
+    FROM shipments
+    WHERE cost IS NOT NULL
+      AND weight IS NOT NULL
+      AND weight BETWEEN ? AND ?
+    GROUP BY carrier, service
+    HAVING shipment_count >= 1
+    ORDER BY avg_cost ASC
+  `;
+
+  return db.prepare(sql).all(minWeight, maxWeight) as CostRecommendation[];
+}
+
+// ─── Order Timeline ─────────────────────────────────────────────────────────
+
+export interface TimelineEvent {
+  timestamp: string;
+  type: "order_created" | "order_updated" | "shipment_created" | "shipment_updated" | "return_created" | "return_updated";
+  entity_id: string;
+  details: string;
+}
+
+export function getOrderTimeline(orderId: string): TimelineEvent[] {
+  const db = getDatabase();
+  const events: TimelineEvent[] = [];
+
+  // Order creation
+  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as OrderRow | null;
+  if (!order) return [];
+
+  events.push({
+    timestamp: order.created_at,
+    type: "order_created",
+    entity_id: order.id,
+    details: `Order created for ${order.customer_name} — $${order.total_value} ${order.currency} [${order.status}]`,
+  });
+
+  if (order.updated_at !== order.created_at) {
+    events.push({
+      timestamp: order.updated_at,
+      type: "order_updated",
+      entity_id: order.id,
+      details: `Order updated — status: ${order.status}`,
+    });
+  }
+
+  // Shipments
+  const shipmentRows = db.prepare(
+    "SELECT * FROM shipments WHERE order_id = ? ORDER BY created_at ASC"
+  ).all(orderId) as ShipmentRow[];
+
+  for (const s of shipmentRows) {
+    events.push({
+      timestamp: s.created_at,
+      type: "shipment_created",
+      entity_id: s.id,
+      details: `Shipment created via ${s.carrier}/${s.service}${s.tracking_number ? ` (${s.tracking_number})` : ""} [${s.status}]`,
+    });
+
+    if (s.shipped_at) {
+      events.push({
+        timestamp: s.shipped_at,
+        type: "shipment_updated",
+        entity_id: s.id,
+        details: `Shipment shipped via ${s.carrier}`,
+      });
+    }
+    if (s.delivered_at) {
+      events.push({
+        timestamp: s.delivered_at,
+        type: "shipment_updated",
+        entity_id: s.id,
+        details: `Shipment delivered via ${s.carrier}`,
+      });
+    }
+  }
+
+  // Returns
+  const returnRows = db.prepare(
+    "SELECT * FROM returns WHERE order_id = ? ORDER BY created_at ASC"
+  ).all(orderId) as ReturnRow[];
+
+  for (const r of returnRows) {
+    events.push({
+      timestamp: r.created_at,
+      type: "return_created",
+      entity_id: r.id,
+      details: `Return requested${r.reason ? `: ${r.reason}` : ""}${r.rma_code ? ` (${r.rma_code})` : ""} [${r.status}]`,
+    });
+
+    if (r.updated_at !== r.created_at) {
+      events.push({
+        timestamp: r.updated_at,
+        type: "return_updated",
+        entity_id: r.id,
+        details: `Return updated — status: ${r.status}`,
+      });
+    }
+  }
+
+  // Sort by timestamp
+  events.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+  return events;
 }

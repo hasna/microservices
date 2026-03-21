@@ -650,3 +650,555 @@ export function deletePayout(id: string): boolean {
   const result = db.prepare("DELETE FROM payouts WHERE id = ?").run(id);
   return result.changes > 0;
 }
+
+// --- Auto-Reconciliation ---
+
+export interface AutoReconcileResult {
+  matched: Array<{ payment_id: string; invoice_id: string; confidence: string }>;
+  unmatched_payments: Payment[];
+  unmatched_invoices: string[];
+}
+
+/**
+ * Auto-reconcile payments to invoices by matching amount + customer_email + date (+-3 days tolerance).
+ * This looks at payments that have no invoice_id and tries to match them against
+ * payments that DO have an invoice_id (as a proxy for invoice records).
+ */
+export function autoReconcile(dateFrom?: string, dateTo?: string): AutoReconcileResult {
+  const db = getDatabase();
+
+  // Build date conditions
+  const dateConditions: string[] = [];
+  const dateParams: unknown[] = [];
+  if (dateFrom) {
+    dateConditions.push("created_at >= ?");
+    dateParams.push(dateFrom);
+  }
+  if (dateTo) {
+    dateConditions.push("created_at <= ?");
+    dateParams.push(dateTo);
+  }
+  const dateWhere = dateConditions.length > 0 ? " AND " + dateConditions.join(" AND ") : "";
+
+  // Get unreconciled payments (no invoice_id, type=charge, succeeded)
+  const unreconciledRows = db
+    .prepare(
+      `SELECT * FROM payments
+       WHERE invoice_id IS NULL AND type = 'charge' AND status = 'succeeded'${dateWhere}
+       ORDER BY created_at DESC`
+    )
+    .all(...dateParams) as PaymentRow[];
+  const unreconciled = unreconciledRows.map(rowToPayment);
+
+  // Get reconciled payments (have invoice_id) as our "invoice" reference
+  const reconciledRows = db
+    .prepare(
+      `SELECT * FROM payments
+       WHERE invoice_id IS NOT NULL AND type = 'charge'${dateWhere}
+       ORDER BY created_at DESC`
+    )
+    .all(...dateParams) as PaymentRow[];
+  const reconciled = reconciledRows.map(rowToPayment);
+
+  // Collect known invoice IDs
+  const invoiceIds = new Set(reconciled.map((p) => p.invoice_id!));
+  const matchedInvoiceIds = new Set<string>();
+
+  const matched: Array<{ payment_id: string; invoice_id: string; confidence: string }> = [];
+  const unmatchedPayments: Payment[] = [];
+
+  for (const payment of unreconciled) {
+    let bestMatch: Payment | null = null;
+    for (const candidate of reconciled) {
+      if (matchedInvoiceIds.has(candidate.invoice_id!)) continue;
+      // Match by amount
+      if (candidate.amount !== payment.amount) continue;
+      // Match by customer email
+      if (
+        candidate.customer_email &&
+        payment.customer_email &&
+        candidate.customer_email === payment.customer_email
+      ) {
+        // Match by date proximity (+-3 days)
+        const payDate = new Date(payment.created_at).getTime();
+        const candDate = new Date(candidate.created_at).getTime();
+        const dayDiff = Math.abs(payDate - candDate) / (1000 * 60 * 60 * 24);
+        if (dayDiff <= 3) {
+          bestMatch = candidate;
+          break;
+        }
+      }
+    }
+
+    if (bestMatch && bestMatch.invoice_id) {
+      // Link the payment to the invoice
+      updatePayment(payment.id, { invoice_id: bestMatch.invoice_id });
+      matched.push({
+        payment_id: payment.id,
+        invoice_id: bestMatch.invoice_id,
+        confidence: "high",
+      });
+      matchedInvoiceIds.add(bestMatch.invoice_id);
+    } else {
+      unmatchedPayments.push(payment);
+    }
+  }
+
+  // Unmatched invoices = invoice IDs not used in matching
+  const unmatchedInvoices = [...invoiceIds].filter((id) => !matchedInvoiceIds.has(id));
+
+  return {
+    matched,
+    unmatched_payments: unmatchedPayments,
+    unmatched_invoices: unmatchedInvoices,
+  };
+}
+
+// --- Failed Payment Retry ---
+
+export type RetryStatus = "pending" | "retrying" | "succeeded" | "failed";
+
+export interface RetryAttempt {
+  id: string;
+  payment_id: string;
+  attempt: number;
+  status: RetryStatus;
+  attempted_at: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+interface RetryAttemptRow {
+  id: string;
+  payment_id: string;
+  attempt: number;
+  status: string;
+  attempted_at: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+function rowToRetryAttempt(row: RetryAttemptRow): RetryAttempt {
+  return {
+    ...row,
+    status: row.status as RetryStatus,
+  };
+}
+
+export function retryPayment(paymentId: string): RetryAttempt | null {
+  const db = getDatabase();
+  const payment = getPayment(paymentId);
+  if (!payment) return null;
+  if (payment.status !== "failed") return null;
+
+  // Get current attempt count
+  const lastAttempt = db
+    .prepare(
+      "SELECT MAX(attempt) as max_attempt FROM retry_attempts WHERE payment_id = ?"
+    )
+    .get(paymentId) as { max_attempt: number | null };
+
+  const attemptNum = (lastAttempt?.max_attempt || 0) + 1;
+  const id = crypto.randomUUID();
+
+  // Create the retry attempt as retrying
+  db.prepare(
+    `INSERT INTO retry_attempts (id, payment_id, attempt, status, attempted_at)
+     VALUES (?, ?, ?, 'retrying', datetime('now'))`
+  ).run(id, paymentId, attemptNum);
+
+  // Simulate retry — mark as succeeded (in a real system, this would call the provider)
+  db.prepare(
+    `UPDATE retry_attempts SET status = 'succeeded', attempted_at = datetime('now') WHERE id = ?`
+  ).run(id);
+
+  // Update the original payment status
+  updatePayment(paymentId, { status: "succeeded", completed_at: new Date().toISOString() });
+
+  return getRetryAttempt(id);
+}
+
+function getRetryAttempt(id: string): RetryAttempt | null {
+  const db = getDatabase();
+  const row = db.prepare("SELECT * FROM retry_attempts WHERE id = ?").get(id) as RetryAttemptRow | null;
+  return row ? rowToRetryAttempt(row) : null;
+}
+
+export function listRetries(paymentId: string): RetryAttempt[] {
+  const db = getDatabase();
+  const rows = db
+    .prepare("SELECT * FROM retry_attempts WHERE payment_id = ? ORDER BY attempt ASC")
+    .all(paymentId) as RetryAttemptRow[];
+  return rows.map(rowToRetryAttempt);
+}
+
+export interface RetryStats {
+  total_retries: number;
+  succeeded: number;
+  failed: number;
+  pending: number;
+  retrying: number;
+  success_rate: number;
+}
+
+export function getRetryStats(): RetryStats {
+  const db = getDatabase();
+  const total = db.prepare("SELECT COUNT(*) as count FROM retry_attempts").get() as { count: number };
+  const statusRows = db
+    .prepare("SELECT status, COUNT(*) as count FROM retry_attempts GROUP BY status")
+    .all() as { status: string; count: number }[];
+
+  const statusCounts: Record<string, number> = {};
+  for (const r of statusRows) statusCounts[r.status] = r.count;
+
+  const succeeded = statusCounts["succeeded"] || 0;
+  const totalCount = total.count || 0;
+
+  return {
+    total_retries: totalCount,
+    succeeded,
+    failed: statusCounts["failed"] || 0,
+    pending: statusCounts["pending"] || 0,
+    retrying: statusCounts["retrying"] || 0,
+    success_rate: totalCount > 0 ? (succeeded / totalCount) * 100 : 0,
+  };
+}
+
+// --- Multi-Currency Conversion ---
+
+const CURRENCY_RATES: Record<string, Record<string, number>> = {
+  USD: { EUR: 0.92, GBP: 0.79, CAD: 1.36, AUD: 1.53, USD: 1.0 },
+  EUR: { USD: 1.09, GBP: 0.86, CAD: 1.48, AUD: 1.66, EUR: 1.0 },
+  GBP: { USD: 1.27, EUR: 1.16, CAD: 1.72, AUD: 1.93, GBP: 1.0 },
+  CAD: { USD: 0.74, EUR: 0.68, GBP: 0.58, AUD: 1.13, CAD: 1.0 },
+  AUD: { USD: 0.65, EUR: 0.60, GBP: 0.52, CAD: 0.89, AUD: 1.0 },
+};
+
+export interface CurrencyConversion {
+  original_amount: number;
+  converted_amount: number;
+  from: string;
+  to: string;
+  rate: number;
+}
+
+export function convertCurrency(amount: number, from: string, to: string): CurrencyConversion | null {
+  const fromUpper = from.toUpperCase();
+  const toUpper = to.toUpperCase();
+
+  const fromRates = CURRENCY_RATES[fromUpper];
+  if (!fromRates) return null;
+
+  const rate = fromRates[toUpper];
+  if (rate === undefined) return null;
+
+  return {
+    original_amount: amount,
+    converted_amount: Math.round(amount * rate * 100) / 100,
+    from: fromUpper,
+    to: toUpper,
+    rate,
+  };
+}
+
+// --- Fee Analysis ---
+
+const PROVIDER_FEES: Record<string, { percent: number; fixed: number }> = {
+  stripe: { percent: 2.9, fixed: 0.30 },
+  square: { percent: 2.6, fixed: 0.10 },
+  mercury: { percent: 0, fixed: 0 },
+  manual: { percent: 0, fixed: 0 },
+};
+
+export interface ProviderFeeBreakdown {
+  provider: string;
+  gross: number;
+  fees: number;
+  net: number;
+  transaction_count: number;
+}
+
+export interface FeeAnalysisResult {
+  month: string;
+  providers: ProviderFeeBreakdown[];
+  total_gross: number;
+  total_fees: number;
+  total_net: number;
+}
+
+export function feeAnalysis(month: string): FeeAnalysisResult {
+  const db = getDatabase();
+  const [year, mon] = month.split("-").map(Number);
+  const startDate = `${year}-${String(mon).padStart(2, "0")}-01`;
+  const lastDay = new Date(year, mon, 0).getDate();
+  const endDate = `${year}-${String(mon).padStart(2, "0")}-${String(lastDay).padStart(2, "0")} 23:59:59`;
+
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(provider, 'manual') as provider, SUM(amount) as total, COUNT(*) as count
+       FROM payments
+       WHERE type = 'charge' AND status = 'succeeded'
+       AND created_at >= ? AND created_at <= ?
+       GROUP BY provider`
+    )
+    .all(startDate, endDate) as { provider: string; total: number; count: number }[];
+
+  const providers: ProviderFeeBreakdown[] = rows.map((r) => {
+    const feeConfig = PROVIDER_FEES[r.provider] || PROVIDER_FEES["manual"];
+    const fees = (r.total * feeConfig.percent) / 100 + feeConfig.fixed * r.count;
+    return {
+      provider: r.provider,
+      gross: Math.round(r.total * 100) / 100,
+      fees: Math.round(fees * 100) / 100,
+      net: Math.round((r.total - fees) * 100) / 100,
+      transaction_count: r.count,
+    };
+  });
+
+  return {
+    month,
+    providers,
+    total_gross: Math.round(providers.reduce((s, p) => s + p.gross, 0) * 100) / 100,
+    total_fees: Math.round(providers.reduce((s, p) => s + p.fees, 0) * 100) / 100,
+    total_net: Math.round(providers.reduce((s, p) => s + p.net, 0) * 100) / 100,
+  };
+}
+
+// --- Decline Analytics ---
+
+export interface DeclineEntry {
+  description: string | null;
+  count: number;
+  total_amount: number;
+  provider: string | null;
+}
+
+export interface DeclineReport {
+  entries: DeclineEntry[];
+  total_declined: number;
+  total_amount: number;
+}
+
+export function declineReport(provider?: PaymentProvider): DeclineReport {
+  const db = getDatabase();
+  const conditions = ["status = 'failed'"];
+  const params: unknown[] = [];
+
+  if (provider) {
+    conditions.push("provider = ?");
+    params.push(provider);
+  }
+
+  const whereClause = conditions.join(" AND ");
+
+  const rows = db
+    .prepare(
+      `SELECT description, COALESCE(provider, 'unknown') as provider, COUNT(*) as count, SUM(amount) as total_amount
+       FROM payments
+       WHERE ${whereClause}
+       GROUP BY description, provider
+       ORDER BY count DESC`
+    )
+    .all(...params) as { description: string | null; provider: string; count: number; total_amount: number }[];
+
+  const entries: DeclineEntry[] = rows.map((r) => ({
+    description: r.description,
+    count: r.count,
+    total_amount: r.total_amount,
+    provider: r.provider,
+  }));
+
+  return {
+    entries,
+    total_declined: entries.reduce((s, e) => s + e.count, 0),
+    total_amount: entries.reduce((s, e) => s + e.total_amount, 0),
+  };
+}
+
+// --- Dispute Evidence ---
+
+export function addDisputeEvidence(
+  disputeId: string,
+  description: string,
+  fileRef?: string
+): Dispute | null {
+  const db = getDatabase();
+  const dispute = getDispute(disputeId);
+  if (!dispute) return null;
+
+  // Get existing evidence — treat as array if it has "items", otherwise start fresh
+  const evidence = dispute.evidence as Record<string, unknown>;
+  const items = Array.isArray(evidence.items) ? [...evidence.items] : [];
+
+  const entry: Record<string, unknown> = {
+    description,
+    added_at: new Date().toISOString(),
+  };
+  if (fileRef) {
+    entry.file_ref = fileRef;
+  }
+  items.push(entry);
+
+  const newEvidence = { ...evidence, items };
+  db.prepare("UPDATE disputes SET evidence = ? WHERE id = ?").run(
+    JSON.stringify(newEvidence),
+    disputeId
+  );
+
+  return getDispute(disputeId);
+}
+
+// --- Payment Split ---
+
+export interface PaymentSplit {
+  payment_id: string;
+  splits: Record<string, number>;
+  total_percent: number;
+}
+
+export function splitPayment(paymentId: string, splits: Record<string, number>): Payment | null {
+  const payment = getPayment(paymentId);
+  if (!payment) return null;
+
+  const totalPercent = Object.values(splits).reduce((s, v) => s + v, 0);
+
+  // Store split info in metadata
+  const metadata = { ...payment.metadata, splits, split_total_percent: totalPercent };
+  return updatePayment(paymentId, { metadata });
+}
+
+// --- Revenue Forecast ---
+
+export interface RevenueForecastResult {
+  months_projected: number;
+  historical: Array<{ month: string; revenue: number }>;
+  forecast: Array<{ month: string; projected_revenue: number }>;
+  trend: "growing" | "declining" | "stable";
+  average_monthly_revenue: number;
+}
+
+export function revenueForecast(months: number): RevenueForecastResult {
+  const db = getDatabase();
+
+  // Get last 3 months of revenue
+  const now = new Date();
+  const historical: Array<{ month: string; revenue: number }> = [];
+
+  for (let i = 3; i >= 1; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const year = d.getFullYear();
+    const mon = d.getMonth() + 1;
+    const startDate = `${year}-${String(mon).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, mon, 0).getDate();
+    const endDate = `${year}-${String(mon).padStart(2, "0")}-${String(lastDay).padStart(2, "0")} 23:59:59`;
+
+    const row = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount), 0) as total
+         FROM payments
+         WHERE type = 'charge' AND status = 'succeeded'
+         AND created_at >= ? AND created_at <= ?`
+      )
+      .get(startDate, endDate) as { total: number };
+
+    historical.push({
+      month: `${year}-${String(mon).padStart(2, "0")}`,
+      revenue: row.total,
+    });
+  }
+
+  // Calculate trend
+  const revenues = historical.map((h) => h.revenue);
+  const avgRevenue = revenues.reduce((s, r) => s + r, 0) / (revenues.length || 1);
+
+  let trend: "growing" | "declining" | "stable" = "stable";
+  if (revenues.length >= 2) {
+    const first = revenues[0];
+    const last = revenues[revenues.length - 1];
+    if (last > first * 1.05) trend = "growing";
+    else if (last < first * 0.95) trend = "declining";
+  }
+
+  // Calculate monthly growth rate
+  let growthRate = 0;
+  if (revenues.length >= 2 && revenues[0] > 0) {
+    growthRate = (revenues[revenues.length - 1] - revenues[0]) / revenues[0] / (revenues.length - 1);
+  }
+
+  // Project future months
+  const forecast: Array<{ month: string; projected_revenue: number }> = [];
+  const baseRevenue = revenues[revenues.length - 1] || avgRevenue;
+
+  for (let i = 0; i < months; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const year = d.getFullYear();
+    const mon = d.getMonth() + 1;
+    const projected = Math.round(baseRevenue * Math.pow(1 + growthRate, i + 1) * 100) / 100;
+
+    forecast.push({
+      month: `${year}-${String(mon).padStart(2, "0")}`,
+      projected_revenue: projected,
+    });
+  }
+
+  return {
+    months_projected: months,
+    historical,
+    forecast,
+    trend,
+    average_monthly_revenue: Math.round(avgRevenue * 100) / 100,
+  };
+}
+
+// --- Reconciliation Gaps ---
+
+export interface ReconciliationGaps {
+  payments_without_invoice: Payment[];
+  invoice_ids_without_payment: string[];
+  gap_count: number;
+}
+
+export function findReconciliationGaps(dateFrom: string, dateTo: string): ReconciliationGaps {
+  const db = getDatabase();
+
+  // Payments without invoice_id (type=charge, succeeded)
+  const unreconciledRows = db
+    .prepare(
+      `SELECT * FROM payments
+       WHERE invoice_id IS NULL AND type = 'charge' AND status = 'succeeded'
+       AND created_at >= ? AND created_at <= ?
+       ORDER BY created_at DESC`
+    )
+    .all(dateFrom, dateTo) as PaymentRow[];
+  const paymentsWithoutInvoice = unreconciledRows.map(rowToPayment);
+
+  // Get invoice_ids that have at least one succeeded payment
+  const succeededInvoiceRows = db
+    .prepare(
+      `SELECT DISTINCT invoice_id FROM payments
+       WHERE invoice_id IS NOT NULL AND status = 'succeeded'
+       AND created_at >= ? AND created_at <= ?`
+    )
+    .all(dateFrom, dateTo) as { invoice_id: string }[];
+  const succeededInvoiceIds = new Set(succeededInvoiceRows.map((r) => r.invoice_id));
+
+  // Get all distinct invoice_ids in the date range
+  const allInvoiceRows = db
+    .prepare(
+      `SELECT DISTINCT invoice_id FROM payments
+       WHERE invoice_id IS NOT NULL
+       AND created_at >= ? AND created_at <= ?`
+    )
+    .all(dateFrom, dateTo) as { invoice_id: string }[];
+
+  // Invoice IDs that have no succeeded payment
+  const invoiceIdsWithoutSucceededPayment = allInvoiceRows
+    .map((r) => r.invoice_id)
+    .filter((id) => !succeededInvoiceIds.has(id));
+
+  return {
+    payments_without_invoice: paymentsWithoutInvoice,
+    invoice_ids_without_payment: invoiceIdsWithoutSucceededPayment,
+    gap_count: paymentsWithoutInvoice.length + invoiceIdsWithoutSucceededPayment.length,
+  };
+}

@@ -26,7 +26,18 @@ import {
   updateInterview,
   addInterviewFeedback,
   deleteInterview,
+  bulkImportApplicants,
+  generateOffer,
+  getHiringForecast,
+  submitStructuredFeedback,
+  bulkReject,
+  getReferralStats,
+  saveJobAsTemplate,
+  createJobFromTemplate,
+  listJobTemplates,
+  deleteJobTemplate,
 } from "../db/hiring.js";
+import { scoreApplicant, rankApplicants } from "../lib/scoring.js";
 
 const server = new McpServer({
   name: "microservice-hiring",
@@ -447,6 +458,240 @@ server.registerTool(
   },
   async ({ id }) => {
     const deleted = deleteInterview(id);
+    return { content: [{ type: "text", text: JSON.stringify({ id, deleted }) }] };
+  }
+);
+
+// --- Bulk Import ---
+
+server.registerTool(
+  "bulk_import_applicants",
+  {
+    title: "Bulk Import Applicants",
+    description: "Import applicants from CSV data (columns: name,email,phone,job_id,source,resume_url).",
+    inputSchema: {
+      csv_data: z.string().describe("CSV string with header row"),
+    },
+  },
+  async ({ csv_data }) => {
+    const result = bulkImportApplicants(csv_data);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// --- AI Scoring ---
+
+server.registerTool(
+  "score_applicant",
+  {
+    title: "Score Applicant",
+    description: "AI-score an applicant against job requirements. Returns match percentage, strengths, gaps, and recommendation.",
+    inputSchema: { id: z.string() },
+  },
+  async ({ id }) => {
+    try {
+      const score = await scoreApplicant(id);
+      return { content: [{ type: "text", text: JSON.stringify(score, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: String(err instanceof Error ? err.message : err) }], isError: true };
+    }
+  }
+);
+
+server.registerTool(
+  "rank_applicants",
+  {
+    title: "Rank Applicants",
+    description: "AI-rank all applicants for a job by fit score, sorted best-first.",
+    inputSchema: { job_id: z.string() },
+  },
+  async ({ job_id }) => {
+    try {
+      const ranked = await rankApplicants(job_id);
+      return { content: [{ type: "text", text: JSON.stringify(ranked, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: String(err instanceof Error ? err.message : err) }], isError: true };
+    }
+  }
+);
+
+// --- Offer Letter ---
+
+server.registerTool(
+  "generate_offer",
+  {
+    title: "Generate Offer Letter",
+    description: "Generate a Markdown offer letter for an applicant.",
+    inputSchema: {
+      id: z.string().describe("Applicant ID"),
+      salary: z.number().describe("Annual salary"),
+      start_date: z.string().describe("Start date (YYYY-MM-DD)"),
+      position_title: z.string().optional(),
+      department: z.string().optional(),
+      benefits: z.string().optional(),
+      equity: z.string().optional(),
+      signing_bonus: z.number().optional(),
+    },
+  },
+  async ({ id, salary, start_date, ...rest }) => {
+    try {
+      const letter = generateOffer(id, { salary, start_date, ...rest });
+      return { content: [{ type: "text", text: letter }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: String(err instanceof Error ? err.message : err) }], isError: true };
+    }
+  }
+);
+
+// --- Pipeline Velocity / Forecast ---
+
+server.registerTool(
+  "hiring_forecast",
+  {
+    title: "Hiring Forecast",
+    description: "Estimate days-to-fill based on average time between pipeline stages.",
+    inputSchema: { job_id: z.string() },
+  },
+  async ({ job_id }) => {
+    try {
+      const forecast = getHiringForecast(job_id);
+      return { content: [{ type: "text", text: JSON.stringify(forecast, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: String(err instanceof Error ? err.message : err) }], isError: true };
+    }
+  }
+);
+
+// --- Structured Feedback ---
+
+server.registerTool(
+  "submit_structured_feedback",
+  {
+    title: "Submit Structured Interview Feedback",
+    description: "Submit scored interview feedback with dimensions (technical, communication, culture_fit, etc.).",
+    inputSchema: {
+      id: z.string().describe("Interview ID"),
+      feedback_text: z.string().optional(),
+      technical: z.number().min(1).max(5).optional(),
+      communication: z.number().min(1).max(5).optional(),
+      culture_fit: z.number().min(1).max(5).optional(),
+      problem_solving: z.number().min(1).max(5).optional(),
+      leadership: z.number().min(1).max(5).optional(),
+      overall: z.number().min(1).max(5).optional(),
+    },
+  },
+  async ({ id, feedback_text, ...scores }) => {
+    const interview = submitStructuredFeedback(id, scores, feedback_text);
+    if (!interview) {
+      return { content: [{ type: "text", text: `Interview '${id}' not found.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(interview, null, 2) }] };
+  }
+);
+
+// --- Bulk Rejection ---
+
+server.registerTool(
+  "bulk_reject",
+  {
+    title: "Bulk Reject Applicants",
+    description: "Bulk reject all applicants for a job matching a specific status.",
+    inputSchema: {
+      job_id: z.string(),
+      status: z.enum(["applied", "screening", "interviewing", "offered"]),
+      reason: z.string().optional(),
+    },
+  },
+  async ({ job_id, status, reason }) => {
+    const result = bulkReject(job_id, status, reason);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// --- Referral Stats ---
+
+server.registerTool(
+  "referral_stats",
+  {
+    title: "Referral Stats",
+    description: "Show conversion rates by applicant source/referral channel.",
+    inputSchema: {},
+  },
+  async () => {
+    const stats = getReferralStats();
+    return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
+  }
+);
+
+// --- Job Templates ---
+
+server.registerTool(
+  "save_job_template",
+  {
+    title: "Save Job as Template",
+    description: "Save an existing job posting as a reusable template.",
+    inputSchema: {
+      job_id: z.string(),
+      name: z.string().describe("Unique template name"),
+    },
+  },
+  async ({ job_id, name }) => {
+    try {
+      const template = saveJobAsTemplate(job_id, name);
+      return { content: [{ type: "text", text: JSON.stringify(template, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: String(err instanceof Error ? err.message : err) }], isError: true };
+    }
+  }
+);
+
+server.registerTool(
+  "create_job_from_template",
+  {
+    title: "Create Job from Template",
+    description: "Create a new job posting from an existing template.",
+    inputSchema: {
+      template_name: z.string(),
+      title: z.string().optional(),
+      department: z.string().optional(),
+      location: z.string().optional(),
+      salary_range: z.string().optional(),
+    },
+  },
+  async ({ template_name, ...overrides }) => {
+    try {
+      const job = createJobFromTemplate(template_name, overrides);
+      return { content: [{ type: "text", text: JSON.stringify(job, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: String(err instanceof Error ? err.message : err) }], isError: true };
+    }
+  }
+);
+
+server.registerTool(
+  "list_job_templates",
+  {
+    title: "List Job Templates",
+    description: "List all saved job templates.",
+    inputSchema: {},
+  },
+  async () => {
+    const templates = listJobTemplates();
+    return {
+      content: [{ type: "text", text: JSON.stringify({ templates, count: templates.length }, null, 2) }],
+    };
+  }
+);
+
+server.registerTool(
+  "delete_job_template",
+  {
+    title: "Delete Job Template",
+    description: "Delete a job template by ID.",
+    inputSchema: { id: z.string() },
+  },
+  async ({ id }) => {
+    const deleted = deleteJobTemplate(id);
     return { content: [{ type: "text", text: JSON.stringify({ id, deleted }) }] };
   }
 );

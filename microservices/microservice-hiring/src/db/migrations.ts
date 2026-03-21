@@ -65,4 +65,25 @@ export const MIGRATIONS: MigrationEntry[] = [
       CREATE INDEX IF NOT EXISTS idx_interviews_status ON interviews(status);
     `,
   },
+  {
+    id: 2,
+    name: "add_job_templates",
+    sql: `
+      CREATE TABLE IF NOT EXISTS job_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        department TEXT,
+        location TEXT,
+        type TEXT NOT NULL DEFAULT 'full-time' CHECK (type IN ('full-time', 'part-time', 'contract')),
+        description TEXT,
+        requirements TEXT NOT NULL DEFAULT '[]',
+        salary_range TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_job_templates_name ON job_templates(name);
+    `,
+  },
 ];

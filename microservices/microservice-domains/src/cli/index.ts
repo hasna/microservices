@@ -19,7 +19,18 @@ import {
   createAlert,
   listAlerts,
   deleteAlert,
+  whoisLookup,
+  checkDnsPropagation,
+  checkSsl,
+  exportZoneFile,
+  importZoneFile,
+  discoverSubdomains,
+  validateDns,
+  exportPortfolio,
+  checkAllDomains,
+  getDomainByName,
 } from "../db/domains.js";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const program = new Command();
 
@@ -269,6 +280,109 @@ program
     }
   });
 
+// --- WHOIS Lookup ---
+
+program
+  .command("whois")
+  .description("Run WHOIS lookup for a domain and update DB record")
+  .argument("<name>", "Domain name (e.g. example.com)")
+  .option("--json", "Output as JSON", false)
+  .action((name, opts) => {
+    try {
+      const result = whoisLookup(name);
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`WHOIS for ${result.domain}:`);
+        console.log(`  Registrar: ${result.registrar || "unknown"}`);
+        console.log(`  Expires: ${result.expires_at || "unknown"}`);
+        if (result.nameservers.length > 0) {
+          console.log(`  Nameservers: ${result.nameservers.join(", ")}`);
+        }
+      }
+    } catch (error: unknown) {
+      console.error(`WHOIS lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+// --- SSL Check ---
+
+program
+  .command("ssl-check")
+  .description("Check SSL certificate for a domain and update DB record")
+  .argument("<name>", "Domain name (e.g. example.com)")
+  .option("--json", "Output as JSON", false)
+  .action((name, opts) => {
+    const result = checkSsl(name);
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      if (result.error) {
+        console.error(`SSL check failed: ${result.error}`);
+        process.exit(1);
+      }
+      console.log(`SSL Certificate for ${result.domain}:`);
+      console.log(`  Issuer: ${result.issuer || "unknown"}`);
+      console.log(`  Expires: ${result.expires_at || "unknown"}`);
+      if (result.subject) console.log(`  Subject: ${result.subject}`);
+    }
+  });
+
+// --- Portfolio Export ---
+
+program
+  .command("export")
+  .description("Export all domains as CSV or JSON")
+  .option("--format <format>", "Export format (csv or json)", "json")
+  .option("--output <file>", "Write to file instead of stdout")
+  .action((opts) => {
+    const format = opts.format === "csv" ? "csv" : "json";
+    const output = exportPortfolio(format as "csv" | "json");
+    if (opts.output) {
+      writeFileSync(opts.output, output, "utf-8");
+      console.log(`Exported to ${opts.output}`);
+    } else {
+      console.log(output);
+    }
+  });
+
+// --- Bulk Domain Check ---
+
+program
+  .command("check-all")
+  .description("Run WHOIS + SSL + DNS validation on all domains")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const results = checkAllDomains();
+    if (opts.json) {
+      console.log(JSON.stringify(results, null, 2));
+    } else {
+      if (results.length === 0) {
+        console.log("No domains to check.");
+        return;
+      }
+      for (const r of results) {
+        console.log(`\n${r.domain}:`);
+        if (r.whois) {
+          console.log(`  WHOIS: registrar=${r.whois.registrar || "?"}, expires=${r.whois.expires_at || "?"}`);
+          if (r.whois.error) console.log(`    Error: ${r.whois.error}`);
+        }
+        if (r.ssl) {
+          console.log(`  SSL: issuer=${r.ssl.issuer || "?"}, expires=${r.ssl.expires_at || "?"}`);
+          if (r.ssl.error) console.log(`    Error: ${r.ssl.error}`);
+        }
+        if (r.dns_validation) {
+          console.log(`  DNS: valid=${r.dns_validation.valid}, issues=${r.dns_validation.issue_count}`);
+          for (const e of r.dns_validation.errors) {
+            console.log(`    ${e}`);
+          }
+        }
+      }
+      console.log(`\nChecked ${results.length} domain(s)`);
+    }
+  });
+
 // --- DNS Records ---
 
 const dnsCmd = program
@@ -367,6 +481,145 @@ dnsCmd
     } else {
       console.error(`DNS record '${id}' not found.`);
       process.exit(1);
+    }
+  });
+
+// --- DNS Propagation Check ---
+
+dnsCmd
+  .command("check-propagation")
+  .description("Check DNS propagation across multiple servers")
+  .argument("<domain>", "Domain name to check")
+  .option("--record <type>", "Record type (A/AAAA/CNAME/MX/TXT/NS)", "A")
+  .option("--json", "Output as JSON", false)
+  .action((domain, opts) => {
+    const result = checkDnsPropagation(domain, opts.record);
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`DNS Propagation for ${result.domain} (${result.record_type}):`);
+      console.log(`  Consistent: ${result.consistent ? "yes" : "NO"}`);
+      for (const s of result.servers) {
+        const values = s.values.length > 0 ? s.values.join(", ") : "(empty)";
+        const status = s.status === "error" ? ` [ERROR: ${s.error}]` : "";
+        console.log(`  ${s.name} (${s.server}): ${values}${status}`);
+      }
+    }
+  });
+
+// --- Zone File Export ---
+
+dnsCmd
+  .command("export")
+  .description("Export DNS records as BIND zone file")
+  .argument("<domain-id>", "Domain ID")
+  .option("--format <format>", "Export format (zone)", "zone")
+  .option("--output <file>", "Write to file instead of stdout")
+  .action((domainId, opts) => {
+    const zone = exportZoneFile(domainId);
+    if (!zone) {
+      console.error(`Domain '${domainId}' not found.`);
+      process.exit(1);
+    }
+    if (opts.output) {
+      writeFileSync(opts.output, zone, "utf-8");
+      console.log(`Exported zone file to ${opts.output}`);
+    } else {
+      console.log(zone);
+    }
+  });
+
+// --- Zone File Import ---
+
+dnsCmd
+  .command("import")
+  .description("Import DNS records from a BIND zone file")
+  .argument("<domain-id>", "Domain ID")
+  .requiredOption("--file <path>", "Path to zone file")
+  .option("--json", "Output as JSON", false)
+  .action((domainId, opts) => {
+    let content: string;
+    try {
+      content = readFileSync(opts.file, "utf-8");
+    } catch {
+      console.error(`Could not read file: ${opts.file}`);
+      process.exit(1);
+    }
+
+    const result = importZoneFile(domainId, content);
+    if (!result) {
+      console.error(`Domain '${domainId}' not found.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Imported ${result.imported} record(s), skipped ${result.skipped}`);
+      if (result.errors.length > 0) {
+        console.log("Errors:");
+        for (const e of result.errors) {
+          console.log(`  - ${e}`);
+        }
+      }
+    }
+  });
+
+// --- Subdomain Discovery ---
+
+dnsCmd
+  .command("discover-subdomains")
+  .description("Discover subdomains via certificate transparency logs (crt.sh)")
+  .argument("<domain>", "Domain name")
+  .option("--json", "Output as JSON", false)
+  .action(async (domain, opts) => {
+    const result = await discoverSubdomains(domain);
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      if (result.error) {
+        console.error(`Discovery failed: ${result.error}`);
+        process.exit(1);
+      }
+      if (result.subdomains.length === 0) {
+        console.log(`No subdomains found for ${domain}.`);
+        return;
+      }
+      console.log(`Subdomains for ${domain} (source: ${result.source}):`);
+      for (const s of result.subdomains) {
+        console.log(`  ${s}`);
+      }
+      console.log(`\n${result.subdomains.length} subdomain(s) found`);
+    }
+  });
+
+// --- DNS Validation ---
+
+dnsCmd
+  .command("validate")
+  .description("Validate DNS records for common issues")
+  .argument("<domain-id>", "Domain ID")
+  .option("--json", "Output as JSON", false)
+  .action((domainId, opts) => {
+    const result = validateDns(domainId);
+    if (!result) {
+      console.error(`Domain '${domainId}' not found.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`DNS Validation for ${result.domain_name}:`);
+      console.log(`  Valid: ${result.valid ? "yes" : "NO"}`);
+      if (result.issues.length === 0) {
+        console.log("  No issues found.");
+      } else {
+        for (const issue of result.issues) {
+          const prefix = issue.type === "error" ? "ERROR" : "WARN";
+          console.log(`  [${prefix}] ${issue.message}`);
+        }
+      }
     }
   });
 

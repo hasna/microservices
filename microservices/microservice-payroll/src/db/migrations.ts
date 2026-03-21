@@ -66,4 +66,30 @@ export const MIGRATIONS: MigrationEntry[] = [
       CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
     `,
   },
+  {
+    id: 2,
+    name: "benefits_and_schedule",
+    sql: `
+      CREATE TABLE IF NOT EXISTS benefits (
+        id TEXT PRIMARY KEY,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        type TEXT NOT NULL CHECK (type IN ('health', 'dental', 'vision', 'retirement', 'hsa', 'other')),
+        description TEXT,
+        amount REAL NOT NULL,
+        frequency TEXT NOT NULL DEFAULT 'per_period' CHECK (frequency IN ('per_period', 'monthly', 'annual')),
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS payroll_schedule (
+        id TEXT PRIMARY KEY,
+        frequency TEXT NOT NULL CHECK (frequency IN ('weekly', 'biweekly', 'semimonthly', 'monthly')),
+        anchor_date TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_benefits_employee ON benefits(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_benefits_active ON benefits(active);
+    `,
+  },
 ];

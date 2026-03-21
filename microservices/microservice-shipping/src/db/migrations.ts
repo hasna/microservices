@@ -58,4 +58,12 @@ export const MIGRATIONS: MigrationEntry[] = [
       CREATE INDEX IF NOT EXISTS idx_returns_status ON returns(status);
     `,
   },
+  {
+    id: 2,
+    name: "add_rma_code",
+    sql: `
+      ALTER TABLE returns ADD COLUMN rma_code TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_returns_rma_code ON returns(rma_code);
+    `,
+  },
 ];

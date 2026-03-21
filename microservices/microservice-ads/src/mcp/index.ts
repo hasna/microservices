@@ -18,6 +18,15 @@ import {
   listAdGroups,
   createAd,
   listAds,
+  bulkPause,
+  bulkResume,
+  getRankedCampaigns,
+  checkBudgetStatus,
+  comparePlatforms,
+  exportCampaigns,
+  cloneCampaign,
+  getBudgetRemaining,
+  getAdGroupStats,
 } from "../db/campaigns.js";
 
 const server = new McpServer({
@@ -304,6 +313,157 @@ server.registerTool(
         },
       ],
     };
+  }
+);
+
+// --- QoL Tools ---
+
+// 1. Bulk pause/resume
+server.registerTool(
+  "bulk_pause_campaigns",
+  {
+    title: "Bulk Pause Campaigns",
+    description: "Pause all active campaigns on a specific platform.",
+    inputSchema: {
+      platform: PlatformEnum,
+    },
+  },
+  async ({ platform }) => {
+    const result = bulkPause(platform);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "bulk_resume_campaigns",
+  {
+    title: "Bulk Resume Campaigns",
+    description: "Resume all paused campaigns on a specific platform.",
+    inputSchema: {
+      platform: PlatformEnum,
+    },
+  },
+  async ({ platform }) => {
+    const result = bulkResume(platform);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// 2. Performance ranking
+server.registerTool(
+  "ranked_campaigns",
+  {
+    title: "Ranked Campaigns",
+    description: "Get campaigns ranked by a performance metric (roas, ctr, or spend).",
+    inputSchema: {
+      sort_by: z.enum(["roas", "ctr", "spend"]).optional(),
+      limit: z.number().optional(),
+    },
+  },
+  async ({ sort_by, limit }) => {
+    const campaigns = getRankedCampaigns(sort_by || "roas", limit || 10);
+    return { content: [{ type: "text", text: JSON.stringify(campaigns, null, 2) }] };
+  }
+);
+
+// 3. Budget alerts
+server.registerTool(
+  "check_budget",
+  {
+    title: "Check Budget Status",
+    description: "Check if a campaign is over budget and get remaining budget details.",
+    inputSchema: { id: z.string() },
+  },
+  async ({ id }) => {
+    const status = checkBudgetStatus(id);
+    if (!status) {
+      return { content: [{ type: "text", text: `Campaign '${id}' not found.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+  }
+);
+
+// 4. Cross-platform comparison
+server.registerTool(
+  "compare_platforms",
+  {
+    title: "Compare Platforms",
+    description: "Compare ROAS, CPA, and spend across all platforms side-by-side.",
+    inputSchema: {},
+  },
+  async () => {
+    const comparison = comparePlatforms();
+    return { content: [{ type: "text", text: JSON.stringify(comparison, null, 2) }] };
+  }
+);
+
+// 5. CSV export
+server.registerTool(
+  "export_campaigns",
+  {
+    title: "Export Campaigns",
+    description: "Export all campaigns in CSV or JSON format.",
+    inputSchema: {
+      format: z.enum(["csv", "json"]).optional(),
+    },
+  },
+  async ({ format }) => {
+    const output = exportCampaigns(format || "csv");
+    return { content: [{ type: "text", text: output }] };
+  }
+);
+
+// 6. Campaign cloning
+server.registerTool(
+  "clone_campaign",
+  {
+    title: "Clone Campaign",
+    description: "Clone a campaign with all its ad groups and ads.",
+    inputSchema: {
+      id: z.string(),
+      new_name: z.string(),
+    },
+  },
+  async ({ id, new_name }) => {
+    const cloned = cloneCampaign(id, new_name);
+    if (!cloned) {
+      return { content: [{ type: "text", text: `Campaign '${id}' not found.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(cloned, null, 2) }] };
+  }
+);
+
+// 7. Budget remaining
+server.registerTool(
+  "budget_remaining",
+  {
+    title: "Budget Remaining",
+    description: "Show daily and total budget remaining for a campaign.",
+    inputSchema: { id: z.string() },
+  },
+  async ({ id }) => {
+    const remaining = getBudgetRemaining(id);
+    if (!remaining) {
+      return { content: [{ type: "text", text: `Campaign '${id}' not found.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(remaining, null, 2) }] };
+  }
+);
+
+// 8. Ad group stats
+server.registerTool(
+  "ad_group_stats",
+  {
+    title: "Ad Group Stats",
+    description: "Get aggregated metrics for all ads within an ad group.",
+    inputSchema: { ad_group_id: z.string() },
+  },
+  async ({ ad_group_id }) => {
+    const stats = getAdGroupStats(ad_group_id);
+    if (!stats) {
+      return { content: [{ type: "text", text: `Ad group '${ad_group_id}' not found.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
   }
 );
 

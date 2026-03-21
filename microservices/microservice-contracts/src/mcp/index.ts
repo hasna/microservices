@@ -13,16 +13,33 @@ import {
   listExpiring,
   renewContract,
   getContractStats,
+  submitForReview,
+  approveContract,
+  getContractHistory,
+  recordSignature,
+  listSignatures,
+  compareContracts,
+  exportContract,
 } from "../db/contracts.js";
 import {
   createClause,
   listClauses,
   deleteClause,
+  addClauseFromTemplate,
+  saveClauseTemplate,
+  listClauseTemplates,
 } from "../db/contracts.js";
 import {
   createReminder,
   listReminders,
   deleteReminder,
+  setMultiReminders,
+} from "../db/contracts.js";
+import {
+  createObligation,
+  listObligations,
+  completeObligation,
+  listOverdueObligations,
 } from "../db/contracts.js";
 
 const server = new McpServer({
@@ -40,7 +57,7 @@ server.registerTool(
     inputSchema: {
       title: z.string(),
       type: z.enum(["nda", "service", "employment", "license", "other"]).optional(),
-      status: z.enum(["draft", "pending_signature", "active", "expired", "terminated"]).optional(),
+      status: z.enum(["draft", "pending_review", "pending_signature", "active", "expired", "terminated"]).optional(),
       counterparty: z.string().optional(),
       counterparty_email: z.string().optional(),
       start_date: z.string().optional(),
@@ -82,7 +99,7 @@ server.registerTool(
     inputSchema: {
       search: z.string().optional(),
       type: z.enum(["nda", "service", "employment", "license", "other"]).optional(),
-      status: z.enum(["draft", "pending_signature", "active", "expired", "terminated"]).optional(),
+      status: z.enum(["draft", "pending_review", "pending_signature", "active", "expired", "terminated"]).optional(),
       counterparty: z.string().optional(),
       limit: z.number().optional(),
     },
@@ -109,7 +126,7 @@ server.registerTool(
       id: z.string(),
       title: z.string().optional(),
       type: z.enum(["nda", "service", "employment", "license", "other"]).optional(),
-      status: z.enum(["draft", "pending_signature", "active", "expired", "terminated"]).optional(),
+      status: z.enum(["draft", "pending_review", "pending_signature", "active", "expired", "terminated"]).optional(),
       counterparty: z.string().optional(),
       counterparty_email: z.string().optional(),
       start_date: z.string().optional(),
@@ -209,6 +226,148 @@ server.registerTool(
   }
 );
 
+// --- Approval workflow ---
+
+server.registerTool(
+  "submit_for_review",
+  {
+    title: "Submit for Review",
+    description: "Submit a draft contract for review (draft -> pending_review).",
+    inputSchema: { id: z.string() },
+  },
+  async ({ id }) => {
+    try {
+      const contract = submitForReview(id);
+      if (!contract) {
+        return { content: [{ type: "text", text: `Contract '${id}' not found.` }], isError: true };
+      }
+      return { content: [{ type: "text", text: JSON.stringify(contract, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: (err as Error).message }], isError: true };
+    }
+  }
+);
+
+server.registerTool(
+  "approve_contract",
+  {
+    title: "Approve Contract",
+    description: "Approve a contract, advancing it through the approval workflow (pending_review -> pending_signature -> active).",
+    inputSchema: { id: z.string() },
+  },
+  async ({ id }) => {
+    try {
+      const contract = approveContract(id);
+      if (!contract) {
+        return { content: [{ type: "text", text: `Contract '${id}' not found.` }], isError: true };
+      }
+      return { content: [{ type: "text", text: JSON.stringify(contract, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: (err as Error).message }], isError: true };
+    }
+  }
+);
+
+// --- Version history ---
+
+server.registerTool(
+  "contract_history",
+  {
+    title: "Contract History",
+    description: "Get version history for a contract, showing previous states before each update.",
+    inputSchema: { contract_id: z.string() },
+  },
+  async ({ contract_id }) => {
+    const history = getContractHistory(contract_id);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ history, count: history.length }, null, 2) },
+      ],
+    };
+  }
+);
+
+// --- Signature logging ---
+
+server.registerTool(
+  "record_signature",
+  {
+    title: "Record Signature",
+    description: "Record a signature on a contract.",
+    inputSchema: {
+      contract_id: z.string(),
+      signer_name: z.string(),
+      signer_email: z.string().optional(),
+      method: z.enum(["digital", "wet", "docusign"]).optional(),
+    },
+  },
+  async (params) => {
+    const sig = recordSignature(params);
+    return { content: [{ type: "text", text: JSON.stringify(sig, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "list_signatures",
+  {
+    title: "List Signatures",
+    description: "List all signatures for a contract.",
+    inputSchema: { contract_id: z.string() },
+  },
+  async ({ contract_id }) => {
+    const sigs = listSignatures(contract_id);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ signatures: sigs, count: sigs.length }, null, 2) },
+      ],
+    };
+  }
+);
+
+// --- Contract comparison ---
+
+server.registerTool(
+  "compare_contracts",
+  {
+    title: "Compare Contracts",
+    description: "Compare two contracts, showing field and clause differences.",
+    inputSchema: {
+      id1: z.string(),
+      id2: z.string(),
+    },
+  },
+  async ({ id1, id2 }) => {
+    try {
+      const diff = compareContracts(id1, id2);
+      return { content: [{ type: "text", text: JSON.stringify(diff, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: (err as Error).message }], isError: true };
+    }
+  }
+);
+
+// --- Markdown export ---
+
+server.registerTool(
+  "export_contract",
+  {
+    title: "Export Contract",
+    description: "Export a contract as formatted markdown or JSON.",
+    inputSchema: {
+      id: z.string(),
+      format: z.enum(["md", "json"]).optional(),
+    },
+  },
+  async ({ id, format }) => {
+    try {
+      const output = exportContract(id, format || "md");
+      return { content: [{ type: "text", text: output }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: (err as Error).message }], isError: true };
+    }
+  }
+);
+
 // --- Clauses ---
 
 server.registerTool(
@@ -259,6 +418,132 @@ server.registerTool(
   }
 );
 
+// --- Clause templates ---
+
+server.registerTool(
+  "save_clause_template",
+  {
+    title: "Save Clause Template",
+    description: "Save a clause as a reusable template in the clause library.",
+    inputSchema: {
+      name: z.string(),
+      text: z.string(),
+      type: z.enum(["standard", "custom", "negotiated"]).optional(),
+    },
+  },
+  async (params) => {
+    const template = saveClauseTemplate(params);
+    return { content: [{ type: "text", text: JSON.stringify(template, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "list_clause_templates",
+  {
+    title: "List Clause Templates",
+    description: "List all clause templates in the clause library.",
+    inputSchema: {},
+  },
+  async () => {
+    const templates = listClauseTemplates();
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ templates, count: templates.length }, null, 2) },
+      ],
+    };
+  }
+);
+
+server.registerTool(
+  "add_clause_from_template",
+  {
+    title: "Add Clause from Template",
+    description: "Add a clause to a contract using a clause template by name.",
+    inputSchema: {
+      contract_id: z.string(),
+      template_name: z.string(),
+    },
+  },
+  async ({ contract_id, template_name }) => {
+    try {
+      const clause = addClauseFromTemplate(contract_id, template_name);
+      return { content: [{ type: "text", text: JSON.stringify(clause, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: (err as Error).message }], isError: true };
+    }
+  }
+);
+
+// --- Obligations ---
+
+server.registerTool(
+  "add_obligation",
+  {
+    title: "Add Obligation",
+    description: "Add an obligation to a clause for tracking.",
+    inputSchema: {
+      clause_id: z.string(),
+      description: z.string(),
+      due_date: z.string().optional(),
+      assigned_to: z.string().optional(),
+    },
+  },
+  async (params) => {
+    const obligation = createObligation(params);
+    return { content: [{ type: "text", text: JSON.stringify(obligation, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "list_obligations",
+  {
+    title: "List Obligations",
+    description: "List all obligations for a clause.",
+    inputSchema: { clause_id: z.string() },
+  },
+  async ({ clause_id }) => {
+    const obligations = listObligations(clause_id);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ obligations, count: obligations.length }, null, 2) },
+      ],
+    };
+  }
+);
+
+server.registerTool(
+  "complete_obligation",
+  {
+    title: "Complete Obligation",
+    description: "Mark an obligation as completed.",
+    inputSchema: { id: z.string() },
+  },
+  async ({ id }) => {
+    const obligation = completeObligation(id);
+    if (!obligation) {
+      return { content: [{ type: "text", text: `Obligation '${id}' not found.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(obligation, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "list_overdue_obligations",
+  {
+    title: "List Overdue Obligations",
+    description: "List all overdue obligations across all contracts.",
+    inputSchema: {},
+  },
+  async () => {
+    const obligations = listOverdueObligations();
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ obligations, count: obligations.length }, null, 2) },
+      ],
+    };
+  }
+);
+
 // --- Reminders ---
 
 server.registerTool(
@@ -292,6 +577,30 @@ server.registerTool(
         { type: "text", text: JSON.stringify({ reminders, count: reminders.length }, null, 2) },
       ],
     };
+  }
+);
+
+server.registerTool(
+  "set_multi_reminders",
+  {
+    title: "Set Multi-Stage Reminders",
+    description: "Set multiple reminders at once based on days before contract end date.",
+    inputSchema: {
+      contract_id: z.string(),
+      days_before: z.array(z.number()),
+    },
+  },
+  async ({ contract_id, days_before }) => {
+    try {
+      const reminders = setMultiReminders(contract_id, days_before);
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ reminders, count: reminders.length }, null, 2) },
+        ],
+      };
+    } catch (err) {
+      return { content: [{ type: "text", text: (err as Error).message }], isError: true };
+    }
   }
 );
 

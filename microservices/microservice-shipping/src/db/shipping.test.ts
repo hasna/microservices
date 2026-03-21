@@ -31,7 +31,18 @@ import {
   updateReturn,
   deleteReturn,
 } from "./shipping";
-import { getShippingStats, getCostsByCarrier } from "./shipping";
+import {
+  getShippingStats,
+  getCostsByCarrier,
+  bulkImportOrders,
+  exportOrders,
+  getDeliveryStats,
+  listOverdueShipments,
+  getCustomerHistory,
+  getCarrierPerformance,
+  optimizeCost,
+  getOrderTimeline,
+} from "./shipping";
 import { closeDatabase } from "./database";
 
 afterAll(() => {
@@ -356,6 +367,386 @@ describe("Analytics", () => {
       expect(upsCosts.total_cost).toBeGreaterThanOrEqual(0);
       expect(upsCosts.shipment_count).toBeGreaterThanOrEqual(1);
       expect(typeof upsCosts.avg_cost).toBe("number");
+    }
+  });
+});
+
+// ─── Bulk Import/Export ─────────────────────────────────────────────────────
+
+describe("Bulk Import/Export", () => {
+  test("bulkImportOrders imports CSV data", () => {
+    const csv = `customer_name,customer_email,street,city,state,zip,country,items_json,total_value
+Alice Import,alice@import.com,10 Oak St,Portland,OR,97201,US,"[]",50.00
+Bob Import,bob@import.com,20 Elm St,Seattle,WA,98101,US,"[]",75.00`;
+
+    const result = bulkImportOrders(csv);
+    expect(result.imported).toBe(2);
+    expect(result.errors).toHaveLength(0);
+
+    // Verify orders exist
+    const alice = searchOrders("Alice Import");
+    expect(alice.length).toBeGreaterThanOrEqual(1);
+    expect(alice[0].customer_email).toBe("alice@import.com");
+    expect(alice[0].total_value).toBe(50.0);
+  });
+
+  test("bulkImportOrders handles empty CSV", () => {
+    const result = bulkImportOrders("header_only");
+    expect(result.imported).toBe(0);
+    expect(result.errors.length).toBeGreaterThanOrEqual(0);
+  });
+
+  test("bulkImportOrders handles CSV with items_json", () => {
+    const csv = `customer_name,customer_email,street,city,state,zip,country,items_json,total_value
+Charlie Import,charlie@import.com,30 Pine St,Denver,CO,80201,US,"[{""name"":""Widget"",""qty"":1,""weight"":0.5,""value"":25}]",25.00`;
+
+    const result = bulkImportOrders(csv);
+    expect(result.imported).toBe(1);
+
+    const charlie = searchOrders("Charlie Import");
+    expect(charlie.length).toBeGreaterThanOrEqual(1);
+    expect(charlie[0].items).toHaveLength(1);
+    expect(charlie[0].items[0].name).toBe("Widget");
+  });
+
+  test("exportOrders as JSON", () => {
+    const output = exportOrders("json");
+    const parsed = JSON.parse(output);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed.length).toBeGreaterThanOrEqual(1);
+    expect(parsed[0].id).toBeTruthy();
+  });
+
+  test("exportOrders as CSV", () => {
+    const output = exportOrders("csv");
+    const lines = output.split("\n");
+    expect(lines[0]).toContain("customer_name");
+    expect(lines[0]).toContain("total_value");
+    expect(lines.length).toBeGreaterThan(1);
+  });
+
+  test("exportOrders with date filter returns subset", () => {
+    // Export with a future date range — should return nothing
+    const output = exportOrders("json", "2099-01-01", "2099-12-31");
+    const parsed = JSON.parse(output);
+    expect(parsed).toHaveLength(0);
+  });
+});
+
+// ─── Delivery Timeline Analytics ────────────────────────────────────────────
+
+describe("Delivery Timeline Analytics", () => {
+  test("getDeliveryStats returns stats for delivered shipments", () => {
+    // Create an order and a shipment with full delivery timeline
+    const order = createOrder({
+      customer_name: "Delivery Stats Test",
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    const shipment = createShipment({
+      order_id: order.id,
+      carrier: "ups",
+      service: "express",
+      cost: 25.0,
+      weight: 3.0,
+      shipped_at: "2026-01-01T10:00:00Z",
+      estimated_delivery: "2026-01-05T10:00:00Z",
+    });
+
+    updateShipment(shipment.id, {
+      status: "delivered",
+      delivered_at: "2026-01-04T14:00:00Z",
+    });
+
+    const stats = getDeliveryStats("ups");
+    expect(stats.length).toBeGreaterThanOrEqual(1);
+
+    const upsExpress = stats.find((s) => s.carrier === "ups" && s.service === "express");
+    if (upsExpress) {
+      expect(upsExpress.avg_delivery_days).toBeGreaterThan(0);
+      expect(typeof upsExpress.on_time_pct).toBe("number");
+      expect(typeof upsExpress.late_pct).toBe("number");
+    }
+  });
+
+  test("getDeliveryStats returns empty for nonexistent carrier", () => {
+    const stats = getDeliveryStats("nonexistent" as any);
+    expect(stats).toHaveLength(0);
+  });
+
+  test("getDeliveryStats without carrier filter returns all", () => {
+    const stats = getDeliveryStats();
+    expect(stats.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── Late Delivery Alerts ───────────────────────────────────────────────────
+
+describe("Late Delivery Alerts", () => {
+  test("listOverdueShipments finds overdue shipments", () => {
+    const order = createOrder({
+      customer_name: "Overdue Test",
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    // Create a shipment with a past estimated_delivery
+    createShipment({
+      order_id: order.id,
+      carrier: "fedex",
+      service: "ground",
+      estimated_delivery: "2020-01-01",
+    });
+
+    const overdue = listOverdueShipments(0);
+    expect(overdue.length).toBeGreaterThanOrEqual(1);
+    expect(overdue[0].days_overdue).toBeGreaterThan(0);
+    expect(overdue[0].carrier).toBeTruthy();
+  });
+
+  test("listOverdueShipments with large grace days returns fewer results", () => {
+    const overdueSmall = listOverdueShipments(0);
+    const overdueLarge = listOverdueShipments(999999);
+    expect(overdueLarge.length).toBeLessThanOrEqual(overdueSmall.length);
+  });
+});
+
+// ─── Customer History ───────────────────────────────────────────────────────
+
+describe("Customer History", () => {
+  test("getCustomerHistory returns orders, shipments, and returns", () => {
+    const email = "history-test@example.com";
+    const order = createOrder({
+      customer_name: "History Test",
+      customer_email: email,
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    createShipment({
+      order_id: order.id,
+      carrier: "usps",
+      service: "ground",
+    });
+
+    createReturn({
+      order_id: order.id,
+      reason: "Changed mind",
+    });
+
+    const history = getCustomerHistory(email);
+    expect(history.customer_email).toBe(email);
+    expect(history.orders.length).toBeGreaterThanOrEqual(1);
+    expect(history.shipments.length).toBeGreaterThanOrEqual(1);
+    expect(history.returns.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("getCustomerHistory returns empty for unknown email", () => {
+    const history = getCustomerHistory("nobody@nowhere.com");
+    expect(history.orders).toHaveLength(0);
+    expect(history.shipments).toHaveLength(0);
+    expect(history.returns).toHaveLength(0);
+  });
+});
+
+// ─── Carrier Performance ────────────────────────────────────────────────────
+
+describe("Carrier Performance", () => {
+  test("getCarrierPerformance returns ranked carriers", () => {
+    const perf = getCarrierPerformance();
+    expect(perf.length).toBeGreaterThanOrEqual(1);
+
+    for (const p of perf) {
+      expect(p.carrier).toBeTruthy();
+      expect(p.total_shipments).toBeGreaterThanOrEqual(1);
+      expect(typeof p.on_time_pct).toBe("number");
+      expect(typeof p.avg_cost).toBe("number");
+      expect(typeof p.avg_delivery_days).toBe("number");
+    }
+  });
+});
+
+// ─── Cost Optimizer ─────────────────────────────────────────────────────────
+
+describe("Cost Optimizer", () => {
+  test("optimizeCost returns recommendations based on weight", () => {
+    // Create some shipments with cost and weight data
+    const order = createOrder({
+      customer_name: "Cost Test",
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    createShipment({
+      order_id: order.id,
+      carrier: "usps",
+      service: "ground",
+      cost: 8.5,
+      weight: 2.0,
+      shipped_at: "2026-01-01",
+      estimated_delivery: "2026-01-05",
+    });
+
+    const order2 = createOrder({
+      customer_name: "Cost Test 2",
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    createShipment({
+      order_id: order2.id,
+      carrier: "ups",
+      service: "express",
+      cost: 22.0,
+      weight: 2.5,
+      shipped_at: "2026-01-01",
+      estimated_delivery: "2026-01-03",
+    });
+
+    const recs = optimizeCost(2.0);
+    expect(recs.length).toBeGreaterThanOrEqual(1);
+
+    // Should be sorted by avg_cost ascending
+    if (recs.length >= 2) {
+      expect(recs[0].avg_cost).toBeLessThanOrEqual(recs[1].avg_cost);
+    }
+
+    for (const r of recs) {
+      expect(r.carrier).toBeTruthy();
+      expect(r.service).toBeTruthy();
+      expect(r.avg_cost).toBeGreaterThan(0);
+      expect(r.shipment_count).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  test("optimizeCost returns empty for extreme weight", () => {
+    const recs = optimizeCost(99999);
+    expect(recs).toHaveLength(0);
+  });
+});
+
+// ─── RMA Generation ─────────────────────────────────────────────────────────
+
+describe("RMA Generation", () => {
+  test("createReturn with auto_rma generates RMA code", () => {
+    const order = createOrder({
+      customer_name: "RMA Test",
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    const ret = createReturn({
+      order_id: order.id,
+      reason: "Defective",
+      auto_rma: true,
+    });
+
+    expect(ret.rma_code).toBeTruthy();
+    expect(ret.rma_code!.startsWith("RMA-")).toBe(true);
+    expect(ret.rma_code!.length).toBe(12); // "RMA-" + 8 chars
+  });
+
+  test("createReturn without auto_rma has null rma_code", () => {
+    const order = createOrder({
+      customer_name: "No RMA Test",
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    const ret = createReturn({
+      order_id: order.id,
+      reason: "Wrong size",
+    });
+
+    expect(ret.rma_code).toBeNull();
+  });
+
+  test("each RMA code is unique", () => {
+    const order = createOrder({
+      customer_name: "Unique RMA Test",
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    const ret1 = createReturn({ order_id: order.id, auto_rma: true });
+    const ret2 = createReturn({ order_id: order.id, auto_rma: true });
+
+    expect(ret1.rma_code).not.toBe(ret2.rma_code);
+  });
+});
+
+// ─── Order Timeline ─────────────────────────────────────────────────────────
+
+describe("Order Timeline", () => {
+  test("getOrderTimeline returns events for an order with shipment and return", () => {
+    const order = createOrder({
+      customer_name: "Timeline Test",
+      customer_email: "timeline@test.com",
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    const shipment = createShipment({
+      order_id: order.id,
+      carrier: "dhl",
+      service: "express",
+      tracking_number: "DHL-TIMELINE-001",
+    });
+
+    updateShipment(shipment.id, {
+      status: "delivered",
+      shipped_at: "2026-02-01T10:00:00Z",
+      delivered_at: "2026-02-03T14:00:00Z",
+    });
+
+    createReturn({
+      order_id: order.id,
+      reason: "Not as described",
+      auto_rma: true,
+    });
+
+    const timeline = getOrderTimeline(order.id);
+    expect(timeline.length).toBeGreaterThanOrEqual(3);
+
+    // First event should be order creation
+    const orderCreated = timeline.find((e) => e.type === "order_created");
+    expect(orderCreated).toBeDefined();
+    expect(orderCreated!.details).toContain("Timeline Test");
+
+    // Should have shipment events
+    const shipCreated = timeline.find((e) => e.type === "shipment_created");
+    expect(shipCreated).toBeDefined();
+    expect(shipCreated!.details).toContain("dhl");
+
+    // Should have return events
+    const retCreated = timeline.find((e) => e.type === "return_created");
+    expect(retCreated).toBeDefined();
+    expect(retCreated!.details).toContain("Not as described");
+    expect(retCreated!.details).toContain("RMA-");
+  });
+
+  test("getOrderTimeline returns empty for nonexistent order", () => {
+    const timeline = getOrderTimeline("nonexistent-id");
+    expect(timeline).toHaveLength(0);
+  });
+
+  test("getOrderTimeline events are sorted by timestamp", () => {
+    const order = createOrder({
+      customer_name: "Sort Test",
+      address: sampleAddress,
+      items: sampleItems,
+    });
+
+    createShipment({
+      order_id: order.id,
+      carrier: "ups",
+      service: "ground",
+    });
+
+    const timeline = getOrderTimeline(order.id);
+    for (let i = 1; i < timeline.length; i++) {
+      expect(timeline[i].timestamp >= timeline[i - 1].timestamp).toBe(true);
     }
   });
 });

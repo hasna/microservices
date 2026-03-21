@@ -23,6 +23,17 @@ import {
   getPayrollReport,
   getYtdReport,
   getTaxSummary,
+  createBenefit,
+  listBenefits,
+  removeBenefit,
+  generateAchFile,
+  generateW2,
+  generate1099,
+  setSchedule,
+  getNextPayPeriod,
+  auditPayroll,
+  forecastPayroll,
+  checkOvertime,
 } from "../db/payroll.js";
 
 const server = new McpServer({
@@ -402,6 +413,241 @@ server.registerTool(
     return {
       content: [
         { type: "text", text: JSON.stringify({ summary, count: summary.length }, null, 2) },
+      ],
+    };
+  }
+);
+
+// --- Benefits ---
+
+server.registerTool(
+  "create_benefit",
+  {
+    title: "Create Benefit",
+    description: "Add a benefit deduction to an employee (health, dental, vision, retirement, hsa, other).",
+    inputSchema: {
+      employee_id: z.string(),
+      type: z.enum(["health", "dental", "vision", "retirement", "hsa", "other"]),
+      description: z.string().optional(),
+      amount: z.number(),
+      frequency: z.enum(["per_period", "monthly", "annual"]).optional(),
+    },
+  },
+  async (params) => {
+    try {
+      const benefit = createBenefit(params);
+      return { content: [{ type: "text", text: JSON.stringify(benefit, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "list_benefits",
+  {
+    title: "List Benefits",
+    description: "List benefit deductions, optionally filtered by employee.",
+    inputSchema: {
+      employee_id: z.string().optional(),
+    },
+  },
+  async ({ employee_id }) => {
+    const benefits = listBenefits(employee_id);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ benefits, count: benefits.length }, null, 2) },
+      ],
+    };
+  }
+);
+
+server.registerTool(
+  "remove_benefit",
+  {
+    title: "Remove Benefit",
+    description: "Deactivate a benefit by ID.",
+    inputSchema: { id: z.string() },
+  },
+  async ({ id }) => {
+    const removed = removeBenefit(id);
+    if (!removed) {
+      return { content: [{ type: "text", text: `Benefit '${id}' not found.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify({ removed: true, id }) }] };
+  }
+);
+
+// --- ACH File Generation ---
+
+server.registerTool(
+  "generate_ach_file",
+  {
+    title: "Generate ACH File",
+    description: "Generate a NACHA-format ACH file for a completed pay period.",
+    inputSchema: {
+      period_id: z.string(),
+      bank_routing: z.string(),
+      bank_account: z.string(),
+      company_name: z.string().optional(),
+    },
+  },
+  async ({ period_id, bank_routing, bank_account, company_name }) => {
+    try {
+      const content = generateAchFile(period_id, bank_routing, bank_account, company_name);
+      return { content: [{ type: "text", text: content }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- W-2 ---
+
+server.registerTool(
+  "generate_w2",
+  {
+    title: "Generate W-2",
+    description: "Generate W-2 data for an employee for a given tax year.",
+    inputSchema: {
+      employee_id: z.string(),
+      year: z.number(),
+    },
+  },
+  async ({ employee_id, year }) => {
+    const w2 = generateW2(employee_id, year);
+    if (!w2) {
+      return {
+        content: [{ type: "text", text: "No W-2 data found (employee not found, is a contractor, or has no pay stubs)." }],
+        isError: true,
+      };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(w2, null, 2) }] };
+  }
+);
+
+// --- 1099-NEC ---
+
+server.registerTool(
+  "generate_1099",
+  {
+    title: "Generate 1099-NEC",
+    description: "Generate 1099-NEC data for contractors with >$600 compensation in a given year.",
+    inputSchema: {
+      employee_id: z.string().optional(),
+      year: z.number(),
+    },
+  },
+  async ({ employee_id, year }) => {
+    const forms = generate1099(employee_id || null, year);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ forms, count: forms.length }, null, 2) },
+      ],
+    };
+  }
+);
+
+// --- Payroll Schedule ---
+
+server.registerTool(
+  "set_schedule",
+  {
+    title: "Set Payroll Schedule",
+    description: "Set the payroll schedule frequency and anchor date.",
+    inputSchema: {
+      frequency: z.enum(["weekly", "biweekly", "semimonthly", "monthly"]),
+      anchor_date: z.string(),
+    },
+  },
+  async ({ frequency, anchor_date }) => {
+    const schedule = setSchedule(frequency, anchor_date);
+    return { content: [{ type: "text", text: JSON.stringify(schedule, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "next_pay_period",
+  {
+    title: "Next Pay Period",
+    description: "Get the next pay period dates based on the configured payroll schedule.",
+    inputSchema: {},
+  },
+  async () => {
+    const next = getNextPayPeriod();
+    if (!next) {
+      return {
+        content: [{ type: "text", text: "No payroll schedule configured. Use set_schedule first." }],
+        isError: true,
+      };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(next, null, 2) }] };
+  }
+);
+
+// --- Audit ---
+
+server.registerTool(
+  "audit_payroll",
+  {
+    title: "Audit Payroll",
+    description: "Audit a payroll period for issues: missing stubs, bad net_pay, deduction mismatches, duplicates.",
+    inputSchema: {
+      period_id: z.string(),
+    },
+  },
+  async ({ period_id }) => {
+    try {
+      const result = auditPayroll(period_id);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- Forecast ---
+
+server.registerTool(
+  "forecast_payroll",
+  {
+    title: "Forecast Payroll",
+    description: "Project future payroll costs for a given number of months.",
+    inputSchema: {
+      months: z.number().min(1).max(60),
+    },
+  },
+  async ({ months }) => {
+    const result = forecastPayroll(months);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// --- Overtime ---
+
+server.registerTool(
+  "check_overtime",
+  {
+    title: "Check Overtime",
+    description: "Flag employees exceeding a weekly hours threshold in the most recent completed period.",
+    inputSchema: {
+      threshold: z.number().optional(),
+    },
+  },
+  async ({ threshold }) => {
+    const alerts = checkOvertime(threshold);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ alerts, count: alerts.length }, null, 2) },
       ],
     };
   }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command } from "commander";
+import { readFileSync } from "node:fs";
 import {
   createAccount,
   getAccount,
@@ -23,8 +24,19 @@ import {
   getStatsByPlatform,
   getCalendar,
   getOverallStats,
+  batchSchedule,
+  crossPost,
+  getBestTimeToPost,
+  reschedulePost,
+  submitPostForReview,
+  approvePost,
+  createRecurringPost,
+  getHashtagStats,
+  checkPlatformLimit,
+  PLATFORM_LIMITS,
   type Platform,
   type PostStatus,
+  type Recurrence,
 } from "../db/social.js";
 
 const program = new Command();
@@ -49,8 +61,15 @@ postCmd
   .option("--status <status>", "Post status (draft/scheduled/published/failed)", "draft")
   .option("--scheduled-at <datetime>", "Schedule date/time")
   .option("--tags <tags>", "Comma-separated tags")
+  .option("--recurring <recurrence>", "Recurrence (daily/weekly/biweekly/monthly)")
   .option("--json", "Output as JSON", false)
   .action((opts) => {
+    // Check platform character limit
+    const warning = checkPlatformLimit(opts.content, opts.account);
+    if (warning) {
+      console.warn(`Warning: Content (${warning.content_length} chars) exceeds ${warning.platform} limit (${warning.limit} chars) by ${warning.over_by} chars`);
+    }
+
     const post = createPost({
       account_id: opts.account,
       content: opts.content,
@@ -58,6 +77,7 @@ postCmd
       status: opts.status as PostStatus,
       scheduled_at: opts.scheduledAt,
       tags: opts.tags ? opts.tags.split(",").map((t: string) => t.trim()) : undefined,
+      recurrence: opts.recurring as Recurrence | undefined,
     });
 
     if (opts.json) {
@@ -134,8 +154,18 @@ postCmd
   .description("Schedule a post")
   .argument("<id>", "Post ID")
   .requiredOption("--at <datetime>", "Schedule date/time")
+  .option("--recurring <recurrence>", "Recurrence (daily/weekly/biweekly/monthly)")
   .option("--json", "Output as JSON", false)
   .action((id, opts) => {
+    if (opts.recurring) {
+      const post = getPost(id);
+      if (!post) {
+        console.error(`Post '${id}' not found.`);
+        process.exit(1);
+      }
+      updatePost(id, { recurrence: opts.recurring as Recurrence });
+    }
+
     const post = schedulePost(id, opts.at);
     if (!post) {
       console.error(`Post '${id}' not found.`);
@@ -145,7 +175,7 @@ postCmd
     if (opts.json) {
       console.log(JSON.stringify(post, null, 2));
     } else {
-      console.log(`Scheduled post ${post.id} for ${post.scheduled_at}`);
+      console.log(`Scheduled post ${post.id} for ${post.scheduled_at}${post.recurrence ? ` (recurring: ${post.recurrence})` : ""}`);
     }
   });
 
@@ -166,6 +196,158 @@ postCmd
       console.log(JSON.stringify(post, null, 2));
     } else {
       console.log(`Published post ${post.id} at ${post.published_at}`);
+    }
+  });
+
+postCmd
+  .command("schedule-batch")
+  .description("Schedule multiple posts from a JSON file")
+  .requiredOption("--file <path>", "Path to JSON file with post array")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    let postsData;
+    try {
+      postsData = JSON.parse(readFileSync(opts.file, "utf-8"));
+    } catch (err) {
+      console.error(`Failed to read file: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+
+    if (!Array.isArray(postsData)) {
+      console.error("File must contain a JSON array of posts.");
+      process.exit(1);
+    }
+
+    const result = batchSchedule(postsData);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Scheduled ${result.scheduled.length} post(s)`);
+      if (result.errors.length > 0) {
+        console.log(`Errors: ${result.errors.length}`);
+        for (const err of result.errors) {
+          console.log(`  [${err.index}] ${err.error}`);
+        }
+      }
+      if (result.warnings.length > 0) {
+        console.log("Warnings:");
+        for (const w of result.warnings) {
+          console.log(`  ${w.platform}: content (${w.content_length}) exceeds limit (${w.limit}) by ${w.over_by} chars`);
+        }
+      }
+    }
+  });
+
+postCmd
+  .command("crosspost")
+  .description("Create identical post on multiple platforms")
+  .requiredOption("--content <text>", "Post content")
+  .requiredOption("--platforms <list>", "Comma-separated platforms (x,linkedin,bluesky,...)")
+  .option("--tags <tags>", "Comma-separated tags")
+  .option("--scheduled-at <datetime>", "Schedule date/time")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const platforms = opts.platforms.split(",").map((p: string) => p.trim()) as Platform[];
+
+    try {
+      const result = crossPost(opts.content, platforms, {
+        tags: opts.tags ? opts.tags.split(",").map((t: string) => t.trim()) : undefined,
+        scheduled_at: opts.scheduledAt,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Cross-posted to ${result.posts.length} platform(s):`);
+        for (const post of result.posts) {
+          const account = getAccount(post.account_id);
+          console.log(`  ${account?.platform || "?"} → ${post.id} [${post.status}]`);
+        }
+        if (result.warnings.length > 0) {
+          console.log("Warnings:");
+          for (const w of result.warnings) {
+            console.log(`  ${w.platform}: content (${w.content_length}) exceeds limit (${w.limit}) by ${w.over_by} chars`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+postCmd
+  .command("reschedule")
+  .description("Reschedule a post to a new date/time")
+  .argument("<id>", "Post ID")
+  .requiredOption("--to <datetime>", "New schedule date/time")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    try {
+      const post = reschedulePost(id, opts.to);
+      if (!post) {
+        console.error(`Post '${id}' not found.`);
+        process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(post, null, 2));
+      } else {
+        console.log(`Rescheduled post ${post.id} to ${post.scheduled_at}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+postCmd
+  .command("submit")
+  .description("Submit a draft post for review")
+  .argument("<id>", "Post ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    try {
+      const post = submitPostForReview(id);
+      if (!post) {
+        console.error(`Post '${id}' not found.`);
+        process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(post, null, 2));
+      } else {
+        console.log(`Post ${post.id} submitted for review [${post.status}]`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+postCmd
+  .command("approve")
+  .description("Approve a post pending review")
+  .argument("<id>", "Post ID")
+  .option("--at <datetime>", "Schedule date/time for approved post")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    try {
+      const post = approvePost(id, opts.at);
+      if (!post) {
+        console.error(`Post '${id}' not found.`);
+        process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(post, null, 2));
+      } else {
+        console.log(`Post ${post.id} approved and scheduled for ${post.scheduled_at}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
     }
   });
 
@@ -287,8 +469,12 @@ program
 
 // --- Analytics ---
 
-program
+const analyticsCmd = program
   .command("analytics")
+  .description("Engagement analytics");
+
+analyticsCmd
+  .command("engagement")
   .description("View engagement analytics")
   .option("--account <id>", "Filter by account ID")
   .option("--by-platform", "Group by platform")
@@ -326,6 +512,62 @@ program
         console.log(`  Total comments: ${stats.total_comments} (avg ${stats.avg_comments})`);
         console.log(`  Total impressions: ${stats.total_impressions} (avg ${stats.avg_impressions})`);
         console.log(`  Total clicks: ${stats.total_clicks} (avg ${stats.avg_clicks})`);
+      }
+    }
+  });
+
+analyticsCmd
+  .command("best-time")
+  .description("Find best time to post based on historical engagement")
+  .requiredOption("--account <id>", "Account ID")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const result = getBestTimeToPost(opts.account);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      if (result.total_analyzed === 0) {
+        console.log("No published posts to analyze.");
+        return;
+      }
+      console.log(`Analyzed ${result.total_analyzed} published post(s)\n`);
+
+      if (result.best_hours.length > 0) {
+        console.log("Best hours to post:");
+        for (const slot of result.best_hours.slice(0, 5)) {
+          console.log(`  ${slot.day_name} ${slot.hour}:00 — avg engagement: ${slot.avg_engagement} (${slot.post_count} posts)`);
+        }
+      }
+
+      if (result.best_days.length > 0) {
+        console.log("\nBest days to post:");
+        for (const day of result.best_days) {
+          console.log(`  ${day.day_name} — avg engagement: ${day.avg_engagement} (${day.post_count} posts)`);
+        }
+      }
+    }
+  });
+
+analyticsCmd
+  .command("hashtags")
+  .description("Hashtag performance analytics")
+  .requiredOption("--account <id>", "Account ID")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const stats = getHashtagStats(opts.account);
+
+    if (opts.json) {
+      console.log(JSON.stringify(stats, null, 2));
+    } else {
+      if (stats.length === 0) {
+        console.log("No hashtags found in published posts.");
+        return;
+      }
+      console.log("Hashtag Analytics:");
+      for (const h of stats) {
+        console.log(`  #${h.hashtag} — ${h.post_count} post(s), avg engagement: ${h.avg_engagement}`);
+        console.log(`    likes: ${h.total_likes}, shares: ${h.total_shares}, comments: ${h.total_comments}`);
       }
     }
   });

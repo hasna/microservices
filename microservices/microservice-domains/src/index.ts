@@ -14,6 +14,7 @@ export {
   listExpiring,
   listSslExpiring,
   getDomainStats,
+  getDomainByName,
   type Domain,
   type CreateDomainInput,
   type UpdateDomainInput,
@@ -39,6 +40,26 @@ export {
   deleteAlert,
   type Alert,
   type CreateAlertInput,
+} from "./db/domains.js";
+
+export {
+  whoisLookup,
+  checkDnsPropagation,
+  checkSsl,
+  exportZoneFile,
+  importZoneFile,
+  discoverSubdomains,
+  validateDns,
+  exportPortfolio,
+  checkAllDomains,
+  type WhoisResult,
+  type DnsPropagationResult,
+  type SslCheckResult,
+  type ZoneImportResult,
+  type SubdomainResult,
+  type DnsValidationIssue,
+  type DnsValidationResult,
+  type BulkCheckResult,
 } from "./db/domains.js";
 
 export { getDatabase, closeDatabase } from "./db/database.js";

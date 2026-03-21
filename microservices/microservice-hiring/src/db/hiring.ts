@@ -580,3 +580,506 @@ export function deleteInterview(id: string): boolean {
   const result = db.prepare("DELETE FROM interviews WHERE id = ?").run(id);
   return result.changes > 0;
 }
+
+// ---- Bulk Import ----
+
+export interface BulkImportResult {
+  imported: number;
+  skipped: number;
+  errors: string[];
+}
+
+export function bulkImportApplicants(csvData: string): BulkImportResult {
+  const lines = csvData.trim().split("\n");
+  if (lines.length < 2) {
+    return { imported: 0, skipped: 0, errors: ["CSV must have a header row and at least one data row"] };
+  }
+
+  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const requiredCols = ["name"];
+  for (const col of requiredCols) {
+    if (!header.includes(col)) {
+      return { imported: 0, skipped: 0, errors: [`Missing required column: ${col}`] };
+    }
+  }
+
+  const nameIdx = header.indexOf("name");
+  const emailIdx = header.indexOf("email");
+  const phoneIdx = header.indexOf("phone");
+  const jobIdIdx = header.indexOf("job_id");
+  const sourceIdx = header.indexOf("source");
+  const resumeUrlIdx = header.indexOf("resume_url");
+
+  let imported = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) { skipped++; continue; }
+
+    const cols = parseCsvLine(line);
+    const name = cols[nameIdx]?.trim();
+
+    if (!name) {
+      errors.push(`Row ${i + 1}: missing name`);
+      skipped++;
+      continue;
+    }
+
+    const jobId = jobIdIdx >= 0 ? cols[jobIdIdx]?.trim() : undefined;
+    if (!jobId) {
+      errors.push(`Row ${i + 1}: missing job_id`);
+      skipped++;
+      continue;
+    }
+
+    // Verify job exists
+    const job = getJob(jobId);
+    if (!job) {
+      errors.push(`Row ${i + 1}: job '${jobId}' not found`);
+      skipped++;
+      continue;
+    }
+
+    try {
+      createApplicant({
+        name,
+        job_id: jobId,
+        email: emailIdx >= 0 ? cols[emailIdx]?.trim() || undefined : undefined,
+        phone: phoneIdx >= 0 ? cols[phoneIdx]?.trim() || undefined : undefined,
+        source: sourceIdx >= 0 ? cols[sourceIdx]?.trim() || undefined : undefined,
+        resume_url: resumeUrlIdx >= 0 ? cols[resumeUrlIdx]?.trim() || undefined : undefined,
+      });
+      imported++;
+    } catch (err) {
+      errors.push(`Row ${i + 1}: ${err instanceof Error ? err.message : String(err)}`);
+      skipped++;
+    }
+  }
+
+  return { imported, skipped, errors };
+}
+
+/** Simple CSV line parser that handles quoted fields */
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ",") {
+        result.push(current);
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+// ---- Offer Letter Generation ----
+
+export interface OfferDetails {
+  salary: number;
+  start_date: string;
+  position_title?: string;
+  department?: string;
+  benefits?: string;
+  equity?: string;
+  signing_bonus?: number;
+}
+
+export function generateOffer(applicantId: string, details: OfferDetails): string {
+  const applicant = getApplicant(applicantId);
+  if (!applicant) throw new Error(`Applicant '${applicantId}' not found`);
+
+  const job = getJob(applicant.job_id);
+  if (!job) throw new Error(`Job '${applicant.job_id}' not found`);
+
+  const title = details.position_title || job.title;
+  const dept = details.department || job.department || "the team";
+  const salary = details.salary.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+
+  let letter = `# Offer Letter
+
+**Date:** ${new Date().toISOString().split("T")[0]}
+
+Dear **${applicant.name}**,
+
+We are pleased to extend an offer of employment for the position of **${title}** in **${dept}**.
+
+## Terms of Employment
+
+| Detail | Value |
+|--------|-------|
+| **Position** | ${title} |
+| **Department** | ${dept} |
+| **Annual Salary** | ${salary} |
+| **Start Date** | ${details.start_date} |
+| **Employment Type** | ${job.type} |`;
+
+  if (details.signing_bonus) {
+    const bonus = details.signing_bonus.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+    letter += `\n| **Signing Bonus** | ${bonus} |`;
+  }
+
+  if (details.equity) {
+    letter += `\n| **Equity** | ${details.equity} |`;
+  }
+
+  if (details.benefits) {
+    letter += `\n\n## Benefits\n\n${details.benefits}`;
+  }
+
+  letter += `
+
+## Next Steps
+
+Please review this offer carefully. To accept, please sign and return this letter by **${getResponseDeadline(details.start_date)}**.
+
+We are excited to have you join ${dept} and look forward to your contributions.
+
+Sincerely,
+**Hiring Team**
+`;
+
+  // Store offer in applicant metadata
+  const metadata = {
+    ...applicant.metadata,
+    offer: { ...details, generated_at: new Date().toISOString() },
+  };
+  updateApplicant(applicantId, { metadata, status: "offered" });
+
+  return letter;
+}
+
+function getResponseDeadline(startDate: string): string {
+  const start = new Date(startDate);
+  const deadline = new Date(start.getTime() - 14 * 24 * 60 * 60 * 1000);
+  return deadline.toISOString().split("T")[0];
+}
+
+// ---- Pipeline Velocity / Hiring Forecast ----
+
+export interface HiringForecast {
+  job_id: string;
+  job_title: string;
+  total_applicants: number;
+  current_pipeline: PipelineEntry[];
+  avg_days_per_stage: Record<string, number>;
+  estimated_days_to_fill: number | null;
+  conversion_rates: Record<string, number>;
+}
+
+export function getHiringForecast(jobId: string): HiringForecast {
+  const db = getDatabase();
+  const job = getJob(jobId);
+  if (!job) throw new Error(`Job '${jobId}' not found`);
+
+  const pipeline = getPipeline(jobId);
+  const applicants = listApplicants({ job_id: jobId });
+
+  // Calculate stage transition times from applicant update timestamps
+  const stages = ["applied", "screening", "interviewing", "offered", "hired"];
+  const stageDurations: Record<string, number[]> = {};
+
+  for (const applicant of applicants) {
+    // Use created_at and updated_at to estimate stage duration
+    if (applicant.status !== "applied" && applicant.status !== "rejected") {
+      const created = new Date(applicant.created_at).getTime();
+      const updated = new Date(applicant.updated_at).getTime();
+      const days = (updated - created) / (1000 * 60 * 60 * 24);
+      if (days > 0) {
+        const key = `applied->${applicant.status}`;
+        if (!stageDurations[key]) stageDurations[key] = [];
+        stageDurations[key].push(days);
+      }
+    }
+  }
+
+  const avgDaysPerStage: Record<string, number> = {};
+  for (const [key, durations] of Object.entries(stageDurations)) {
+    avgDaysPerStage[key] = Math.round((durations.reduce((a, b) => a + b, 0) / durations.length) * 10) / 10;
+  }
+
+  // Calculate conversion rates between stages
+  const conversionRates: Record<string, number> = {};
+  const statusCounts: Record<string, number> = {};
+  for (const p of pipeline) {
+    statusCounts[p.status] = p.count;
+  }
+
+  const total = applicants.length;
+  if (total > 0) {
+    for (const stage of stages) {
+      const atOrPast = applicants.filter((a) => {
+        const idx = stages.indexOf(a.status);
+        const stageIdx = stages.indexOf(stage);
+        return idx >= stageIdx && a.status !== "rejected";
+      }).length;
+      conversionRates[stage] = Math.round((atOrPast / total) * 100);
+    }
+  }
+
+  // Estimate days to fill: sum of avg days per stage transition for the full pipeline
+  let estimatedDays: number | null = null;
+  if (Object.keys(avgDaysPerStage).length > 0) {
+    // Use the longest observed transition as an estimate
+    const values = Object.values(avgDaysPerStage);
+    estimatedDays = Math.round(values.reduce((a, b) => Math.max(a, b), 0) * 1.2);
+  } else if (applicants.length > 0) {
+    // Fallback: estimate based on overall pipeline age
+    const oldest = applicants.reduce((oldest, a) => {
+      const t = new Date(a.created_at).getTime();
+      return t < oldest ? t : oldest;
+    }, Date.now());
+    const daysSinceFirst = (Date.now() - oldest) / (1000 * 60 * 60 * 24);
+    const hiredCount = statusCounts["hired"] || 0;
+    if (hiredCount > 0) {
+      estimatedDays = Math.round(daysSinceFirst / hiredCount);
+    } else {
+      estimatedDays = Math.round(daysSinceFirst * 2);
+    }
+  }
+
+  return {
+    job_id: jobId,
+    job_title: job.title,
+    total_applicants: total,
+    current_pipeline: pipeline,
+    avg_days_per_stage: avgDaysPerStage,
+    estimated_days_to_fill: estimatedDays,
+    conversion_rates: conversionRates,
+  };
+}
+
+// ---- Structured Interview Feedback ----
+
+export interface StructuredFeedback {
+  technical?: number;
+  communication?: number;
+  culture_fit?: number;
+  problem_solving?: number;
+  leadership?: number;
+  overall?: number;
+  notes?: string;
+}
+
+export function submitStructuredFeedback(
+  interviewId: string,
+  scores: StructuredFeedback,
+  feedbackText?: string
+): Interview | null {
+  const interview = getInterview(interviewId);
+  if (!interview) return null;
+
+  // Build feedback JSON with scores and text
+  const feedbackData = {
+    scores,
+    text: feedbackText || interview.feedback || "",
+    submitted_at: new Date().toISOString(),
+  };
+
+  // Calculate average score from provided dimensions
+  const scoreValues = [
+    scores.technical,
+    scores.communication,
+    scores.culture_fit,
+    scores.problem_solving,
+    scores.leadership,
+    scores.overall,
+  ].filter((v): v is number => v !== undefined);
+
+  const avgRating = scoreValues.length > 0
+    ? Math.round((scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length) * 10) / 10
+    : undefined;
+
+  return updateInterview(interviewId, {
+    feedback: JSON.stringify(feedbackData),
+    rating: avgRating,
+    status: "completed",
+  });
+}
+
+// ---- Bulk Rejection ----
+
+export interface BulkRejectResult {
+  rejected: number;
+  applicant_ids: string[];
+}
+
+export function bulkReject(
+  jobId: string,
+  status: Applicant["status"],
+  reason?: string
+): BulkRejectResult {
+  const applicants = listApplicants({ job_id: jobId, status });
+  const rejected: string[] = [];
+
+  for (const applicant of applicants) {
+    const result = rejectApplicant(applicant.id, reason);
+    if (result) rejected.push(applicant.id);
+  }
+
+  return { rejected: rejected.length, applicant_ids: rejected };
+}
+
+// ---- Referral Stats ----
+
+export interface ReferralStats {
+  source: string;
+  total: number;
+  hired: number;
+  rejected: number;
+  in_progress: number;
+  conversion_rate: number;
+}
+
+export function getReferralStats(): ReferralStats[] {
+  const db = getDatabase();
+
+  const rows = db.prepare(`
+    SELECT
+      COALESCE(source, 'unknown') as source,
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'hired' THEN 1 ELSE 0 END) as hired,
+      SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+      SUM(CASE WHEN status NOT IN ('hired', 'rejected') THEN 1 ELSE 0 END) as in_progress
+    FROM applicants
+    GROUP BY COALESCE(source, 'unknown')
+    ORDER BY total DESC
+  `).all() as Array<{
+    source: string;
+    total: number;
+    hired: number;
+    rejected: number;
+    in_progress: number;
+  }>;
+
+  return rows.map((r) => ({
+    ...r,
+    conversion_rate: r.total > 0 ? Math.round((r.hired / r.total) * 100 * 10) / 10 : 0,
+  }));
+}
+
+// ---- Job Templates ----
+
+export interface JobTemplate {
+  id: string;
+  name: string;
+  title: string;
+  department: string | null;
+  location: string | null;
+  type: "full-time" | "part-time" | "contract";
+  description: string | null;
+  requirements: string[];
+  salary_range: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface JobTemplateRow {
+  id: string;
+  name: string;
+  title: string;
+  department: string | null;
+  location: string | null;
+  type: string;
+  description: string | null;
+  requirements: string;
+  salary_range: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function rowToJobTemplate(row: JobTemplateRow): JobTemplate {
+  return {
+    ...row,
+    type: row.type as JobTemplate["type"],
+    requirements: JSON.parse(row.requirements || "[]"),
+  };
+}
+
+export function saveJobAsTemplate(jobId: string, templateName: string): JobTemplate {
+  const db = getDatabase();
+  const job = getJob(jobId);
+  if (!job) throw new Error(`Job '${jobId}' not found`);
+
+  const id = crypto.randomUUID();
+  const requirements = JSON.stringify(job.requirements);
+
+  db.prepare(
+    `INSERT INTO job_templates (id, name, title, department, location, type, description, requirements, salary_range)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    templateName,
+    job.title,
+    job.department,
+    job.location,
+    job.type,
+    job.description,
+    requirements,
+    job.salary_range
+  );
+
+  return getJobTemplate(id)!;
+}
+
+export function getJobTemplate(id: string): JobTemplate | null {
+  const db = getDatabase();
+  const row = db.prepare("SELECT * FROM job_templates WHERE id = ?").get(id) as JobTemplateRow | null;
+  return row ? rowToJobTemplate(row) : null;
+}
+
+export function getJobTemplateByName(name: string): JobTemplate | null {
+  const db = getDatabase();
+  const row = db.prepare("SELECT * FROM job_templates WHERE name = ?").get(name) as JobTemplateRow | null;
+  return row ? rowToJobTemplate(row) : null;
+}
+
+export function listJobTemplates(): JobTemplate[] {
+  const db = getDatabase();
+  const rows = db.prepare("SELECT * FROM job_templates ORDER BY name ASC").all() as JobTemplateRow[];
+  return rows.map(rowToJobTemplate);
+}
+
+export function createJobFromTemplate(templateName: string, overrides?: Partial<CreateJobInput>): Job {
+  const template = getJobTemplateByName(templateName);
+  if (!template) throw new Error(`Template '${templateName}' not found`);
+
+  return createJob({
+    title: overrides?.title || template.title,
+    department: overrides?.department || template.department || undefined,
+    location: overrides?.location || template.location || undefined,
+    type: overrides?.type || template.type,
+    description: overrides?.description || template.description || undefined,
+    requirements: overrides?.requirements || template.requirements,
+    salary_range: overrides?.salary_range || template.salary_range || undefined,
+    posted_at: overrides?.posted_at,
+  });
+}
+
+export function deleteJobTemplate(id: string): boolean {
+  const db = getDatabase();
+  const result = db.prepare("DELETE FROM job_templates WHERE id = ?").run(id);
+  return result.changes > 0;
+}

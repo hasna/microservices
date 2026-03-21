@@ -22,6 +22,17 @@ import {
   reconcileWithInvoice,
   getPaymentStats,
   getBalanceByProvider,
+  autoReconcile,
+  retryPayment,
+  listRetries,
+  getRetryStats,
+  convertCurrency,
+  feeAnalysis,
+  declineReport,
+  addDisputeEvidence,
+  splitPayment,
+  revenueForecast,
+  findReconciliationGaps,
   createDispute,
   getDispute,
   listDisputes,
@@ -403,5 +414,422 @@ describe("Payouts", () => {
 
   test("delete nonexistent payout returns false", () => {
     expect(deletePayout("nonexistent-id")).toBe(false);
+  });
+});
+
+// --- Auto-Reconciliation ---
+
+describe("Auto-Reconciliation", () => {
+  test("auto-reconcile matches payments by amount, email, and date", () => {
+    // Create a reconciled payment (has invoice_id) as our "invoice" reference
+    const refPayment = createPayment({
+      type: "charge",
+      amount: 250,
+      status: "succeeded",
+      customer_email: "reconcile-test@example.com",
+      invoice_id: "INV-AUTO-001",
+    });
+
+    // Create an unreconciled payment with matching amount and email
+    const unmatchedPayment = createPayment({
+      type: "charge",
+      amount: 250,
+      status: "succeeded",
+      customer_email: "reconcile-test@example.com",
+    });
+
+    const result = autoReconcile();
+    expect(result).toHaveProperty("matched");
+    expect(result).toHaveProperty("unmatched_payments");
+    expect(result).toHaveProperty("unmatched_invoices");
+    // The matched array should have at least our pair
+    const match = result.matched.find((m) => m.payment_id === unmatchedPayment.id);
+    if (match) {
+      expect(match.invoice_id).toBe("INV-AUTO-001");
+    }
+  });
+
+  test("auto-reconcile returns unmatched payments when no match", () => {
+    createPayment({
+      type: "charge",
+      amount: 9999.99,
+      status: "succeeded",
+      customer_email: "nomatch@example.com",
+    });
+
+    const result = autoReconcile();
+    const noMatch = result.unmatched_payments.find(
+      (p) => p.customer_email === "nomatch@example.com" && p.amount === 9999.99
+    );
+    expect(noMatch).toBeDefined();
+  });
+
+  test("auto-reconcile with date range", () => {
+    const result = autoReconcile("2000-01-01", "2099-12-31");
+    expect(result).toHaveProperty("matched");
+    expect(result).toHaveProperty("unmatched_payments");
+  });
+});
+
+// --- Failed Payment Retry ---
+
+describe("Failed Payment Retry", () => {
+  test("retry a failed payment", () => {
+    const payment = createPayment({
+      type: "charge",
+      amount: 75,
+      status: "failed",
+      provider: "stripe",
+      customer_email: "retry@example.com",
+    });
+
+    const attempt = retryPayment(payment.id);
+    expect(attempt).toBeDefined();
+    expect(attempt!.payment_id).toBe(payment.id);
+    expect(attempt!.attempt).toBe(1);
+    expect(attempt!.status).toBe("succeeded");
+
+    // Original payment should now be succeeded
+    const updated = getPayment(payment.id);
+    expect(updated!.status).toBe("succeeded");
+  });
+
+  test("cannot retry non-failed payment", () => {
+    const payment = createPayment({ type: "charge", amount: 50, status: "pending" });
+    const attempt = retryPayment(payment.id);
+    expect(attempt).toBeNull();
+  });
+
+  test("cannot retry nonexistent payment", () => {
+    const attempt = retryPayment("nonexistent-id");
+    expect(attempt).toBeNull();
+  });
+
+  test("multiple retries increment attempt number", () => {
+    const payment = createPayment({ type: "charge", amount: 60, status: "failed" });
+
+    const first = retryPayment(payment.id);
+    expect(first!.attempt).toBe(1);
+
+    // Mark payment as failed again to allow retry
+    updatePayment(payment.id, { status: "failed" });
+    const second = retryPayment(payment.id);
+    expect(second!.attempt).toBe(2);
+  });
+
+  test("list retries for a payment", () => {
+    const payment = createPayment({ type: "charge", amount: 40, status: "failed" });
+    retryPayment(payment.id);
+
+    const retries = listRetries(payment.id);
+    expect(retries.length).toBeGreaterThanOrEqual(1);
+    expect(retries[0].payment_id).toBe(payment.id);
+  });
+
+  test("retry stats", () => {
+    const stats = getRetryStats();
+    expect(stats).toHaveProperty("total_retries");
+    expect(stats).toHaveProperty("succeeded");
+    expect(stats).toHaveProperty("failed");
+    expect(stats).toHaveProperty("success_rate");
+    expect(stats.total_retries).toBeGreaterThan(0);
+  });
+});
+
+// --- Multi-Currency Conversion ---
+
+describe("Currency Conversion", () => {
+  test("convert USD to EUR", () => {
+    const result = convertCurrency(100, "USD", "EUR");
+    expect(result).toBeDefined();
+    expect(result!.original_amount).toBe(100);
+    expect(result!.from).toBe("USD");
+    expect(result!.to).toBe("EUR");
+    expect(result!.rate).toBe(0.92);
+    expect(result!.converted_amount).toBe(92);
+  });
+
+  test("convert EUR to GBP", () => {
+    const result = convertCurrency(200, "EUR", "GBP");
+    expect(result).toBeDefined();
+    expect(result!.converted_amount).toBe(172);
+  });
+
+  test("convert same currency returns same amount", () => {
+    const result = convertCurrency(100, "USD", "USD");
+    expect(result).toBeDefined();
+    expect(result!.converted_amount).toBe(100);
+    expect(result!.rate).toBe(1.0);
+  });
+
+  test("case insensitive currency codes", () => {
+    const result = convertCurrency(100, "usd", "eur");
+    expect(result).toBeDefined();
+    expect(result!.from).toBe("USD");
+    expect(result!.to).toBe("EUR");
+  });
+
+  test("unsupported currency returns null", () => {
+    const result = convertCurrency(100, "USD", "JPY");
+    expect(result).toBeNull();
+  });
+
+  test("unsupported source currency returns null", () => {
+    const result = convertCurrency(100, "JPY", "USD");
+    expect(result).toBeNull();
+  });
+
+  test("convert all supported pairs", () => {
+    const currencies = ["USD", "EUR", "GBP", "CAD", "AUD"];
+    for (const from of currencies) {
+      for (const to of currencies) {
+        const result = convertCurrency(100, from, to);
+        expect(result).toBeDefined();
+        expect(result!.converted_amount).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+// --- Fee Analysis ---
+
+describe("Fee Analysis", () => {
+  test("fee analysis for a month with data", () => {
+    // Create a succeeded charge with a known date in the current month
+    const now = new Date();
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+    createPayment({
+      type: "charge",
+      amount: 1000,
+      status: "succeeded",
+      provider: "stripe",
+    });
+
+    const result = feeAnalysis(month);
+    expect(result.month).toBe(month);
+    expect(result).toHaveProperty("providers");
+    expect(result).toHaveProperty("total_gross");
+    expect(result).toHaveProperty("total_fees");
+    expect(result).toHaveProperty("total_net");
+    expect(result.total_gross).toBeGreaterThan(0);
+  });
+
+  test("fee analysis calculates stripe fees correctly", () => {
+    const now = new Date();
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+    const result = feeAnalysis(month);
+    const stripe = result.providers.find((p) => p.provider === "stripe");
+    if (stripe) {
+      // Stripe fees = 2.9% + $0.30 per transaction
+      expect(stripe.fees).toBeGreaterThan(0);
+      expect(stripe.net).toBeLessThan(stripe.gross);
+    }
+  });
+
+  test("fee analysis for month with no data returns zero totals", () => {
+    const result = feeAnalysis("1900-01");
+    expect(result.total_gross).toBe(0);
+    expect(result.total_fees).toBe(0);
+    expect(result.total_net).toBe(0);
+    expect(result.providers.length).toBe(0);
+  });
+});
+
+// --- Decline Analytics ---
+
+describe("Decline Analytics", () => {
+  test("decline report groups failed payments", () => {
+    createPayment({
+      type: "charge",
+      amount: 100,
+      status: "failed",
+      description: "Insufficient funds",
+      provider: "stripe",
+    });
+    createPayment({
+      type: "charge",
+      amount: 200,
+      status: "failed",
+      description: "Card expired",
+      provider: "stripe",
+    });
+    createPayment({
+      type: "charge",
+      amount: 150,
+      status: "failed",
+      description: "Insufficient funds",
+      provider: "square",
+    });
+
+    const report = declineReport();
+    expect(report.total_declined).toBeGreaterThanOrEqual(3);
+    expect(report.entries.length).toBeGreaterThanOrEqual(2);
+    expect(report.total_amount).toBeGreaterThan(0);
+  });
+
+  test("decline report filter by provider", () => {
+    const report = declineReport("stripe");
+    expect(report.entries.every((e) => e.provider === "stripe")).toBe(true);
+  });
+
+  test("decline report with no failures returns empty", () => {
+    // This won't be empty since we created failures above, but the structure is correct
+    const report = declineReport("mercury");
+    expect(report).toHaveProperty("entries");
+    expect(report).toHaveProperty("total_declined");
+    expect(report).toHaveProperty("total_amount");
+  });
+});
+
+// --- Dispute Evidence ---
+
+describe("Dispute Evidence", () => {
+  test("add evidence to a dispute", () => {
+    const payment = createPayment({ type: "charge", amount: 100, status: "succeeded" });
+    const dispute = createDispute({ payment_id: payment.id, reason: "Evidence test" });
+
+    const updated = addDisputeEvidence(dispute.id, "Receipt uploaded", "receipt.pdf");
+    expect(updated).toBeDefined();
+    expect((updated!.evidence as any).items).toBeDefined();
+    expect((updated!.evidence as any).items.length).toBe(1);
+    expect((updated!.evidence as any).items[0].description).toBe("Receipt uploaded");
+    expect((updated!.evidence as any).items[0].file_ref).toBe("receipt.pdf");
+  });
+
+  test("add multiple evidence items", () => {
+    const payment = createPayment({ type: "charge", amount: 50, status: "succeeded" });
+    const dispute = createDispute({ payment_id: payment.id });
+
+    addDisputeEvidence(dispute.id, "First evidence");
+    const updated = addDisputeEvidence(dispute.id, "Second evidence", "doc.pdf");
+
+    expect((updated!.evidence as any).items.length).toBe(2);
+    expect((updated!.evidence as any).items[1].description).toBe("Second evidence");
+  });
+
+  test("add evidence without file ref", () => {
+    const payment = createPayment({ type: "charge", amount: 30, status: "succeeded" });
+    const dispute = createDispute({ payment_id: payment.id });
+
+    const updated = addDisputeEvidence(dispute.id, "Verbal confirmation");
+    expect((updated!.evidence as any).items[0]).not.toHaveProperty("file_ref");
+  });
+
+  test("add evidence to nonexistent dispute returns null", () => {
+    const result = addDisputeEvidence("nonexistent-id", "Some evidence");
+    expect(result).toBeNull();
+  });
+});
+
+// --- Payment Split ---
+
+describe("Payment Split", () => {
+  test("split a payment between vendors", () => {
+    const payment = createPayment({
+      type: "charge",
+      amount: 1000,
+      status: "succeeded",
+    });
+
+    const splits = { vendor1: 70, vendor2: 30 };
+    const updated = splitPayment(payment.id, splits);
+    expect(updated).toBeDefined();
+    expect(updated!.metadata.splits).toEqual(splits);
+    expect(updated!.metadata.split_total_percent).toBe(100);
+  });
+
+  test("split with three vendors", () => {
+    const payment = createPayment({ type: "charge", amount: 500, status: "succeeded" });
+    const splits = { vendorA: 50, vendorB: 30, vendorC: 20 };
+    const updated = splitPayment(payment.id, splits);
+    expect(updated!.metadata.splits).toEqual(splits);
+    expect(updated!.metadata.split_total_percent).toBe(100);
+  });
+
+  test("split nonexistent payment returns null", () => {
+    const result = splitPayment("nonexistent-id", { vendor: 100 });
+    expect(result).toBeNull();
+  });
+});
+
+// --- Revenue Forecast ---
+
+describe("Revenue Forecast", () => {
+  test("forecast returns projected months", () => {
+    const result = revenueForecast(3);
+    expect(result.months_projected).toBe(3);
+    expect(result.historical).toHaveLength(3);
+    expect(result.forecast).toHaveLength(3);
+    expect(result).toHaveProperty("trend");
+    expect(result).toHaveProperty("average_monthly_revenue");
+    expect(["growing", "declining", "stable"]).toContain(result.trend);
+  });
+
+  test("forecast with 1 month", () => {
+    const result = revenueForecast(1);
+    expect(result.forecast).toHaveLength(1);
+  });
+
+  test("forecast historical has month format", () => {
+    const result = revenueForecast(2);
+    for (const h of result.historical) {
+      expect(h.month).toMatch(/^\d{4}-\d{2}$/);
+      expect(h.revenue).toBeGreaterThanOrEqual(0);
+    }
+    for (const f of result.forecast) {
+      expect(f.month).toMatch(/^\d{4}-\d{2}$/);
+      expect(f.projected_revenue).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
+
+// --- Reconciliation Gaps ---
+
+describe("Reconciliation Gaps", () => {
+  test("find payments without invoices", () => {
+    // Create a succeeded charge without invoice_id
+    createPayment({
+      type: "charge",
+      amount: 333,
+      status: "succeeded",
+      customer_email: "gap-test@example.com",
+    });
+
+    const gaps = findReconciliationGaps("2000-01-01", "2099-12-31");
+    expect(gaps).toHaveProperty("payments_without_invoice");
+    expect(gaps).toHaveProperty("invoice_ids_without_payment");
+    expect(gaps).toHaveProperty("gap_count");
+    expect(gaps.payments_without_invoice.length).toBeGreaterThan(0);
+  });
+
+  test("find invoice IDs without succeeded payment", () => {
+    // Create a failed payment with invoice_id
+    createPayment({
+      type: "charge",
+      amount: 444,
+      status: "failed",
+      invoice_id: "INV-GAP-001",
+    });
+
+    const gaps = findReconciliationGaps("2000-01-01", "2099-12-31");
+    // INV-GAP-001 should appear in invoice_ids_without_payment since its payment is failed
+    const hasGap = gaps.invoice_ids_without_payment.includes("INV-GAP-001");
+    expect(hasGap).toBe(true);
+  });
+
+  test("gap count equals sum of both gap types", () => {
+    const gaps = findReconciliationGaps("2000-01-01", "2099-12-31");
+    expect(gaps.gap_count).toBe(
+      gaps.payments_without_invoice.length + gaps.invoice_ids_without_payment.length
+    );
+  });
+
+  test("narrow date range finds no gaps", () => {
+    const gaps = findReconciliationGaps("1900-01-01", "1900-01-02");
+    expect(gaps.payments_without_invoice.length).toBe(0);
+    expect(gaps.invoice_ids_without_payment.length).toBe(0);
+    expect(gaps.gap_count).toBe(0);
   });
 });

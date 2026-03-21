@@ -12,6 +12,15 @@ import {
   getCampaignStats,
   getSpendByPlatform,
   getPlatforms,
+  bulkPause,
+  bulkResume,
+  getRankedCampaigns,
+  checkBudgetStatus,
+  comparePlatforms,
+  exportCampaigns,
+  cloneCampaign,
+  getBudgetRemaining,
+  getAdGroupStats,
 } from "../db/campaigns.js";
 import {
   createAdGroup,
@@ -218,6 +227,118 @@ campaignCmd
     }
   });
 
+// 1. Bulk pause/resume
+campaignCmd
+  .command("bulk-pause")
+  .description("Pause all active campaigns on a platform")
+  .requiredOption("--platform <platform>", "Platform (google/meta/linkedin/tiktok)")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const result = bulkPause(opts.platform);
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Paused ${result.updated_count} campaign(s) on ${result.platform}`);
+    }
+  });
+
+campaignCmd
+  .command("bulk-resume")
+  .description("Resume all paused campaigns on a platform")
+  .requiredOption("--platform <platform>", "Platform (google/meta/linkedin/tiktok)")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const result = bulkResume(opts.platform);
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Resumed ${result.updated_count} campaign(s) on ${result.platform}`);
+    }
+  });
+
+// 3. Budget alerts
+campaignCmd
+  .command("check-budget")
+  .description("Check budget status for a campaign")
+  .argument("<id>", "Campaign ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const status = checkBudgetStatus(id);
+    if (!status) {
+      console.error(`Campaign '${id}' not found.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(status, null, 2));
+    } else {
+      console.log(`Budget Status: ${status.campaign_name}`);
+      console.log(`  Over budget: ${status.over_budget ? "YES" : "No"}`);
+      console.log(`  Daily remaining: $${status.daily_remaining}`);
+      console.log(`  Total remaining: $${status.total_remaining}`);
+      console.log(`  % used: ${status.pct_used}%`);
+      console.log(`  Days active: ${status.days_active}`);
+      console.log(`  Expected spend: $${status.expected_spend}`);
+    }
+  });
+
+// 5. CSV export
+campaignCmd
+  .command("export")
+  .description("Export campaigns to CSV or JSON")
+  .option("--format <format>", "Format (csv/json)", "csv")
+  .action((opts) => {
+    const output = exportCampaigns(opts.format);
+    console.log(output);
+  });
+
+// 6. Campaign cloning
+campaignCmd
+  .command("clone")
+  .description("Clone a campaign with all ad groups and ads")
+  .argument("<id>", "Campaign ID to clone")
+  .requiredOption("--name <name>", "New campaign name")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const cloned = cloneCampaign(id, opts.name);
+    if (!cloned) {
+      console.error(`Campaign '${id}' not found.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(cloned, null, 2));
+    } else {
+      console.log(`Cloned campaign: ${cloned.name} (${cloned.id})`);
+    }
+  });
+
+// 7. Budget remaining
+campaignCmd
+  .command("budget-remaining")
+  .description("Show budget remaining for a campaign")
+  .argument("<id>", "Campaign ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const remaining = getBudgetRemaining(id);
+    if (!remaining) {
+      console.error(`Campaign '${id}' not found.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(remaining, null, 2));
+    } else {
+      console.log(`Budget Remaining: ${remaining.campaign_name}`);
+      console.log(`  Daily budget: $${remaining.budget_daily}`);
+      console.log(`  Total budget: $${remaining.budget_total}`);
+      console.log(`  Spend: $${remaining.spend}`);
+      console.log(`  Daily remaining: $${remaining.daily_remaining}`);
+      console.log(`  Total remaining: $${remaining.total_remaining}`);
+      console.log(`  Days remaining at current rate: ${remaining.days_remaining_at_daily_rate}`);
+    }
+  });
+
 // --- Ad Groups ---
 
 const adGroupCmd = program
@@ -266,6 +387,35 @@ adGroupCmd
         console.log(`  ${ag.name} (${ag.status}) — campaign: ${ag.campaign_id}`);
       }
       console.log(`\n${adGroups.length} ad group(s)`);
+    }
+  });
+
+// 8. Ad group stats
+adGroupCmd
+  .command("stats")
+  .description("Show aggregated stats for an ad group")
+  .argument("<id>", "Ad group ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const stats = getAdGroupStats(id);
+    if (!stats) {
+      console.error(`Ad group '${id}' not found.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(stats, null, 2));
+    } else {
+      console.log(`Ad Group Stats: ${stats.ad_group_name}`);
+      console.log(`  Campaign: ${stats.campaign_id}`);
+      console.log(`  Total ads: ${stats.total_ads}`);
+      console.log(`  Active ads: ${stats.active_ads}`);
+      if (Object.keys(stats.metrics).length > 0) {
+        console.log("  Aggregated metrics:");
+        for (const [key, value] of Object.entries(stats.metrics)) {
+          console.log(`    ${key}: ${value}`);
+        }
+      }
     }
   });
 
@@ -327,8 +477,26 @@ adCmd
 program
   .command("stats")
   .description("Show campaign statistics")
+  .option("--sort-by <metric>", "Sort campaigns by metric (roas/ctr/spend)")
+  .option("--limit <n>", "Limit ranked results", "10")
   .option("--json", "Output as JSON", false)
   .action((opts) => {
+    // 2. Performance ranking via --sort-by
+    if (opts.sortBy) {
+      const ranked = getRankedCampaigns(opts.sortBy, parseInt(opts.limit));
+      if (opts.json) {
+        console.log(JSON.stringify(ranked, null, 2));
+      } else {
+        console.log(`Campaigns ranked by ${opts.sortBy}:`);
+        for (let i = 0; i < ranked.length; i++) {
+          const c = ranked[i];
+          const ctr = c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) : "0.00";
+          console.log(`  ${i + 1}. ${c.name} [${c.platform}] — ROAS: ${c.roas}, CTR: ${ctr}%, Spend: $${c.spend}`);
+        }
+      }
+      return;
+    }
+
     const stats = getCampaignStats();
 
     if (opts.json) {
@@ -342,6 +510,36 @@ program
       console.log(`  Total clicks: ${stats.total_clicks}`);
       console.log(`  Total conversions: ${stats.total_conversions}`);
       console.log(`  Avg ROAS: ${stats.avg_roas.toFixed(2)}`);
+    }
+  });
+
+// 4. Cross-platform comparison
+program
+  .command("compare-platforms")
+  .description("Compare ROAS/CPA/spend across platforms side-by-side")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const comparison = comparePlatforms();
+
+    if (opts.json) {
+      console.log(JSON.stringify(comparison, null, 2));
+    } else {
+      if (comparison.length === 0) {
+        console.log("No platform data.");
+        return;
+      }
+      console.log("Platform Comparison:");
+      console.log("  Platform     | Campaigns | Spend        | ROAS  | CTR    | CPA");
+      console.log("  -------------|-----------|--------------|-------|--------|-------");
+      for (const p of comparison) {
+        const platform = p.platform.padEnd(12);
+        const campaigns = String(p.campaign_count).padEnd(9);
+        const spend = `$${p.total_spend.toFixed(2)}`.padEnd(12);
+        const roas = p.avg_roas.toFixed(2).padEnd(5);
+        const ctr = `${p.avg_ctr.toFixed(2)}%`.padEnd(6);
+        const cpa = p.avg_cpa > 0 ? `$${p.avg_cpa.toFixed(2)}` : "N/A";
+        console.log(`  ${platform} | ${campaigns} | ${spend} | ${roas} | ${ctr} | ${cpa}`);
+      }
     }
   });
 

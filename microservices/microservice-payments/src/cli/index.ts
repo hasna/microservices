@@ -14,6 +14,17 @@ import {
   reconcileWithInvoice,
   getPaymentStats,
   getBalanceByProvider,
+  autoReconcile,
+  retryPayment,
+  listRetries,
+  getRetryStats,
+  convertCurrency,
+  feeAnalysis,
+  declineReport,
+  addDisputeEvidence,
+  splitPayment,
+  revenueForecast,
+  findReconciliationGaps,
   type PaymentType,
   type PaymentStatus,
   type PaymentProvider,
@@ -154,6 +165,127 @@ paymentCmd
     }
   });
 
+// --- Payment Retry ---
+
+paymentCmd
+  .command("retry")
+  .description("Retry a failed payment")
+  .argument("<id>", "Payment ID to retry")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const attempt = retryPayment(id);
+    if (!attempt) {
+      console.error(`Cannot retry payment '${id}' — not found or not failed.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(attempt, null, 2));
+    } else {
+      console.log(`Retry attempt #${attempt.attempt} for payment ${id}: ${attempt.status}`);
+    }
+  });
+
+paymentCmd
+  .command("retries")
+  .description("List retry attempts for a payment")
+  .argument("<paymentId>", "Payment ID")
+  .option("--json", "Output as JSON", false)
+  .action((paymentId, opts) => {
+    const retries = listRetries(paymentId);
+
+    if (opts.json) {
+      console.log(JSON.stringify(retries, null, 2));
+    } else {
+      if (retries.length === 0) {
+        console.log("No retry attempts found.");
+        return;
+      }
+      for (const r of retries) {
+        console.log(`  Attempt #${r.attempt} [${r.status}] ${r.attempted_at || ""} ${r.error || ""}`);
+      }
+      console.log(`\n${retries.length} retry attempt(s)`);
+    }
+  });
+
+// --- Payment Convert ---
+
+paymentCmd
+  .command("convert")
+  .description("Convert currency amount")
+  .requiredOption("--from <currency>", "Source currency")
+  .requiredOption("--to <currency>", "Target currency")
+  .requiredOption("--amount <amount>", "Amount to convert")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const result = convertCurrency(parseFloat(opts.amount), opts.from, opts.to);
+    if (!result) {
+      console.error(`Unsupported currency pair: ${opts.from} -> ${opts.to}`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`${result.original_amount} ${result.from} = ${result.converted_amount} ${result.to} (rate: ${result.rate})`);
+    }
+  });
+
+// --- Decline Report ---
+
+paymentCmd
+  .command("decline-report")
+  .description("Show decline analytics for failed payments")
+  .option("--provider <provider>", "Filter by provider")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const report = declineReport(opts.provider as PaymentProvider | undefined);
+
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      if (report.entries.length === 0) {
+        console.log("No declined payments found.");
+        return;
+      }
+      console.log("Decline Report:");
+      for (const e of report.entries) {
+        console.log(`  [${e.provider}] "${e.description || "No description"}" — ${e.count} decline(s), $${e.total_amount.toFixed(2)}`);
+      }
+      console.log(`\nTotal: ${report.total_declined} decline(s), $${report.total_amount.toFixed(2)}`);
+    }
+  });
+
+// --- Payment Split ---
+
+paymentCmd
+  .command("split")
+  .description("Split a payment into marketplace commission splits")
+  .argument("<id>", "Payment ID")
+  .requiredOption("--splits <json>", "Split percentages as JSON (e.g. '{\"vendor1\":70,\"vendor2\":30}')")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    let splits: Record<string, number>;
+    try {
+      splits = JSON.parse(opts.splits);
+    } catch {
+      console.error("Invalid JSON for --splits");
+      process.exit(1);
+    }
+
+    const payment = splitPayment(id, splits);
+    if (!payment) {
+      console.error(`Payment '${id}' not found.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(payment, null, 2));
+    } else {
+      console.log(`Payment ${id} split recorded: ${JSON.stringify(splits)}`);
+    }
+  });
+
 // --- Disputes ---
 
 const disputeCmd = program
@@ -200,6 +332,27 @@ disputeCmd
       console.log(JSON.stringify(dispute, null, 2));
     } else {
       console.log(`Dispute ${id} updated to: ${dispute.status}`);
+    }
+  });
+
+disputeCmd
+  .command("add-evidence")
+  .description("Add evidence to a dispute")
+  .argument("<id>", "Dispute ID")
+  .requiredOption("--description <desc>", "Evidence description")
+  .option("--file-ref <path>", "File reference path")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const dispute = addDisputeEvidence(id, opts.description, opts.fileRef);
+    if (!dispute) {
+      console.error(`Dispute '${id}' not found.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(dispute, null, 2));
+    } else {
+      console.log(`Evidence added to dispute ${id}: "${opts.description}"`);
     }
   });
 
@@ -277,15 +430,18 @@ program
 
 // --- Revenue ---
 
-program
+const revenueCmd = program
   .command("revenue")
+  .description("Revenue reports and forecasting");
+
+revenueCmd
+  .command("report")
   .description("Revenue report for a period")
   .requiredOption("--period <YYYY-MM>", "Month period (e.g. 2024-01)")
   .option("--json", "Output as JSON", false)
   .action((opts) => {
     const [year, month] = opts.period.split("-").map(Number);
     const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
-    // Last day of month
     const lastDay = new Date(year, month, 0).getDate();
     const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")} 23:59:59`;
 
@@ -302,10 +458,38 @@ program
     }
   });
 
+revenueCmd
+  .command("forecast")
+  .description("Project revenue for upcoming months based on recent trends")
+  .requiredOption("--months <n>", "Number of months to forecast")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const result = revenueForecast(parseInt(opts.months));
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Revenue Forecast (${result.months_projected} months, trend: ${result.trend})`);
+      console.log("  Historical:");
+      for (const h of result.historical) {
+        console.log(`    ${h.month}: $${h.revenue.toFixed(2)}`);
+      }
+      console.log("  Forecast:");
+      for (const f of result.forecast) {
+        console.log(`    ${f.month}: $${f.projected_revenue.toFixed(2)} (projected)`);
+      }
+      console.log(`  Average Monthly Revenue: $${result.average_monthly_revenue.toFixed(2)}`);
+    }
+  });
+
 // --- Reconcile ---
 
-program
+const reconcileCmd = program
   .command("reconcile")
+  .description("Reconciliation commands");
+
+reconcileCmd
+  .command("link")
   .description("Link a payment to an invoice")
   .requiredOption("--payment <id>", "Payment ID")
   .requiredOption("--invoice <id>", "Invoice ID")
@@ -321,6 +505,74 @@ program
       console.log(JSON.stringify(payment, null, 2));
     } else {
       console.log(`Linked payment ${payment.id} to invoice ${payment.invoice_id}`);
+    }
+  });
+
+reconcileCmd
+  .command("auto")
+  .description("Auto-reconcile payments to invoices by amount, email, and date")
+  .option("--from <date>", "Start date (YYYY-MM-DD)")
+  .option("--to <date>", "End date (YYYY-MM-DD)")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const result = autoReconcile(opts.from, opts.to);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log("Auto-Reconciliation Results:");
+      console.log(`  Matched: ${result.matched.length}`);
+      for (const m of result.matched) {
+        console.log(`    Payment ${m.payment_id} -> Invoice ${m.invoice_id} (${m.confidence})`);
+      }
+      console.log(`  Unmatched Payments: ${result.unmatched_payments.length}`);
+      console.log(`  Unmatched Invoices: ${result.unmatched_invoices.length}`);
+    }
+  });
+
+reconcileCmd
+  .command("check-gaps")
+  .description("Find reconciliation gaps — payments without invoices and vice versa")
+  .requiredOption("--from <date>", "Start date (YYYY-MM-DD)")
+  .requiredOption("--to <date>", "End date (YYYY-MM-DD)")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const gaps = findReconciliationGaps(opts.from, opts.to);
+
+    if (opts.json) {
+      console.log(JSON.stringify(gaps, null, 2));
+    } else {
+      console.log("Reconciliation Gaps:");
+      console.log(`  Payments without invoice: ${gaps.payments_without_invoice.length}`);
+      for (const p of gaps.payments_without_invoice) {
+        console.log(`    $${p.amount} ${p.currency} — ${p.customer_email || "no email"} (${p.id})`);
+      }
+      console.log(`  Invoice IDs without succeeded payment: ${gaps.invoice_ids_without_payment.length}`);
+      for (const inv of gaps.invoice_ids_without_payment) {
+        console.log(`    ${inv}`);
+      }
+      console.log(`  Total gaps: ${gaps.gap_count}`);
+    }
+  });
+
+// --- Fees ---
+
+program
+  .command("fees")
+  .description("Fee analysis by provider for a given month")
+  .requiredOption("--month <YYYY-MM>", "Month period (e.g. 2026-03)")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const result = feeAnalysis(opts.month);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Fee Analysis: ${result.month}`);
+      for (const p of result.providers) {
+        console.log(`  ${p.provider}: gross $${p.gross.toFixed(2)}, fees $${p.fees.toFixed(2)}, net $${p.net.toFixed(2)} (${p.transaction_count} txns)`);
+      }
+      console.log(`  Total: gross $${result.total_gross.toFixed(2)}, fees $${result.total_fees.toFixed(2)}, net $${result.total_net.toFixed(2)}`);
     }
   });
 

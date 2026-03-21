@@ -21,6 +21,19 @@ import {
   getChurnRate,
   listExpiring,
   getSubscriberStats,
+  pauseSubscriber,
+  resumeSubscriber,
+  extendTrial,
+  createDunning,
+  listDunning,
+  updateDunning,
+  bulkImportSubscribers,
+  exportSubscribers,
+  getLtv,
+  getNrr,
+  getCohortReport,
+  comparePlans,
+  getExpiringRenewals,
 } from "../db/subscriptions.js";
 
 const server = new McpServer({
@@ -133,7 +146,7 @@ server.registerTool(
       plan_id: z.string(),
       customer_name: z.string(),
       customer_email: z.string(),
-      status: z.enum(["trialing", "active", "past_due", "canceled", "expired"]).optional(),
+      status: z.enum(["trialing", "active", "past_due", "canceled", "expired", "paused"]).optional(),
       trial_ends_at: z.string().optional(),
       metadata: z.record(z.unknown()).optional(),
     },
@@ -347,6 +360,259 @@ server.registerTool(
     return {
       content: [
         { type: "text", text: JSON.stringify({ ...stats, mrr, arr }, null, 2) },
+      ],
+    };
+  }
+);
+
+// --- Pause/Resume ---
+
+server.registerTool(
+  "pause_subscriber",
+  {
+    title: "Pause Subscriber",
+    description: "Pause a subscription. Paused subscribers are excluded from MRR.",
+    inputSchema: {
+      id: z.string(),
+      resume_date: z.string().optional().describe("Optional scheduled resume date (YYYY-MM-DD HH:MM:SS)"),
+    },
+  },
+  async ({ id, resume_date }) => {
+    const subscriber = pauseSubscriber(id, resume_date);
+    if (!subscriber) {
+      return { content: [{ type: "text", text: `Subscriber '${id}' not found or cannot be paused.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(subscriber, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "resume_subscriber",
+  {
+    title: "Resume Subscriber",
+    description: "Resume a paused subscription.",
+    inputSchema: { id: z.string() },
+  },
+  async ({ id }) => {
+    const subscriber = resumeSubscriber(id);
+    if (!subscriber) {
+      return { content: [{ type: "text", text: `Subscriber '${id}' not found or not paused.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(subscriber, null, 2) }] };
+  }
+);
+
+// --- Trial Extension ---
+
+server.registerTool(
+  "extend_trial",
+  {
+    title: "Extend Trial",
+    description: "Extend a subscriber's trial period by a number of days.",
+    inputSchema: {
+      id: z.string(),
+      days: z.number().describe("Number of days to extend the trial"),
+    },
+  },
+  async ({ id, days }) => {
+    const subscriber = extendTrial(id, days);
+    if (!subscriber) {
+      return { content: [{ type: "text", text: `Subscriber '${id}' not found.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(subscriber, null, 2) }] };
+  }
+);
+
+// --- Bulk Import/Export ---
+
+server.registerTool(
+  "bulk_import_subscribers",
+  {
+    title: "Bulk Import Subscribers",
+    description: "Bulk import multiple subscribers at once.",
+    inputSchema: {
+      subscribers: z.array(z.object({
+        plan_id: z.string(),
+        customer_name: z.string(),
+        customer_email: z.string(),
+        status: z.enum(["trialing", "active", "past_due", "canceled", "expired", "paused"]).optional(),
+        trial_ends_at: z.string().optional(),
+        current_period_end: z.string().optional(),
+      })),
+    },
+  },
+  async ({ subscribers }) => {
+    const imported = bulkImportSubscribers(subscribers);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ imported: imported.length, subscribers: imported }, null, 2) },
+      ],
+    };
+  }
+);
+
+server.registerTool(
+  "export_subscribers",
+  {
+    title: "Export Subscribers",
+    description: "Export all subscribers in CSV or JSON format.",
+    inputSchema: {
+      format: z.enum(["csv", "json"]).default("json"),
+    },
+  },
+  async ({ format }) => {
+    const output = exportSubscribers(format);
+    return { content: [{ type: "text", text: output }] };
+  }
+);
+
+// --- Dunning ---
+
+server.registerTool(
+  "create_dunning",
+  {
+    title: "Create Dunning Attempt",
+    description: "Create a new dunning attempt for a subscriber.",
+    inputSchema: {
+      subscriber_id: z.string(),
+      attempt_number: z.number().optional(),
+      status: z.enum(["pending", "retrying", "failed", "recovered"]).optional(),
+      next_retry_at: z.string().optional(),
+    },
+  },
+  async (params) => {
+    const attempt = createDunning(params);
+    return { content: [{ type: "text", text: JSON.stringify(attempt, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "list_dunning",
+  {
+    title: "List Dunning Attempts",
+    description: "List dunning attempts with optional filters.",
+    inputSchema: {
+      subscriber_id: z.string().optional(),
+      status: z.string().optional(),
+      limit: z.number().optional(),
+    },
+  },
+  async (params) => {
+    const attempts = listDunning(params);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ attempts, count: attempts.length }, null, 2) },
+      ],
+    };
+  }
+);
+
+server.registerTool(
+  "update_dunning",
+  {
+    title: "Update Dunning Attempt",
+    description: "Update a dunning attempt status or next retry date.",
+    inputSchema: {
+      id: z.string(),
+      status: z.enum(["pending", "retrying", "failed", "recovered"]).optional(),
+      next_retry_at: z.string().optional(),
+    },
+  },
+  async ({ id, ...input }) => {
+    const attempt = updateDunning(id, input);
+    if (!attempt) {
+      return { content: [{ type: "text", text: `Dunning attempt '${id}' not found.` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(attempt, null, 2) }] };
+  }
+);
+
+// --- LTV ---
+
+server.registerTool(
+  "get_ltv",
+  {
+    title: "Get LTV",
+    description: "Get lifetime value per subscriber and average LTV.",
+    inputSchema: {},
+  },
+  async () => {
+    const result = getLtv();
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// --- NRR ---
+
+server.registerTool(
+  "get_nrr",
+  {
+    title: "Get NRR",
+    description: "Calculate net revenue retention for a given month.",
+    inputSchema: {
+      month: z.string().describe("Month in YYYY-MM format"),
+    },
+  },
+  async ({ month }) => {
+    const result = getNrr(month);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// --- Cohort Analysis ---
+
+server.registerTool(
+  "cohort_report",
+  {
+    title: "Cohort Report",
+    description: "Generate a cohort retention analysis for the last N months.",
+    inputSchema: {
+      months: z.number().default(6),
+    },
+  },
+  async ({ months }) => {
+    const report = getCohortReport(months);
+    return { content: [{ type: "text", text: JSON.stringify(report, null, 2) }] };
+  }
+);
+
+// --- Plan Comparison ---
+
+server.registerTool(
+  "compare_plans",
+  {
+    title: "Compare Plans",
+    description: "Compare two plans side by side showing price and feature differences.",
+    inputSchema: {
+      id1: z.string().describe("First plan ID"),
+      id2: z.string().describe("Second plan ID"),
+    },
+  },
+  async ({ id1, id2 }) => {
+    const result = comparePlans(id1, id2);
+    if (!result) {
+      return { content: [{ type: "text", text: "One or both plans not found." }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// --- Expiring Renewals ---
+
+server.registerTool(
+  "expiring_renewals",
+  {
+    title: "Expiring Renewals",
+    description: "List subscribers whose current period ends within N days.",
+    inputSchema: {
+      days: z.number().default(7),
+    },
+  },
+  async ({ days }) => {
+    const expiring = getExpiringRenewals(days);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ expiring, count: expiring.length }, null, 2) },
       ],
     };
   }

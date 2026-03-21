@@ -11,16 +11,33 @@ import {
   listExpiring,
   renewContract,
   getContractStats,
+  submitForReview,
+  approveContract,
+  getContractHistory,
+  recordSignature,
+  listSignatures,
+  compareContracts,
+  exportContract,
 } from "../db/contracts.js";
 import {
   createClause,
   listClauses,
   deleteClause,
+  addClauseFromTemplate,
+  saveClauseTemplate,
+  listClauseTemplates,
 } from "../db/contracts.js";
 import {
   createReminder,
   listReminders,
   deleteReminder,
+  setMultiReminders,
+} from "../db/contracts.js";
+import {
+  createObligation,
+  listObligations,
+  completeObligation,
+  listOverdueObligations,
 } from "../db/contracts.js";
 
 const program = new Command();
@@ -41,7 +58,7 @@ contractCmd
   .description("Create a new contract")
   .requiredOption("--title <title>", "Contract title")
   .option("--type <type>", "Contract type (nda/service/employment/license/other)", "other")
-  .option("--status <status>", "Status (draft/pending_signature/active/expired/terminated)", "draft")
+  .option("--status <status>", "Status (draft/pending_review/pending_signature/active/expired/terminated)", "draft")
   .option("--counterparty <name>", "Counterparty name")
   .option("--counterparty-email <email>", "Counterparty email")
   .option("--start-date <date>", "Start date (YYYY-MM-DD)")
@@ -197,6 +214,201 @@ contractCmd
     }
   });
 
+// --- Approval workflow ---
+
+contractCmd
+  .command("submit")
+  .description("Submit a draft contract for review (draft -> pending_review)")
+  .argument("<id>", "Contract ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    try {
+      const contract = submitForReview(id);
+      if (!contract) {
+        console.error(`Contract '${id}' not found.`);
+        process.exit(1);
+      }
+      if (opts.json) {
+        console.log(JSON.stringify(contract, null, 2));
+      } else {
+        console.log(`Submitted for review: ${contract.title} [${contract.status}]`);
+      }
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+contractCmd
+  .command("approve")
+  .description("Approve a contract (advances through approval workflow)")
+  .argument("<id>", "Contract ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    try {
+      const contract = approveContract(id);
+      if (!contract) {
+        console.error(`Contract '${id}' not found.`);
+        process.exit(1);
+      }
+      if (opts.json) {
+        console.log(JSON.stringify(contract, null, 2));
+      } else {
+        console.log(`Approved: ${contract.title} [${contract.status}]`);
+      }
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+// --- Version history ---
+
+contractCmd
+  .command("history")
+  .description("Show version history for a contract")
+  .argument("<id>", "Contract ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const history = getContractHistory(id);
+    if (opts.json) {
+      console.log(JSON.stringify(history, null, 2));
+    } else {
+      if (history.length === 0) {
+        console.log("No version history.");
+        return;
+      }
+      for (const v of history) {
+        console.log(`  ${v.changed_at} — "${v.title}" [${v.status}] value=${v.value ?? "N/A"}`);
+      }
+      console.log(`\n${history.length} version(s)`);
+    }
+  });
+
+// --- Signature logging ---
+
+contractCmd
+  .command("sign")
+  .description("Record a signature for a contract")
+  .argument("<id>", "Contract ID")
+  .requiredOption("--signer <name>", "Signer name")
+  .option("--email <email>", "Signer email")
+  .option("--method <method>", "Signature method (digital/wet/docusign)", "digital")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const sig = recordSignature({
+      contract_id: id,
+      signer_name: opts.signer,
+      signer_email: opts.email,
+      method: opts.method,
+    });
+
+    if (opts.json) {
+      console.log(JSON.stringify(sig, null, 2));
+    } else {
+      const email = sig.signer_email ? ` (${sig.signer_email})` : "";
+      console.log(`Recorded signature: ${sig.signer_name}${email} via ${sig.method} (${sig.id})`);
+    }
+  });
+
+contractCmd
+  .command("signatures")
+  .description("List signatures for a contract")
+  .argument("<id>", "Contract ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const sigs = listSignatures(id);
+    if (opts.json) {
+      console.log(JSON.stringify(sigs, null, 2));
+    } else {
+      if (sigs.length === 0) {
+        console.log("No signatures found.");
+        return;
+      }
+      for (const s of sigs) {
+        const email = s.signer_email ? ` (${s.signer_email})` : "";
+        console.log(`  ${s.signer_name}${email} — ${s.method} — ${s.signed_at}`);
+      }
+    }
+  });
+
+// --- Contract comparison ---
+
+contractCmd
+  .command("compare")
+  .description("Compare two contracts showing clause differences")
+  .argument("<id1>", "First contract ID")
+  .argument("<id2>", "Second contract ID")
+  .option("--json", "Output as JSON", false)
+  .action((id1, id2, opts) => {
+    try {
+      const diff = compareContracts(id1, id2);
+      if (opts.json) {
+        console.log(JSON.stringify(diff, null, 2));
+      } else {
+        console.log(`Comparing: "${diff.contract1.title}" vs "${diff.contract2.title}"\n`);
+
+        if (diff.field_differences.length > 0) {
+          console.log("Field differences:");
+          for (const d of diff.field_differences) {
+            console.log(`  ${d.field}: ${JSON.stringify(d.contract1_value)} vs ${JSON.stringify(d.contract2_value)}`);
+          }
+          console.log("");
+        }
+
+        if (diff.clause_only_in_1.length > 0) {
+          console.log(`Clauses only in "${diff.contract1.title}":`);
+          for (const c of diff.clause_only_in_1) {
+            console.log(`  - ${c.name}`);
+          }
+          console.log("");
+        }
+
+        if (diff.clause_only_in_2.length > 0) {
+          console.log(`Clauses only in "${diff.contract2.title}":`);
+          for (const c of diff.clause_only_in_2) {
+            console.log(`  - ${c.name}`);
+          }
+          console.log("");
+        }
+
+        if (diff.clause_differences.length > 0) {
+          console.log("Clause text differences:");
+          for (const d of diff.clause_differences) {
+            console.log(`  ${d.name}:`);
+            console.log(`    Contract 1: ${d.contract1_text.substring(0, 80)}${d.contract1_text.length > 80 ? "..." : ""}`);
+            console.log(`    Contract 2: ${d.contract2_text.substring(0, 80)}${d.contract2_text.length > 80 ? "..." : ""}`);
+          }
+          console.log("");
+        }
+
+        if (diff.field_differences.length === 0 && diff.clause_only_in_1.length === 0 && diff.clause_only_in_2.length === 0 && diff.clause_differences.length === 0) {
+          console.log("No differences found.");
+        }
+      }
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+// --- Markdown export ---
+
+contractCmd
+  .command("export")
+  .description("Export a contract in markdown or JSON format")
+  .argument("<id>", "Contract ID")
+  .option("--format <format>", "Export format (md/json)", "md")
+  .action((id, opts) => {
+    try {
+      const output = exportContract(id, opts.format);
+      console.log(output);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
 // --- Expiring & Renew ---
 
 program
@@ -252,21 +464,36 @@ clauseCmd
   .description("Add a clause to a contract")
   .requiredOption("--contract <id>", "Contract ID")
   .requiredOption("--name <name>", "Clause name")
-  .requiredOption("--text <text>", "Clause text")
+  .option("--text <text>", "Clause text")
+  .option("--from-template <templateName>", "Add clause from a template by name")
   .option("--type <type>", "Clause type (standard/custom/negotiated)", "standard")
   .option("--json", "Output as JSON", false)
   .action((opts) => {
-    const clause = createClause({
-      contract_id: opts.contract,
-      name: opts.name,
-      text: opts.text,
-      type: opts.type,
-    });
+    try {
+      let clause;
+      if (opts.fromTemplate) {
+        clause = addClauseFromTemplate(opts.contract, opts.fromTemplate);
+      } else {
+        if (!opts.text) {
+          console.error("Either --text or --from-template is required.");
+          process.exit(1);
+        }
+        clause = createClause({
+          contract_id: opts.contract,
+          name: opts.name,
+          text: opts.text,
+          type: opts.type,
+        });
+      }
 
-    if (opts.json) {
-      console.log(JSON.stringify(clause, null, 2));
-    } else {
-      console.log(`Added clause: ${clause.name} (${clause.id})`);
+      if (opts.json) {
+        console.log(JSON.stringify(clause, null, 2));
+      } else {
+        console.log(`Added clause: ${clause.name} (${clause.id})`);
+      }
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
     }
   });
 
@@ -305,6 +532,143 @@ clauseCmd
     }
   });
 
+// --- Clause templates ---
+
+clauseCmd
+  .command("save-template")
+  .description("Save a clause as a reusable template")
+  .requiredOption("--name <name>", "Template name")
+  .requiredOption("--text <text>", "Template text")
+  .option("--type <type>", "Clause type (standard/custom/negotiated)", "standard")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const template = saveClauseTemplate({
+      name: opts.name,
+      text: opts.text,
+      type: opts.type,
+    });
+
+    if (opts.json) {
+      console.log(JSON.stringify(template, null, 2));
+    } else {
+      console.log(`Saved template: ${template.name} (${template.id})`);
+    }
+  });
+
+clauseCmd
+  .command("list-templates")
+  .description("List all clause templates")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const templates = listClauseTemplates();
+
+    if (opts.json) {
+      console.log(JSON.stringify(templates, null, 2));
+    } else {
+      if (templates.length === 0) {
+        console.log("No clause templates found.");
+        return;
+      }
+      for (const t of templates) {
+        console.log(`  ${t.name} [${t.type}]: ${t.text.substring(0, 80)}${t.text.length > 80 ? "..." : ""}`);
+      }
+    }
+  });
+
+// --- Obligations ---
+
+const obligationCmd = program
+  .command("obligation")
+  .description("Obligation tracking");
+
+obligationCmd
+  .command("add")
+  .description("Add an obligation to a clause")
+  .requiredOption("--clause <id>", "Clause ID")
+  .requiredOption("--description <desc>", "Obligation description")
+  .option("--due-date <date>", "Due date (YYYY-MM-DD)")
+  .option("--assigned-to <name>", "Person assigned to this obligation")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const obligation = createObligation({
+      clause_id: opts.clause,
+      description: opts.description,
+      due_date: opts.dueDate,
+      assigned_to: opts.assignedTo,
+    });
+
+    if (opts.json) {
+      console.log(JSON.stringify(obligation, null, 2));
+    } else {
+      console.log(`Added obligation: ${obligation.description} (${obligation.id})`);
+    }
+  });
+
+obligationCmd
+  .command("list")
+  .description("List obligations for a clause")
+  .argument("<clause-id>", "Clause ID")
+  .option("--json", "Output as JSON", false)
+  .action((clauseId, opts) => {
+    const obligations = listObligations(clauseId);
+
+    if (opts.json) {
+      console.log(JSON.stringify(obligations, null, 2));
+    } else {
+      if (obligations.length === 0) {
+        console.log("No obligations found.");
+        return;
+      }
+      for (const o of obligations) {
+        const due = o.due_date ? ` due ${o.due_date}` : "";
+        const assigned = o.assigned_to ? ` (${o.assigned_to})` : "";
+        console.log(`  [${o.status}] ${o.description}${due}${assigned}`);
+      }
+    }
+  });
+
+obligationCmd
+  .command("complete")
+  .description("Mark an obligation as completed")
+  .argument("<id>", "Obligation ID")
+  .option("--json", "Output as JSON", false)
+  .action((id, opts) => {
+    const obligation = completeObligation(id);
+    if (!obligation) {
+      console.error(`Obligation '${id}' not found.`);
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(obligation, null, 2));
+    } else {
+      console.log(`Completed: ${obligation.description}`);
+    }
+  });
+
+obligationCmd
+  .command("overdue")
+  .description("List all overdue obligations")
+  .option("--json", "Output as JSON", false)
+  .action((opts) => {
+    const obligations = listOverdueObligations();
+
+    if (opts.json) {
+      console.log(JSON.stringify(obligations, null, 2));
+    } else {
+      if (obligations.length === 0) {
+        console.log("No overdue obligations.");
+        return;
+      }
+      for (const o of obligations) {
+        const due = o.due_date ? ` due ${o.due_date}` : "";
+        const assigned = o.assigned_to ? ` (${o.assigned_to})` : "";
+        console.log(`  [${o.status}] ${o.description}${due}${assigned}`);
+      }
+      console.log(`\n${obligations.length} overdue obligation(s)`);
+    }
+  });
+
 // --- Reminders ---
 
 const remindCmd = program
@@ -315,20 +679,43 @@ remindCmd
   .command("set")
   .description("Set a reminder for a contract")
   .requiredOption("--contract <id>", "Contract ID")
-  .requiredOption("--at <datetime>", "Reminder datetime (ISO 8601)")
-  .requiredOption("--message <msg>", "Reminder message")
+  .option("--at <datetime>", "Reminder datetime (ISO 8601)")
+  .option("--message <msg>", "Reminder message")
+  .option("--days-before <days>", "Set multi-stage reminders (comma-separated, e.g. 60,30,7)")
   .option("--json", "Output as JSON", false)
   .action((opts) => {
-    const reminder = createReminder({
-      contract_id: opts.contract,
-      remind_at: opts.at,
-      message: opts.message,
-    });
-
-    if (opts.json) {
-      console.log(JSON.stringify(reminder, null, 2));
+    if (opts.daysBefore) {
+      try {
+        const days = opts.daysBefore.split(",").map((d: string) => parseInt(d.trim()));
+        const reminders = setMultiReminders(opts.contract, days);
+        if (opts.json) {
+          console.log(JSON.stringify(reminders, null, 2));
+        } else {
+          for (const r of reminders) {
+            console.log(`Set reminder: ${r.message} at ${r.remind_at} (${r.id})`);
+          }
+          console.log(`\n${reminders.length} reminder(s) created`);
+        }
+      } catch (err) {
+        console.error((err as Error).message);
+        process.exit(1);
+      }
     } else {
-      console.log(`Set reminder: ${reminder.message} at ${reminder.remind_at} (${reminder.id})`);
+      if (!opts.at || !opts.message) {
+        console.error("Either --at and --message are required, or use --days-before for multi-stage reminders.");
+        process.exit(1);
+      }
+      const reminder = createReminder({
+        contract_id: opts.contract,
+        remind_at: opts.at,
+        message: opts.message,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(reminder, null, 2));
+      } else {
+        console.log(`Set reminder: ${reminder.message} at ${reminder.remind_at} (${reminder.id})`);
+      }
     }
   });
 
