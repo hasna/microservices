@@ -1,4 +1,4 @@
-import { describe, test, expect, afterAll, beforeAll, mock } from "bun:test";
+import { describe, test, expect, afterAll, mock } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,12 +8,6 @@ const tempDir = mkdtempSync(join(tmpdir(), "namecheap-test-"));
 process.env["MICROSERVICES_DIR"] = tempDir;
 
 import {
-  extractTag,
-  extractAttribute,
-  extractAllTags,
-  extractAttributeFromElement,
-  checkApiError,
-  buildUrl,
   splitDomain,
   getConfig,
   listNamecheapDomains,
@@ -39,7 +33,7 @@ afterAll(() => {
 });
 
 // ============================================================
-// Mock XML Responses
+// Mock XML Responses (used by the connector internally)
 // ============================================================
 
 const DOMAIN_LIST_XML = `<?xml version="1.0" encoding="utf-8"?>
@@ -130,14 +124,6 @@ const ERROR_XML = `<?xml version="1.0" encoding="utf-8"?>
   <CommandResponse/>
 </ApiResponse>`;
 
-const ERROR_XML_WITH_MESSAGE = `<?xml version="1.0" encoding="utf-8"?>
-<ApiResponse Status="ERROR" xmlns="http://api.namecheap.com/xml.response">
-  <Errors>
-    <Err Number="1010101"><Message>Authentication failed</Message></Err>
-  </Errors>
-  <CommandResponse/>
-</ApiResponse>`;
-
 // ============================================================
 // Test config
 // ============================================================
@@ -152,88 +138,6 @@ const testConfig: NamecheapConfig = {
 // ============================================================
 // Tests
 // ============================================================
-
-describe("XML Parsing", () => {
-  test("extractTag extracts inner text", () => {
-    expect(extractTag(DOMAIN_INFO_XML, "CreatedDate")).toBe("01/01/2020");
-    expect(extractTag(DOMAIN_INFO_XML, "ExpiredDate")).toBe("01/01/2025");
-    expect(extractTag(DOMAIN_INFO_XML, "NumYears")).toBe("0");
-  });
-
-  test("extractTag returns null for missing tags", () => {
-    expect(extractTag(DOMAIN_INFO_XML, "NonExistentTag")).toBeNull();
-  });
-
-  test("extractAttribute extracts attribute values", () => {
-    expect(extractAttribute(DOMAIN_LIST_XML, "ApiResponse", "Status")).toBe("OK");
-    expect(extractAttribute(RENEW_XML, "DomainRenewResult", "OrderID")).toBe("98765");
-    expect(extractAttribute(RENEW_XML, "DomainRenewResult", "ChargedAmount")).toBe("10.87");
-    expect(extractAttribute(RENEW_XML, "DomainRenewResult", "TransactionID")).toBe("55555");
-  });
-
-  test("extractAttribute returns null for missing attributes", () => {
-    expect(extractAttribute(DOMAIN_LIST_XML, "ApiResponse", "FakeAttr")).toBeNull();
-    expect(extractAttribute(DOMAIN_LIST_XML, "FakeTag", "Status")).toBeNull();
-  });
-
-  test("extractAllTags finds all matching elements", () => {
-    const domains = extractAllTags(DOMAIN_LIST_XML, "Domain");
-    expect(domains.length).toBe(2);
-
-    const hosts = extractAllTags(DNS_HOSTS_XML, "host");
-    expect(hosts.length).toBe(3);
-  });
-
-  test("extractAttributeFromElement extracts from a single element string", () => {
-    const element = '<Domain ID="12345" Name="example.com" AutoRenew="true" IsLocked="true"/>';
-    expect(extractAttributeFromElement(element, "Name")).toBe("example.com");
-    expect(extractAttributeFromElement(element, "ID")).toBe("12345");
-    expect(extractAttributeFromElement(element, "AutoRenew")).toBe("true");
-    expect(extractAttributeFromElement(element, "IsLocked")).toBe("true");
-    expect(extractAttributeFromElement(element, "FakeAttr")).toBeNull();
-  });
-
-  test("checkApiError throws on ERROR status", () => {
-    expect(() => checkApiError(ERROR_XML)).toThrow("Namecheap API error");
-    expect(() => checkApiError(DOMAIN_LIST_XML)).not.toThrow();
-  });
-
-  test("checkApiError includes error number", () => {
-    try {
-      checkApiError(ERROR_XML);
-    } catch (e) {
-      expect((e as Error).message).toContain("2030166");
-    }
-  });
-
-  test("checkApiError extracts Message tag from Err element", () => {
-    expect(() => checkApiError(ERROR_XML_WITH_MESSAGE)).toThrow("Authentication failed");
-  });
-});
-
-describe("URL Building", () => {
-  test("buildUrl constructs correct URL with required params", () => {
-    const url = buildUrl("namecheap.domains.getList", testConfig);
-    expect(url).toContain("api.namecheap.com/xml.response");
-    expect(url).toContain("ApiUser=testuser");
-    expect(url).toContain("ApiKey=test-api-key");
-    expect(url).toContain("UserName=testuser");
-    expect(url).toContain("ClientIp=1.2.3.4");
-    expect(url).toContain("Command=namecheap.domains.getList");
-  });
-
-  test("buildUrl includes extra params", () => {
-    const url = buildUrl("namecheap.domains.getList", testConfig, { PageSize: "50", Page: "2" });
-    expect(url).toContain("PageSize=50");
-    expect(url).toContain("Page=2");
-  });
-
-  test("buildUrl uses sandbox URL when sandbox is true", () => {
-    const sandboxConfig = { ...testConfig, sandbox: true };
-    const url = buildUrl("namecheap.domains.getList", sandboxConfig);
-    expect(url).toContain("api.sandbox.namecheap.com");
-  });
-});
 
 describe("splitDomain", () => {
   test("splits standard domains", () => {
@@ -296,14 +200,14 @@ describe("getConfig", () => {
   });
 });
 
-describe("API Functions with mocked fetch", () => {
+describe("API Functions via Connector with mocked fetch", () => {
   const originalFetch = globalThis.fetch;
 
   afterAll(() => {
     globalThis.fetch = originalFetch;
   });
 
-  test("listNamecheapDomains parses domain list", async () => {
+  test("listNamecheapDomains parses domain list via connector", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response(DOMAIN_LIST_XML, { status: 200 }))
     ) as typeof fetch;
@@ -319,7 +223,7 @@ describe("API Functions with mocked fetch", () => {
     expect(domains[1].isLocked).toBe(false);
   });
 
-  test("getDomainInfo parses domain info with nameservers", async () => {
+  test("getDomainInfo parses domain info with nameservers via connector", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response(DOMAIN_INFO_XML, { status: 200 }))
     ) as typeof fetch;
@@ -332,7 +236,7 @@ describe("API Functions with mocked fetch", () => {
     expect(info.nameservers).toEqual(["ns1.cloudflare.com", "ns2.cloudflare.com"]);
   });
 
-  test("renewDomain parses renewal result", async () => {
+  test("renewDomain parses renewal result via connector", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response(RENEW_XML, { status: 200 }))
     ) as typeof fetch;
@@ -345,7 +249,7 @@ describe("API Functions with mocked fetch", () => {
     expect(result.chargedAmount).toBe("10.87");
   });
 
-  test("getDnsRecords parses host records", async () => {
+  test("getDnsRecords parses host records via connector", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response(DNS_HOSTS_XML, { status: 200 }))
     ) as typeof fetch;
@@ -366,7 +270,7 @@ describe("API Functions with mocked fetch", () => {
     expect(records[2].mxPref).toBe(10);
   });
 
-  test("setDnsRecords sends correct params and parses success", async () => {
+  test("setDnsRecords sends correct params via connector", async () => {
     let capturedUrl = "";
     globalThis.fetch = mock((url: string | URL | Request) => {
       capturedUrl = typeof url === "string" ? url : url.toString();
@@ -386,7 +290,7 @@ describe("API Functions with mocked fetch", () => {
     expect(capturedUrl).toContain("RecordType2=CNAME");
   });
 
-  test("checkAvailability returns available=true", async () => {
+  test("checkAvailability returns available=true via connector", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response(CHECK_AVAILABILITY_XML, { status: 200 }))
     ) as typeof fetch;
@@ -396,7 +300,7 @@ describe("API Functions with mocked fetch", () => {
     expect(result.available).toBe(true);
   });
 
-  test("checkAvailability returns available=false", async () => {
+  test("checkAvailability returns available=false via connector", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response(CHECK_UNAVAILABLE_XML, { status: 200 }))
     ) as typeof fetch;
@@ -406,7 +310,7 @@ describe("API Functions with mocked fetch", () => {
     expect(result.available).toBe(false);
   });
 
-  test("API error XML throws descriptive error", async () => {
+  test("API error XML throws descriptive error via connector", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response(ERROR_XML, { status: 200 }))
     ) as typeof fetch;
@@ -414,7 +318,7 @@ describe("API Functions with mocked fetch", () => {
     await expect(listNamecheapDomains(testConfig)).rejects.toThrow("Namecheap API error");
   });
 
-  test("HTTP error throws", async () => {
+  test("HTTP error throws via connector", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response("Internal Server Error", { status: 500, statusText: "Internal Server Error" }))
     ) as typeof fetch;
@@ -488,7 +392,6 @@ describe("syncToLocalDb", () => {
 
     // syncToLocalDb falls back to basic info when getInfo fails,
     // but updating still proceeds with the basic info from the list
-    // The update itself shouldn't throw because we have name/expiry from list
     const result = await syncToLocalDb(
       { getDomainByName, createDomain, updateDomain },
       testConfig

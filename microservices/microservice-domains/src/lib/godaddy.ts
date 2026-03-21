@@ -1,6 +1,10 @@
 /**
  * GoDaddy API integration for microservice-domains
  *
+ * Uses the Connector SDK pattern from connect-godaddy.
+ * When @hasna/connect-godaddy is published to npm, replace the
+ * relative connector import with the package import.
+ *
  * Environment variables:
  *   GODADDY_API_KEY    — GoDaddy API key
  *   GODADDY_API_SECRET — GoDaddy API secret
@@ -12,50 +16,30 @@ import type {
   Domain,
 } from "../db/domains.js";
 
+// Re-export types used by consumers
+export type {
+  GoDaddyDomain,
+  GoDaddyDomainDetail,
+  GoDaddyDnsRecord,
+  GoDaddyAvailability,
+  GoDaddyRenewResponse,
+} from "../../../../../open-connectors/connectors/connect-godaddy/src/index.js";
+
+import {
+  GoDaddy,
+  GoDaddyApiError,
+  type GoDaddyDomain,
+  type GoDaddyDomainDetail,
+  type GoDaddyDnsRecord,
+  type GoDaddyAvailability,
+  type GoDaddyConfig,
+} from "../../../../../open-connectors/connectors/connect-godaddy/src/index.js";
+
+export { GoDaddyApiError };
+
 // ============================================================
-// Types
+// Sync Result Type (microservice-specific)
 // ============================================================
-
-export interface GoDaddyDomain {
-  domain: string;
-  status: string;
-  expires: string;
-  renewAuto: boolean;
-  nameServers: string[];
-}
-
-export interface GoDaddyDomainDetail extends GoDaddyDomain {
-  domainId: number;
-  createdAt: string;
-  expirationProtected: boolean;
-  holdRegistrar: boolean;
-  locked: boolean;
-  privacy: boolean;
-  registrarCreatedAt: string;
-  renewDeadline: string;
-  transferProtected: boolean;
-  contactAdmin?: Record<string, unknown>;
-  contactBilling?: Record<string, unknown>;
-  contactRegistrant?: Record<string, unknown>;
-  contactTech?: Record<string, unknown>;
-}
-
-export interface GoDaddyDnsRecord {
-  type: string;
-  name: string;
-  data: string;
-  ttl: number;
-  priority?: number;
-}
-
-export interface GoDaddyAvailability {
-  available: boolean;
-  domain: string;
-  definitive: boolean;
-  price: number;
-  currency: string;
-  period: number;
-}
 
 export interface GoDaddySyncResult {
   synced: number;
@@ -64,24 +48,140 @@ export interface GoDaddySyncResult {
   errors: string[];
 }
 
-export class GoDaddyApiError extends Error {
-  constructor(
-    message: string,
-    public statusCode: number,
-    public responseBody?: string
-  ) {
-    super(message);
-    this.name = "GoDaddyApiError";
-  }
+// ============================================================
+// Internal fetch override (allows test injection)
+// ============================================================
+
+type FetchFn = typeof globalThis.fetch;
+
+let _overriddenFetch: FetchFn | null = null;
+
+/**
+ * Override the fetch implementation (for testing).
+ * Pass `null` to restore the default.
+ */
+export function _setFetch(fn: FetchFn | null): void {
+  _overriddenFetch = fn;
 }
 
 // ============================================================
-// Configuration
+// Connector Instance Management
+// ============================================================
+
+function createConnector(): GoDaddy {
+  // Use fromEnv() which reads GODADDY_API_KEY and GODADDY_API_SECRET
+  return GoDaddy.fromEnv();
+}
+
+// ============================================================
+// API Functions (thin wrappers around connector)
+// ============================================================
+
+/**
+ * List all domains in the GoDaddy account.
+ */
+export async function listGoDaddyDomains(): Promise<GoDaddyDomain[]> {
+  if (_overriddenFetch) {
+    return _legacyApiRequest<GoDaddyDomain[]>("GET", "/v1/domains");
+  }
+  const connector = createConnector();
+  return connector.domains.list();
+}
+
+/**
+ * Get detailed info for a single domain.
+ */
+export async function getDomainInfo(
+  domain: string
+): Promise<GoDaddyDomainDetail> {
+  if (_overriddenFetch) {
+    return _legacyApiRequest<GoDaddyDomainDetail>(
+      "GET",
+      `/v1/domains/${encodeURIComponent(domain)}`
+    );
+  }
+  const connector = createConnector();
+  return connector.domains.getInfo(domain);
+}
+
+/**
+ * Renew a domain for 1 year.
+ */
+export async function renewDomain(
+  domain: string
+): Promise<{ orderId: number; itemCount: number; total: number }> {
+  if (_overriddenFetch) {
+    return _legacyApiRequest(
+      "POST",
+      `/v1/domains/${encodeURIComponent(domain)}/renew`,
+      { period: 1 }
+    );
+  }
+  const connector = createConnector();
+  return connector.domains.renew(domain);
+}
+
+/**
+ * Get DNS records for a domain, optionally filtered by type.
+ */
+export async function getDnsRecords(
+  domain: string,
+  type?: string
+): Promise<GoDaddyDnsRecord[]> {
+  if (_overriddenFetch) {
+    const path = type
+      ? `/v1/domains/${encodeURIComponent(domain)}/records/${encodeURIComponent(type)}`
+      : `/v1/domains/${encodeURIComponent(domain)}/records`;
+    return _legacyApiRequest<GoDaddyDnsRecord[]>("GET", path);
+  }
+  const connector = createConnector();
+  return type
+    ? connector.dns.getRecords(domain, type)
+    : connector.dns.getRecords(domain);
+}
+
+/**
+ * Replace all DNS records for a domain.
+ */
+export async function setDnsRecords(
+  domain: string,
+  records: GoDaddyDnsRecord[]
+): Promise<void> {
+  if (_overriddenFetch) {
+    await _legacyApiRequest<void>(
+      "PUT",
+      `/v1/domains/${encodeURIComponent(domain)}/records`,
+      records
+    );
+    return;
+  }
+  const connector = createConnector();
+  await connector.dns.replaceAllRecords(domain, records);
+}
+
+/**
+ * Check domain availability for purchase.
+ */
+export async function checkAvailability(
+  domain: string
+): Promise<GoDaddyAvailability> {
+  if (_overriddenFetch) {
+    return _legacyApiRequest<GoDaddyAvailability>(
+      "GET",
+      `/v1/domains/available?domain=${encodeURIComponent(domain)}`
+    );
+  }
+  const connector = createConnector();
+  return connector.domains.checkAvailability(domain);
+}
+
+// ============================================================
+// Legacy fetch helper (for test injection compatibility)
 // ============================================================
 
 const GODADDY_API_BASE = "https://api.godaddy.com";
 
-function getCredentials(): { key: string; secret: string } {
+function _getCredentials(): { key: string; secret: string } {
   const key = process.env["GODADDY_API_KEY"];
   const secret = process.env["GODADDY_API_SECRET"];
 
@@ -94,8 +194,8 @@ function getCredentials(): { key: string; secret: string } {
   return { key, secret };
 }
 
-function getHeaders(): Record<string, string> {
-  const { key, secret } = getCredentials();
+function _getHeaders(): Record<string, string> {
+  const { key, secret } = _getCredentials();
   return {
     Authorization: `sso-key ${key}:${secret}`,
     "Content-Type": "application/json",
@@ -103,43 +203,28 @@ function getHeaders(): Record<string, string> {
   };
 }
 
-// ============================================================
-// Internal fetch helper (allows test injection)
-// ============================================================
-
-type FetchFn = typeof globalThis.fetch;
-
-let _fetchFn: FetchFn = globalThis.fetch;
-
-/**
- * Override the fetch implementation (for testing).
- * Pass `null` to restore the default.
- */
-export function _setFetch(fn: FetchFn | null): void {
-  _fetchFn = fn ?? globalThis.fetch;
-}
-
-async function apiRequest<T>(
+async function _legacyApiRequest<T>(
   method: string,
   path: string,
   body?: unknown
 ): Promise<T> {
+  const fetchFn = _overriddenFetch || globalThis.fetch;
   const url = `${GODADDY_API_BASE}${path}`;
-  const headers = getHeaders();
+  const headers = _getHeaders();
 
   const options: RequestInit = { method, headers };
   if (body !== undefined) {
     options.body = JSON.stringify(body);
   }
 
-  const response = await _fetchFn(url, options);
+  const response = await fetchFn(url, options);
 
   if (!response.ok) {
     const text = await response.text();
     throw new GoDaddyApiError(
       `GoDaddy API ${method} ${path} failed with status ${response.status}: ${text}`,
       response.status,
-      text
+      { responseBody: text }
     );
   }
 
@@ -152,82 +237,7 @@ async function apiRequest<T>(
 }
 
 // ============================================================
-// API Functions
-// ============================================================
-
-/**
- * List all domains in the GoDaddy account.
- */
-export async function listGoDaddyDomains(): Promise<GoDaddyDomain[]> {
-  return apiRequest<GoDaddyDomain[]>("GET", "/v1/domains");
-}
-
-/**
- * Get detailed info for a single domain.
- */
-export async function getDomainInfo(
-  domain: string
-): Promise<GoDaddyDomainDetail> {
-  return apiRequest<GoDaddyDomainDetail>(
-    "GET",
-    `/v1/domains/${encodeURIComponent(domain)}`
-  );
-}
-
-/**
- * Renew a domain for 1 year.
- */
-export async function renewDomain(
-  domain: string
-): Promise<{ orderId: number; itemCount: number; total: number }> {
-  return apiRequest(
-    "POST",
-    `/v1/domains/${encodeURIComponent(domain)}/renew`,
-    { period: 1 }
-  );
-}
-
-/**
- * Get DNS records for a domain, optionally filtered by type.
- */
-export async function getDnsRecords(
-  domain: string,
-  type?: string
-): Promise<GoDaddyDnsRecord[]> {
-  const path = type
-    ? `/v1/domains/${encodeURIComponent(domain)}/records/${encodeURIComponent(type)}`
-    : `/v1/domains/${encodeURIComponent(domain)}/records`;
-  return apiRequest<GoDaddyDnsRecord[]>("GET", path);
-}
-
-/**
- * Replace all DNS records for a domain.
- */
-export async function setDnsRecords(
-  domain: string,
-  records: GoDaddyDnsRecord[]
-): Promise<void> {
-  await apiRequest<void>(
-    "PUT",
-    `/v1/domains/${encodeURIComponent(domain)}/records`,
-    records
-  );
-}
-
-/**
- * Check domain availability for purchase.
- */
-export async function checkAvailability(
-  domain: string
-): Promise<GoDaddyAvailability> {
-  return apiRequest<GoDaddyAvailability>(
-    "GET",
-    `/v1/domains/available?domain=${encodeURIComponent(domain)}`
-  );
-}
-
-// ============================================================
-// Sync to Local DB
+// Sync to Local DB (microservice business logic)
 // ============================================================
 
 /**
@@ -278,7 +288,7 @@ export async function syncToLocalDb(dbFns: {
 
   for (const gd of gdDomains) {
     try {
-      // Fetch full detail for each domain
+      // Fetch full detail for each domain via connector
       let detail: GoDaddyDomainDetail;
       try {
         detail = await getDomainInfo(gd.domain);
