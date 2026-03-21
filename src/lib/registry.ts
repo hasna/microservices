@@ -102,6 +102,15 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     category: "HR",
     tags: ["time-tracking", "timesheets", "projects", "hours"],
   },
+
+  // Productivity
+  {
+    name: "transcriber",
+    displayName: "Transcriber",
+    description: "Transcribe audio and video from files and URLs (YouTube, Vimeo, Wistia, etc.) using ElevenLabs or OpenAI Whisper",
+    category: "Productivity",
+    tags: ["transcription", "audio", "video", "youtube", "vimeo", "wistia", "elevenlabs", "openai", "whisper", "speech-to-text"],
+  },
 ];
 
 /**
