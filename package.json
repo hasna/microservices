@@ -1,6 +1,6 @@
 {
   "name": "@hasna/microservices",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Mini business apps for AI agents - invoices, contacts, bookkeeping and more, each with its own SQLite database",
   "type": "module",
   "bin": {
