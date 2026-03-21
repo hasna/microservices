@@ -69,4 +69,50 @@ export const MIGRATIONS: MigrationEntry[] = [
       CREATE INDEX IF NOT EXISTS idx_annotations_transcript ON annotations(transcript_id);
     `,
   },
+  {
+    id: 5,
+    name: "add_transcript_comments",
+    sql: `
+      CREATE TABLE IF NOT EXISTS transcript_comments (
+        id TEXT PRIMARY KEY,
+        transcript_id TEXT NOT NULL,
+        platform TEXT NOT NULL DEFAULT 'youtube',
+        author TEXT,
+        author_handle TEXT,
+        comment_text TEXT NOT NULL,
+        likes INTEGER DEFAULT 0,
+        reply_count INTEGER DEFAULT 0,
+        is_reply INTEGER DEFAULT 0,
+        parent_comment_id TEXT,
+        published_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (transcript_id) REFERENCES transcripts(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_comments_transcript ON transcript_comments(transcript_id);
+      CREATE INDEX IF NOT EXISTS idx_comments_likes ON transcript_comments(likes DESC);
+    `,
+  },
+  {
+    id: 6,
+    name: "add_proofread_issues",
+    sql: `
+      CREATE TABLE proofread_issues (
+        id TEXT PRIMARY KEY,
+        transcript_id TEXT NOT NULL,
+        issue_type TEXT NOT NULL CHECK(issue_type IN ('spelling','grammar','punctuation','clarity')),
+        position_start INTEGER,
+        position_end INTEGER,
+        original_text TEXT NOT NULL,
+        suggestion TEXT,
+        confidence REAL,
+        explanation TEXT,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','applied','dismissed')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (transcript_id) REFERENCES transcripts(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_proofread_transcript ON proofread_issues(transcript_id);
+      CREATE INDEX idx_proofread_type ON proofread_issues(issue_type);
+      CREATE INDEX idx_proofread_status ON proofread_issues(status);
+    `,
+  },
 ];

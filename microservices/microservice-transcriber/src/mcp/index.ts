@@ -23,7 +23,8 @@ import {
   type TranscriptStatus,
   type TranscriptSourceType,
 } from "../db/transcripts.js";
-import { prepareAudio, detectSourceType, getVideoInfo, downloadAudio, downloadVideo, createClip, isPlaylistUrl, getPlaylistUrls, type TrimOptions } from "../lib/downloader.js";
+import { prepareAudio, detectSourceType, getVideoInfo, downloadAudio, downloadVideo, createClip, isPlaylistUrl, getPlaylistUrls, fetchComments, type TrimOptions } from "../lib/downloader.js";
+import { listComments, getTopComments, searchComments, getCommentStats, importComments } from "../db/comments.js";
 import { getConfig, setConfig, resetConfig } from "../lib/config.js";
 import { summarizeText, extractHighlights, generateMeetingNotes, getDefaultSummaryProvider } from "../lib/summarizer.js";
 import { translateText } from "../lib/translator.js";
@@ -31,6 +32,7 @@ import { fetchFeedEpisodes } from "../lib/feeds.js";
 import { createAnnotation, listAnnotations, deleteAnnotation } from "../db/annotations.js";
 import { wordDiff, diffStats, formatDiff } from "../lib/diff.js";
 import { transcribeFile, checkProviders, toSrt, toVtt, toAss, toMarkdown, segmentByChapters, formatWithConfidence } from "../lib/providers.js";
+import { proofreadTranscript, listIssues, applySuggestion, dismissIssue, getProofreadStats, exportAnnotated, type IssueType } from "../lib/proofread.js";
 
 const server = new McpServer({
   name: "microservice-transcriber",
@@ -63,9 +65,10 @@ server.registerTool(
       diarize: z.boolean().optional().describe("Identify different speakers — ElevenLabs only"),
       vocab: z.array(z.string()).optional().describe("Custom vocabulary hints for accuracy (e.g. ['Karpathy', 'MicroGPT'])"),
       force: z.boolean().optional().describe("Re-transcribe even if URL already exists in DB"),
+      comments: z.boolean().optional().describe("Also fetch and store YouTube/Vimeo comments"),
     },
   },
-  async ({ source, provider = "elevenlabs", language, title, start, end, diarize, vocab, force }) => {
+  async ({ source, provider = "elevenlabs", language, title, start, end, diarize, vocab, force, comments: fetchCommentsFlag }) => {
     // Duplicate detection
     if (!force) {
       const existing = findBySourceUrl(source);
@@ -129,8 +132,33 @@ server.registerTool(
         },
       });
 
+      // Fetch comments if requested
+      let commentCount = 0;
+      if (fetchCommentsFlag && (sourceType === "youtube" || sourceType === "vimeo")) {
+        try {
+          const rawComments = await fetchComments(source);
+          if (rawComments.length > 0) {
+            const mapped = rawComments.map((c) => ({
+              platform: sourceType,
+              author: c.author,
+              author_handle: c.author_id,
+              comment_text: c.text,
+              likes: c.like_count,
+              reply_count: 0,
+              is_reply: c.parent !== null,
+              parent_comment_id: c.parent,
+              published_at: c.timestamp ? new Date(c.timestamp * 1000).toISOString() : null,
+            }));
+            commentCount = importComments(record.id, mapped);
+          }
+        } catch {
+          // Comment fetch is best-effort — don't fail the transcription
+        }
+      }
+
+      const finalResult = { ...getTranscript(record.id), comments_imported: commentCount };
       return {
-        content: [{ type: "text", text: JSON.stringify(updated, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(finalResult, null, 2) }],
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -944,6 +972,86 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
+// list_comments
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "list_comments",
+  {
+    title: "List Comments",
+    description: "List comments for a transcript, optionally sorted by likes.",
+    inputSchema: {
+      transcript_id: z.string().describe("Transcript ID"),
+      top: z.boolean().optional().describe("Sort by most liked"),
+      limit: z.number().optional().describe("Max results (default 50)"),
+      offset: z.number().optional().describe("Offset for pagination"),
+    },
+  },
+  async ({ transcript_id, top, limit, offset }) => {
+    const comments = listComments(transcript_id, { top, limit, offset });
+    return { content: [{ type: "text", text: JSON.stringify(comments, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// top_comments
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "top_comments",
+  {
+    title: "Top Comments",
+    description: "Get the most liked comments for a transcript.",
+    inputSchema: {
+      transcript_id: z.string().describe("Transcript ID"),
+      limit: z.number().optional().describe("Number of top comments (default 10)"),
+    },
+  },
+  async ({ transcript_id, limit }) => {
+    const comments = getTopComments(transcript_id, limit);
+    return { content: [{ type: "text", text: JSON.stringify(comments, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// search_comments
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "search_comments",
+  {
+    title: "Search Comments",
+    description: "Search comment text across all transcripts using LIKE matching.",
+    inputSchema: {
+      query: z.string().describe("Search query"),
+    },
+  },
+  async ({ query }) => {
+    const results = searchComments(query);
+    return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// comment_stats
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "comment_stats",
+  {
+    title: "Comment Stats",
+    description: "Get comment statistics for a transcript: total, replies, unique authors, avg likes, top commenter.",
+    inputSchema: {
+      transcript_id: z.string().describe("Transcript ID"),
+    },
+  },
+  async ({ transcript_id }) => {
+    const stats = getCommentStats(transcript_id);
+    return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // get_config / set_config
 // ---------------------------------------------------------------------------
 
@@ -992,6 +1100,142 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
+// proofread_transcript
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "proofread_transcript",
+  {
+    title: "Proofread Transcript",
+    description: "Run AI-powered spellcheck/proofread on a transcript. Finds spelling, grammar, punctuation, and clarity issues. Non-destructive: stores issues in DB without modifying transcript text.",
+    inputSchema: {
+      id: z.string().describe("Transcript ID"),
+      types: z.array(z.enum(["spelling", "grammar", "punctuation", "clarity"])).optional().describe("Issue types to check (default: all)"),
+      confidence_threshold: z.number().optional().describe("Minimum confidence 0-1 (default: 0.7)"),
+      provider: z.enum(["openai", "anthropic"]).optional().describe("AI provider (auto-detected from env)"),
+    },
+  },
+  async ({ id, types, confidence_threshold, provider }) => {
+    try {
+      const issues = await proofreadTranscript(id, {
+        types: types as IssueType[] | undefined,
+        confidence_threshold,
+        provider: provider as "openai" | "anthropic" | undefined,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(issues, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Proofread failed: ${error instanceof Error ? error.message : error}` }], isError: true };
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// list_proofread_issues
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "list_proofread_issues",
+  {
+    title: "List Proofread Issues",
+    description: "List proofread issues for a transcript with optional filters.",
+    inputSchema: {
+      transcript_id: z.string().describe("Transcript ID"),
+      issue_type: z.enum(["spelling", "grammar", "punctuation", "clarity"]).optional().describe("Filter by issue type"),
+      status: z.enum(["pending", "applied", "dismissed"]).optional().describe("Filter by status"),
+    },
+  },
+  async ({ transcript_id, issue_type, status }) => {
+    const issues = listIssues(transcript_id, {
+      issue_type: issue_type as IssueType | undefined,
+      status: status as "pending" | "applied" | "dismissed" | undefined,
+    });
+    return { content: [{ type: "text", text: JSON.stringify(issues, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// apply_suggestion
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "apply_suggestion",
+  {
+    title: "Apply Proofread Suggestion",
+    description: "Apply a proofread suggestion to the transcript text. Replaces the original text with the suggestion and marks the issue as applied.",
+    inputSchema: {
+      issue_id: z.string().describe("Proofread issue ID"),
+    },
+  },
+  async ({ issue_id }) => {
+    const result = applySuggestion(issue_id);
+    if (!result) return { content: [{ type: "text", text: `Issue '${issue_id}' not found.` }], isError: true };
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// dismiss_issue
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "dismiss_issue",
+  {
+    title: "Dismiss Proofread Issue",
+    description: "Dismiss a proofread issue without modifying the transcript text.",
+    inputSchema: {
+      issue_id: z.string().describe("Proofread issue ID"),
+    },
+  },
+  async ({ issue_id }) => {
+    const result = dismissIssue(issue_id);
+    if (!result) return { content: [{ type: "text", text: `Issue '${issue_id}' not found.` }], isError: true };
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// proofread_stats
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "proofread_stats",
+  {
+    title: "Proofread Stats",
+    description: "Get proofread issue statistics for a transcript: total, by type, pending/applied/dismissed counts.",
+    inputSchema: {
+      transcript_id: z.string().describe("Transcript ID"),
+    },
+  },
+  async ({ transcript_id }) => {
+    const stats = getProofreadStats(transcript_id);
+    return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// export_annotated
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "export_annotated",
+  {
+    title: "Export Annotated Transcript",
+    description: "Export transcript text with inline proofread annotations showing pending issues as [TYPE: \"original\" -> \"suggestion\"] markers.",
+    inputSchema: {
+      transcript_id: z.string().describe("Transcript ID"),
+    },
+  },
+  async ({ transcript_id }) => {
+    try {
+      const text = exportAnnotated(transcript_id);
+      return { content: [{ type: "text", text }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Export failed: ${error instanceof Error ? error.message : error}` }], isError: true };
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
 // search_tools / describe_tools
 // ---------------------------------------------------------------------------
 
@@ -1021,6 +1265,16 @@ server.registerTool(
       "get_config",
       "set_config",
       "reset_config",
+      "list_comments",
+      "top_comments",
+      "search_comments",
+      "comment_stats",
+      "proofread_transcript",
+      "list_proofread_issues",
+      "apply_suggestion",
+      "dismiss_issue",
+      "proofread_stats",
+      "export_annotated",
       "search_tools",
       "describe_tools",
     ];
@@ -1048,6 +1302,12 @@ server.registerTool(
       export_transcript: "Export as txt/srt/json. Params: id, format?",
       transcript_stats: "Counts by status and provider.",
       check_providers: "Check which API keys are configured.",
+      proofread_transcript: "AI spellcheck/proofread. Params: id, types?, confidence_threshold?, provider?",
+      list_proofread_issues: "List proofread issues. Params: transcript_id, issue_type?, status?",
+      apply_suggestion: "Apply a proofread suggestion. Params: issue_id",
+      dismiss_issue: "Dismiss a proofread issue. Params: issue_id",
+      proofread_stats: "Proofread stats. Params: transcript_id",
+      export_annotated: "Export with inline annotations. Params: transcript_id",
     };
     const result = names.map((n) => `${n}: ${descriptions[n] || "See tool schema"}`).join("\n");
     return { content: [{ type: "text" as const, text: result }] };

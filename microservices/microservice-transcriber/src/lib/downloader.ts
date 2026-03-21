@@ -557,6 +557,74 @@ export async function splitAudioIntoChunks(
 }
 
 /**
+ * Raw comment from yt-dlp .info.json comments array.
+ */
+export interface RawComment {
+  author: string | null;
+  author_id: string | null;
+  text: string;
+  like_count: number;
+  timestamp: number | null;
+  parent: string | null; // "root" for top-level, comment id for replies
+  id: string;
+}
+
+/**
+ * Fetch comments for a video URL using yt-dlp --write-comments.
+ * Downloads only the .info.json (no media) and parses the comments array.
+ */
+export async function fetchComments(url: string): Promise<RawComment[]> {
+  const tempId = crypto.randomUUID();
+  const outputTemplate = join(tmpdir(), `comments-${tempId}`);
+
+  const proc = Bun.spawn(
+    [ytdlp(), "--write-comments", "--skip-download", "--no-write-thumbnail", "-o", outputTemplate, url],
+    { stdout: "pipe", stderr: "pipe" }
+  );
+
+  const [exitCode, , stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+
+  if (exitCode !== 0) {
+    throw new Error(`yt-dlp comment fetch failed (exit ${exitCode}): ${stderr.trim()}`);
+  }
+
+  // yt-dlp writes <output>.info.json
+  const infoPath = `${outputTemplate}.info.json`;
+  const { readFileSync, unlinkSync: unlinkFile, existsSync: fileExists } = await import("node:fs");
+
+  if (!fileExists(infoPath)) {
+    throw new Error("yt-dlp did not produce an info.json file for comments");
+  }
+
+  try {
+    const raw = JSON.parse(readFileSync(infoPath, "utf8"));
+    const comments: RawComment[] = [];
+
+    if (Array.isArray(raw.comments)) {
+      for (const c of raw.comments) {
+        comments.push({
+          author: c.author ?? null,
+          author_id: c.author_id ?? null,
+          text: typeof c.text === "string" ? c.text : String(c.text ?? ""),
+          like_count: typeof c.like_count === "number" ? c.like_count : 0,
+          timestamp: typeof c.timestamp === "number" ? c.timestamp : null,
+          parent: c.parent === "root" ? null : (c.parent ?? null),
+          id: c.id ?? crypto.randomUUID(),
+        });
+      }
+    }
+
+    return comments;
+  } finally {
+    try { unlinkFile(infoPath); } catch {}
+  }
+}
+
+/**
  * Check whether yt-dlp is available on the system.
  */
 export async function checkYtDlp(): Promise<boolean> {
