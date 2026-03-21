@@ -46,6 +46,28 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     tags: ["expenses", "receipts", "reimbursement", "budget"],
   },
 
+  {
+    name: "ads",
+    displayName: "Ads",
+    description: "Ad campaign management across Google, Meta, LinkedIn, and TikTok with budgets, metrics, and ROAS tracking",
+    category: "Finance",
+    tags: ["ads", "campaigns", "advertising", "google-ads", "meta-ads", "linkedin-ads", "tiktok-ads", "roas", "marketing"],
+  },
+  {
+    name: "subscriptions",
+    displayName: "Subscriptions",
+    description: "Subscription and recurring billing management with plans, subscribers, MRR/ARR analytics, churn tracking, and billing events",
+    category: "Finance",
+    tags: ["subscriptions", "recurring-billing", "saas", "mrr", "arr", "churn", "plans", "billing"],
+  },
+  {
+    name: "payments",
+    displayName: "Payments",
+    description: "Payment processing and tracking with charges, refunds, disputes, payouts, and revenue reporting across providers",
+    category: "Finance",
+    tags: ["payments", "charges", "refunds", "disputes", "payouts", "revenue", "stripe", "reconciliation"],
+  },
+
   // CRM
   {
     name: "contacts",
@@ -61,6 +83,13 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     category: "CRM",
     tags: ["sales", "pipeline", "deals", "leads", "crm"],
   },
+  {
+    name: "social",
+    displayName: "Social",
+    description: "Social media management with accounts, posts, templates, scheduling, and engagement analytics",
+    category: "CRM",
+    tags: ["social-media", "posts", "scheduling", "engagement", "analytics", "x", "linkedin", "instagram"],
+  },
 
   // Operations
   {
@@ -69,6 +98,27 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     description: "Track products, stock levels, and inventory movements",
     category: "Operations",
     tags: ["inventory", "stock", "products", "warehouse"],
+  },
+  {
+    name: "contracts",
+    displayName: "Contracts",
+    description: "Manage contracts and agreements with clauses, reminders, and renewal tracking",
+    category: "Operations",
+    tags: ["contracts", "agreements", "nda", "clauses", "renewals", "legal"],
+  },
+  {
+    name: "shipping",
+    displayName: "Shipping",
+    description: "Order management, shipment tracking, carrier costs, and returns processing",
+    category: "Operations",
+    tags: ["shipping", "orders", "tracking", "carriers", "returns", "delivery", "logistics"],
+  },
+  {
+    name: "domains",
+    displayName: "Domains",
+    description: "Domain portfolio and DNS management with registrar tracking, SSL monitoring, expiry alerts, and DNS record management",
+    category: "Operations",
+    tags: ["domains", "dns", "ssl", "registrar", "nameservers", "whois", "certificates"],
   },
 
   // Productivity
@@ -101,6 +151,20 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     description: "Time tracking per project and client with reporting",
     category: "HR",
     tags: ["time-tracking", "timesheets", "projects", "hours"],
+  },
+  {
+    name: "hiring",
+    displayName: "Hiring",
+    description: "Applicant tracking and recruitment with jobs, applicants, interviews, and pipeline management",
+    category: "HR",
+    tags: ["hiring", "recruitment", "applicants", "interviews", "ats", "jobs", "pipeline"],
+  },
+  {
+    name: "payroll",
+    displayName: "Payroll",
+    description: "Payroll management with employees, pay periods, pay stubs, deductions, and tax reporting",
+    category: "HR",
+    tags: ["payroll", "salary", "wages", "deductions", "tax", "employees", "pay-stubs"],
   },
 
   // Productivity

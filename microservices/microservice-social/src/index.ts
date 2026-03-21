@@ -1,0 +1,46 @@
+/**
+ * microservice-social — Social media management microservice
+ */
+
+export {
+  createAccount,
+  getAccount,
+  listAccounts,
+  updateAccount,
+  deleteAccount,
+  countAccounts,
+  createPost,
+  getPost,
+  listPosts,
+  updatePost,
+  deletePost,
+  countPosts,
+  schedulePost,
+  publishPost,
+  createTemplate,
+  getTemplate,
+  listTemplates,
+  deleteTemplate,
+  useTemplate,
+  getEngagementStats,
+  getStatsByPlatform,
+  getCalendar,
+  getOverallStats,
+  type Platform,
+  type PostStatus,
+  type Account,
+  type Post,
+  type Template,
+  type Engagement,
+  type EngagementStats,
+  type PlatformStats,
+  type CreateAccountInput,
+  type UpdateAccountInput,
+  type ListAccountsOptions,
+  type CreatePostInput,
+  type UpdatePostInput,
+  type ListPostsOptions,
+  type CreateTemplateInput,
+} from "./db/social.js";
+
+export { getDatabase, closeDatabase } from "./db/database.js";

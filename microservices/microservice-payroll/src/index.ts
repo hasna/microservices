@@ -1,0 +1,48 @@
+/**
+ * microservice-payroll — Payroll management microservice
+ */
+
+export {
+  createEmployee,
+  getEmployee,
+  listEmployees,
+  updateEmployee,
+  deleteEmployee,
+  terminateEmployee,
+  countEmployees,
+  type Employee,
+  type CreateEmployeeInput,
+  type UpdateEmployeeInput,
+  type ListEmployeesOptions,
+  createPayPeriod,
+  getPayPeriod,
+  listPayPeriods,
+  updatePayPeriodStatus,
+  deletePayPeriod,
+  type PayPeriod,
+  type CreatePayPeriodInput,
+  createPayStub,
+  getPayStub,
+  listPayStubs,
+  deletePayStub,
+  type PayStub,
+  type CreatePayStubInput,
+  createPayment,
+  getPayment,
+  listPayments,
+  updatePaymentStatus,
+  deletePayment,
+  type Payment,
+  type CreatePaymentInput,
+  calculateDeductions,
+  calculateGrossPay,
+  processPayroll,
+  getPayrollReport,
+  getYtdReport,
+  getTaxSummary,
+  type PayrollReport,
+  type YtdReport,
+  type TaxSummaryEntry,
+} from "./db/payroll.js";
+
+export { getDatabase, closeDatabase } from "./db/database.js";

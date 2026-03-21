@@ -1,0 +1,27 @@
+{
+  "name": "@hasna/microservice-payments",
+  "version": "0.0.1",
+  "description": "Payment processing and tracking microservice with SQLite — manage payments, disputes, and payouts",
+  "type": "module",
+  "bin": {
+    "microservice-payments": "./src/cli/index.ts",
+    "microservice-payments-mcp": "./src/mcp/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run ./src/cli/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "commander": "^12.1.0",
+    "zod": "^3.24.0"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  }
+}
