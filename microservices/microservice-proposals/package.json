@@ -1,0 +1,27 @@
+{
+  "name": "@hasna/microservice-proposals",
+  "version": "0.0.1",
+  "description": "Proposal management microservice with SQLite — create, send, track, and convert proposals",
+  "type": "module",
+  "bin": {
+    "microservice-proposals": "./src/cli/index.ts",
+    "microservice-proposals-mcp": "./src/mcp/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run ./src/cli/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "commander": "^12.1.0",
+    "zod": "^3.24.0"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  }
+}

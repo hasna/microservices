@@ -19,6 +19,7 @@ export const CATEGORIES = [
   "HR",
   "Analytics",
   "Management",
+  "Personal",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
@@ -98,6 +99,13 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     category: "CRM",
     tags: ["leads", "lead-generation", "scoring", "enrichment", "pipeline", "dedup", "import", "export"],
   },
+  {
+    name: "proposals",
+    displayName: "Proposals",
+    description: "Create, send, track, and convert proposals with templates, expiry tracking, and conversion analytics",
+    category: "CRM",
+    tags: ["proposals", "quotes", "estimates", "sales", "clients", "conversion"],
+  },
 
   // Operations
   {
@@ -127,6 +135,34 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     description: "Domain portfolio and DNS management with registrar tracking, SSL monitoring, expiry alerts, and DNS record management",
     category: "Operations",
     tags: ["domains", "dns", "ssl", "registrar", "nameservers", "whois", "certificates"],
+  },
+  {
+    name: "products",
+    displayName: "Products",
+    description: "Product catalog with categories, pricing tiers, variants, bulk import/export, and inventory status tracking",
+    category: "Operations",
+    tags: ["products", "catalog", "pricing", "categories", "sku", "inventory", "import", "export"],
+  },
+  {
+    name: "notifications",
+    displayName: "Notifications",
+    description: "Send notifications across channels (email, Slack, SMS, webhook, in-app) with rules, templates, variable substitution, and event processing",
+    category: "Operations",
+    tags: ["notifications", "alerts", "email", "slack", "sms", "webhook", "in-app", "templates", "rules", "events"],
+  },
+  {
+    name: "projects",
+    displayName: "Projects",
+    description: "Project management with milestones, deliverables, budget tracking, timelines, and progress reporting",
+    category: "Operations",
+    tags: ["projects", "milestones", "deliverables", "budget", "timeline", "planning", "tracking"],
+  },
+  {
+    name: "compliance",
+    displayName: "Compliance",
+    description: "Compliance management with requirements tracking, license management, and audit scheduling across regulatory frameworks (GDPR, SOC2, HIPAA, PCI, ISO 27001)",
+    category: "Operations",
+    tags: ["compliance", "gdpr", "soc2", "hipaa", "pci", "iso27001", "audit", "licenses", "requirements", "regulatory"],
   },
 
   // Productivity
@@ -191,6 +227,61 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     description: "Transcribe audio and video from files and URLs (YouTube, Vimeo, Wistia, etc.) using ElevenLabs or OpenAI Whisper",
     category: "Productivity",
     tags: ["transcription", "audio", "video", "youtube", "vimeo", "wistia", "elevenlabs", "openai", "whisper", "speech-to-text"],
+  },
+
+  {
+    name: "wiki",
+    displayName: "Wiki",
+    description: "Wiki with pages, version history, internal links, and hierarchical page trees",
+    category: "Productivity",
+    tags: ["wiki", "pages", "knowledge-base", "versioning", "links", "markdown"],
+  },
+
+  {
+    name: "assets",
+    displayName: "Assets",
+    description: "Digital asset management with collections, tagging, metadata, and type-based organization",
+    category: "Productivity",
+    tags: ["assets", "files", "collections", "media", "images", "documents", "digital-assets"],
+  },
+
+  // Personal
+  {
+    name: "habits",
+    displayName: "Habits",
+    description: "Habit tracking with streaks, completions, and analytics — daily, weekly, and monthly habits with completion rates and reports",
+    category: "Personal",
+    tags: ["habits", "streaks", "tracking", "completions", "daily", "weekly", "goals", "wellness"],
+  },
+  {
+    name: "health",
+    displayName: "Health",
+    description: "Health tracking with metrics, medications, appointments, and fitness logs",
+    category: "Personal",
+    tags: ["health", "metrics", "medications", "appointments", "fitness", "wellness", "medical"],
+  },
+  {
+    name: "reading",
+    displayName: "Reading",
+    description: "Reading tracker with books, highlights, reading sessions, pace analytics, and progress tracking",
+    category: "Personal",
+    tags: ["reading", "books", "highlights", "sessions", "tracking", "pace", "library"],
+  },
+  {
+    name: "travel",
+    displayName: "Travel",
+    description: "Travel management with trips, bookings, documents, loyalty programs, and budget tracking",
+    category: "Personal",
+    tags: ["travel", "trips", "bookings", "flights", "hotels", "loyalty", "documents", "budget"],
+  },
+
+  // Analytics
+  {
+    name: "analytics",
+    displayName: "Analytics",
+    description: "Business analytics with KPIs, dashboards, reports, and AI-powered executive summaries",
+    category: "Analytics",
+    tags: ["analytics", "kpis", "dashboards", "reports", "metrics", "business-intelligence", "executive-summary"],
   },
 ];
 
