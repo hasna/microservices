@@ -11,6 +11,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { SqliteAdapter } from "@hasna/cloud";
 import { existsSync, mkdirSync, readFileSync, cpSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -91,11 +92,9 @@ export function openServiceDatabase(
     mkdirSync(dataDir, { recursive: true });
   }
 
-  const db = new Database(dbPath);
-
-  // Enable WAL mode for concurrent reads
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
+  const adapter = new SqliteAdapter(dbPath);
+  const db = adapter.raw;
+  // SqliteAdapter already sets WAL and foreign_keys
 
   // Create migrations table
   db.exec(`
@@ -139,6 +138,31 @@ function applyMigrations(db: Database, migrations: MigrationEntry[]): void {
       );
     }
   }
+}
+
+let _hubAdapter: SqliteAdapter | null = null;
+
+/**
+ * Get the hub-level SqliteAdapter for direct SQL queries (e.g. feedback).
+ * Stores data in <microservices-dir>/hub.db
+ */
+export function getHubAdapter(): SqliteAdapter {
+  if (_hubAdapter) return _hubAdapter;
+  const dir = getMicroservicesDir();
+  mkdirSync(dir, { recursive: true });
+  _hubAdapter = new SqliteAdapter(join(dir, "hub.db"));
+  _hubAdapter.exec(`
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      message TEXT NOT NULL,
+      email TEXT,
+      category TEXT DEFAULT 'general',
+      version TEXT,
+      machine_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  return _hubAdapter;
 }
 
 /**

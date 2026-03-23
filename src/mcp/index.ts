@@ -22,6 +22,7 @@ import {
   getMicroserviceCliPath,
 } from "../lib/runner.js";
 import { getPackageVersion } from "../lib/package-info.js";
+import { getHubAdapter } from "../lib/database.js";
 
 const server = new McpServer({
   name: "microservices",
@@ -429,6 +430,102 @@ server.registerTool(
       .join("\n");
     return { content: [{ type: "text" as const, text: result }] };
   }
+);
+
+// --- Agent Tools ---
+
+const _agentReg = new Map<string, { id: string; name: string; last_seen_at: string; project_id?: string }>();
+
+server.registerTool(
+  "register_agent",
+  {
+    title: "Register Agent",
+    description: "Register an agent session (idempotent). Auto-updates last_seen_at on re-register.",
+    inputSchema: {
+      name: z.string().describe("Agent name"),
+      session_id: z.string().optional().describe("Session identifier"),
+    },
+  },
+  async ({ name, session_id }) => {
+    const existing = [..._agentReg.values()].find((x) => x.name === name);
+    if (existing) {
+      existing.last_seen_at = new Date().toISOString();
+      return { content: [{ type: "text" as const, text: JSON.stringify(existing) }] };
+    }
+    const id = Math.random().toString(36).slice(2, 10);
+    const ag = { id, name, last_seen_at: new Date().toISOString() };
+    _agentReg.set(id, ag);
+    return { content: [{ type: "text" as const, text: JSON.stringify(ag) }] };
+  }
+);
+
+server.registerTool(
+  "heartbeat",
+  {
+    title: "Heartbeat",
+    description: "Update last_seen_at to signal agent is active.",
+    inputSchema: { agent_id: z.string().describe("Agent ID") },
+  },
+  async ({ agent_id }) => {
+    const ag = _agentReg.get(agent_id);
+    if (!ag) return { content: [{ type: "text" as const, text: `Agent not found: ${agent_id}` }], isError: true };
+    ag.last_seen_at = new Date().toISOString();
+    return { content: [{ type: "text" as const, text: JSON.stringify({ id: ag.id, name: ag.name, last_seen_at: ag.last_seen_at }) }] };
+  }
+);
+
+server.registerTool(
+  "set_focus",
+  {
+    title: "Set Focus",
+    description: "Set active project context for this agent session.",
+    inputSchema: {
+      agent_id: z.string().describe("Agent ID"),
+      project_id: z.string().nullable().optional().describe("Project ID to focus on, or null to clear"),
+    },
+  },
+  async ({ agent_id, project_id }) => {
+    const ag = _agentReg.get(agent_id);
+    if (!ag) return { content: [{ type: "text" as const, text: `Agent not found: ${agent_id}` }], isError: true };
+    (ag as any).project_id = project_id ?? undefined;
+    return { content: [{ type: "text" as const, text: project_id ? `Focus: ${project_id}` : "Focus cleared" }] };
+  }
+);
+
+server.registerTool(
+  "list_agents",
+  {
+    title: "List Agents",
+    description: "List all registered agents.",
+    inputSchema: {},
+  },
+  async () => {
+    const agents = [..._agentReg.values()];
+    if (agents.length === 0) return { content: [{ type: "text" as const, text: "No agents registered." }] };
+    return { content: [{ type: "text" as const, text: JSON.stringify(agents, null, 2) }] };
+  }
+);
+
+// --- Tool: send_feedback ---
+server.registerTool(
+  "send_feedback",
+  {
+    title: "Send Feedback",
+    description: "Send feedback about this service",
+    inputSchema: {
+      message: z.string().describe("Feedback message"),
+      email: z.string().optional().describe("Contact email (optional)"),
+      category: z.enum(["bug", "feature", "general"]).optional().describe("Feedback category"),
+    },
+  },
+  async (params: { message: string; email?: string; category?: string }) => {
+    const adapter = getHubAdapter();
+    adapter.run(
+      "INSERT INTO feedback (message, email, category, version) VALUES (?, ?, ?, ?)",
+      params.message, params.email || null, params.category || "general", getPackageVersion()
+    );
+    return { content: [{ type: "text" as const, text: "Feedback saved. Thank you!" }] };
+  },
 );
 
 // --- Start the server ---

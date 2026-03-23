@@ -34,6 +34,7 @@ import {
   getMicroserviceCliPath,
 } from "../lib/runner.js";
 import { getPackageVersion } from "../lib/package-info.js";
+import { getHubAdapter } from "../lib/database.js";
 
 const isTTY = process.stdout.isTTY ?? false;
 
@@ -430,6 +431,21 @@ program
     if (registered > 0) {
       console.log(chalk.green(`\nMCP server registered. Restart your agent to activate.`));
     }
+  });
+
+// --- Feedback ---
+program
+  .command("feedback <message>")
+  .description("Send feedback")
+  .option("--email <email>", "Contact email")
+  .option("--category <category>", "Category: bug, feature, general")
+  .action((message: string, opts: { email?: string; category?: string }) => {
+    const adapter = getHubAdapter();
+    adapter.run(
+      "INSERT INTO feedback (message, email, category, version) VALUES (?, ?, ?, ?)",
+      message, opts.email || null, opts.category || "general", getPackageVersion()
+    );
+    console.log(chalk.green("Feedback saved. Thank you!"));
   });
 
 program.parse(process.argv);
