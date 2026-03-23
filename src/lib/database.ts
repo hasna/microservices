@@ -5,13 +5,13 @@
  *   .microservices/<service-name>/data.db
  *
  * Resolution order:
- *   1. MICROSERVICES_DIR env var
+ *   1. HASNA_MICROSERVICES_DIR / MICROSERVICES_DIR env var
  *   2. .microservices/ in nearest ancestor directory
- *   3. ~/.microservices/ (global fallback)
+ *   3. ~/.hasna/microservices/ (global fallback, with backward compat from ~/.microservices/)
  */
 
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, cpSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export interface MigrationEntry {
@@ -37,8 +37,9 @@ function findNearestMicroservicesDir(startDir: string): string | null {
  */
 export function getMicroservicesDir(): string {
   // 1. Environment variable override
-  if (process.env["MICROSERVICES_DIR"]) {
-    return process.env["MICROSERVICES_DIR"];
+  const explicit = process.env["HASNA_MICROSERVICES_DIR"] ?? process.env["MICROSERVICES_DIR"];
+  if (explicit) {
+    return explicit;
   }
 
   // 2. Nearest .microservices/ in cwd or parent
@@ -46,9 +47,18 @@ export function getMicroservicesDir(): string {
   const nearest = findNearestMicroservicesDir(cwd);
   if (nearest) return nearest;
 
-  // 3. Global fallback
+  // 3. Global fallback: ~/.hasna/microservices/ (with backward compat)
   const home = process.env["HOME"] || process.env["USERPROFILE"] || "~";
-  return join(home, ".microservices");
+  const newDir = join(home, ".hasna", "microservices");
+  const oldDir = join(home, ".microservices");
+
+  // Auto-migrate: copy old data to new location if needed
+  if (!existsSync(newDir) && existsSync(oldDir)) {
+    mkdirSync(join(home, ".hasna"), { recursive: true });
+    cpSync(oldDir, newDir, { recursive: true });
+  }
+
+  return newDir;
 }
 
 /**
