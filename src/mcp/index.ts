@@ -395,6 +395,10 @@ server.registerTool(
       "list_installed",
       "run_microservice",
       "list_microservice_operations",
+      "register_agent",
+      "heartbeat",
+      "set_focus",
+      "list_agents",
       "search_tools",
       "describe_tools",
     ];
@@ -424,6 +428,10 @@ server.registerTool(
       list_installed: "List installed microservices with status.",
       run_microservice: "Execute a command on a microservice. Params: name, args[], timeout?",
       list_microservice_operations: "Discover available commands. Params: name",
+      register_agent: "Register agent session (idempotent). Params: name, session_id?",
+      heartbeat: "Update last_seen_at to signal agent is active. Params: agent_id",
+      set_focus: "Set active project context. Params: agent_id, project_id?",
+      list_agents: "List all registered agents.",
     };
     const result = names
       .map((n: string) => `${n}: ${descriptions[n] || "See tool schema"}`)
