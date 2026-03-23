@@ -32,7 +32,8 @@
     "dev": "bun run ./src/cli/index.tsx",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run build",
+    "postinstall": "mkdir -p $HOME/.hasna/microservices 2>/dev/null || true"
   },
   "keywords": [
     "microservices",
