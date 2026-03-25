@@ -35,6 +35,7 @@ import {
 } from "../lib/runner.js";
 import { getPackageVersion } from "../lib/package-info.js";
 import { getHubAdapter } from "../lib/database.js";
+import { registerCloudCommands } from "@hasna/cloud";
 
 const isTTY = process.stdout.isTTY ?? false;
 
@@ -447,5 +448,8 @@ program
     );
     console.log(chalk.green("Feedback saved. Thank you!"));
   });
+
+// ---- cloud sync/push/pull/feedback ----
+registerCloudCommands(program, "microservices");
 
 program.parse(process.argv);

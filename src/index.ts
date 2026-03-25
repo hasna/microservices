@@ -46,3 +46,5 @@ export {
   getMicroserviceCliPath,
   type RunResult,
 } from "./lib/runner.js";
+
+export { PG_MIGRATIONS } from "./lib/pg-migrations.js";
