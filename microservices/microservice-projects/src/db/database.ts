@@ -2,53 +2,52 @@
  * Database connection for microservice-projects
  */
 
-import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+import { SqliteAdapter } from "@hasna/cloud";
+import type { Database } from "bun:sqlite";
+import { existsSync, mkdirSync, cpSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { MIGRATIONS } from "./migrations.js";
 
 let _db: Database | null = null;
 
 function getDbPath(): string {
-  // Environment variable override
-  if (process.env["MICROSERVICES_DIR"]) {
-    return join(process.env["MICROSERVICES_DIR"], "microservice-projects", "data.db");
+  const explicit = process.env["HASNA_MICROSERVICES_DIR"] ?? process.env["MICROSERVICES_DIR"];
+  if (explicit) {
+    return join(explicit, "microservice-projects", "data.db");
   }
 
-  // Check for .microservices in current or parent directories
   let dir = resolve(process.cwd());
   while (true) {
-    const candidate = join(dir, ".microservices", "microservice-projects", "data.db");
     const msDir = join(dir, ".microservices");
-    if (existsSync(msDir)) return candidate;
+    if (existsSync(msDir)) return join(msDir, "microservice-projects", "data.db");
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
 
-  // Global fallback
   const home = process.env["HOME"] || process.env["USERPROFILE"] || "~";
-  return join(home, ".microservices", "microservice-projects", "data.db");
-}
-
-function ensureDir(filePath: string): void {
-  const dir = dirname(resolve(filePath));
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+  const newDir = join(home, ".hasna", "microservices");
+  const oldDir = join(home, ".microservices");
+  if (!existsSync(newDir) && existsSync(oldDir)) {
+    mkdirSync(join(home, ".hasna"), { recursive: true });
+    cpSync(oldDir, newDir, { recursive: true });
   }
+  return join(newDir, "microservice-projects", "data.db");
 }
 
 export function getDatabase(): Database {
   if (_db) return _db;
 
   const dbPath = getDbPath();
-  ensureDir(dbPath);
+  const dir = dirname(resolve(dbPath));
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
 
-  _db = new Database(dbPath);
-  _db.exec("PRAGMA journal_mode = WAL");
-  _db.exec("PRAGMA foreign_keys = ON");
+  const adapter = new SqliteAdapter(dbPath);
+  _db = adapter.raw;
+  // SqliteAdapter already sets WAL and foreign_keys
 
-  // Create migrations table
   _db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
       id INTEGER PRIMARY KEY,
@@ -57,7 +56,6 @@ export function getDatabase(): Database {
     )
   `);
 
-  // Apply pending migrations
   const applied = _db
     .query("SELECT id FROM _migrations ORDER BY id")
     .all() as { id: number }[];

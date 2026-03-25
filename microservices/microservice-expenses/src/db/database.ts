@@ -2,16 +2,18 @@
  * Database connection for microservice-expenses
  */
 
-import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+import { SqliteAdapter } from "@hasna/cloud";
+import type { Database } from "bun:sqlite";
+import { existsSync, mkdirSync, cpSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { MIGRATIONS } from "./migrations.js";
 
 let _db: Database | null = null;
 
 function getDbPath(): string {
-  if (process.env["MICROSERVICES_DIR"]) {
-    return join(process.env["MICROSERVICES_DIR"], "microservice-expenses", "data.db");
+  const explicit = process.env["HASNA_MICROSERVICES_DIR"] ?? process.env["MICROSERVICES_DIR"];
+  if (explicit) {
+    return join(explicit, "microservice-expenses", "data.db");
   }
 
   let dir = resolve(process.cwd());
@@ -24,21 +26,27 @@ function getDbPath(): string {
   }
 
   const home = process.env["HOME"] || process.env["USERPROFILE"] || "~";
-  return join(home, ".microservices", "microservice-expenses", "data.db");
+  const newDir = join(home, ".hasna", "microservices");
+  const oldDir = join(home, ".microservices");
+  if (!existsSync(newDir) && existsSync(oldDir)) {
+    mkdirSync(join(home, ".hasna"), { recursive: true });
+    cpSync(oldDir, newDir, { recursive: true });
+  }
+  return join(newDir, "microservice-expenses", "data.db");
 }
 
 export function getDatabase(): Database {
   if (_db) return _db;
 
   const dbPath = getDbPath();
-  const dataDir = dirname(dbPath);
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
+  const dir = dirname(resolve(dbPath));
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 
-  _db = new Database(dbPath);
-  _db.exec("PRAGMA journal_mode = WAL");
-  _db.exec("PRAGMA foreign_keys = ON");
+  const adapter = new SqliteAdapter(dbPath);
+  _db = adapter.raw;
+  // SqliteAdapter already sets WAL and foreign_keys
 
   _db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
@@ -55,6 +63,7 @@ export function getDatabase(): Database {
 
   for (const migration of MIGRATIONS) {
     if (appliedIds.has(migration.id)) continue;
+
     _db.exec("BEGIN");
     try {
       _db.exec(migration.sql);
