@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { registerCloudTools } from "@hasna/cloud";
 import { z } from "zod";
 import {
   MICROSERVICES,
@@ -539,6 +540,7 @@ server.registerTool(
 // --- Start the server ---
 async function main() {
   const transport = new StdioServerTransport();
+  registerCloudTools(server, "microservices");
   await server.connect(transport);
   console.error("Microservices MCP server running on stdio");
 }
