@@ -82,6 +82,62 @@ export async function listJobs(sql: Sql, opts: { queue?: string; status?: string
     ORDER BY created_at DESC LIMIT ${opts.limit ?? 50} OFFSET ${opts.offset ?? 0}`;
 }
 
+export interface QueueStats {
+  queue: string;
+  pending: number;
+  running: number;
+  completed: number;
+  failed: number;
+  total: number;
+}
+
+export async function getQueueStats(sql: Sql, queue?: string): Promise<QueueStats[]> {
+  const rows = await sql<{ queue: string; status: string; count: string }[]>`
+    SELECT queue, status, COUNT(*) as count FROM jobs.jobs
+    WHERE (${queue ?? null} IS NULL OR queue = ${queue ?? null})
+    GROUP BY queue, status`;
+
+  const stats: Record<string, QueueStats> = {};
+  for (const r of rows) {
+    if (!stats[r.queue]) stats[r.queue] = { queue: r.queue, pending: 0, running: 0, completed: 0, failed: 0, total: 0 };
+    const s = stats[r.queue];
+    const count = parseInt(r.count);
+    s.total += count;
+    if (r.status === "pending") s.pending = count;
+    else if (r.status === "running") s.running = count;
+    else if (r.status === "completed") s.completed = count;
+    else if (r.status === "failed") s.failed = count;
+  }
+  return Object.values(stats).sort((a, b) => a.queue.localeCompare(b.queue));
+}
+
+export async function retryFailedJobs(sql: Sql, queue: string): Promise<number> {
+  const result = await sql`
+    UPDATE jobs.jobs SET status = 'pending', run_at = NOW(), error = NULL, updated_at = NOW()
+    WHERE queue = ${queue} AND status = 'failed' AND attempts < max_attempts`;
+  return result.count;
+}
+
+export async function purgeJobs(sql: Sql, opts: { queue?: string; status?: string; olderThanDays?: number }): Promise<number> {
+  const cutoff = new Date(Date.now() - (opts.olderThanDays ?? 7) * 86400000).toISOString();
+  const result = await sql`
+    DELETE FROM jobs.jobs
+    WHERE (${opts.queue ?? null} IS NULL OR queue = ${opts.queue ?? null})
+      AND (${opts.status ?? null} IS NULL OR status = ${opts.status ?? null})
+      AND created_at < ${cutoff}
+      AND status NOT IN ('pending', 'running')`;
+  return result.count;
+}
+
+export async function updateJobProgress(sql: Sql, id: string, progress: number, message?: string): Promise<void> {
+  // progress stored in result jsonb as {progress: N, message: "..."}
+  await sql`
+    UPDATE jobs.jobs SET
+      result = jsonb_build_object('progress', ${Math.min(100, Math.max(0, progress))}, 'message', ${message ?? null}),
+      updated_at = NOW()
+    WHERE id = ${id} AND status = 'running'`;
+}
+
 export async function listDeadLetterJobs(sql: Sql, queue?: string): Promise<unknown[]> {
   return sql`SELECT * FROM jobs.dead_letter WHERE (${queue ?? null} IS NULL OR queue = ${queue ?? null}) ORDER BY failed_at DESC LIMIT 100`;
 }

@@ -20,3 +20,5 @@ export {
   type WebhookEndpoint, type CreateWebhookEndpointData
 } from "./webhooks.js";
 export { sendNotification, type SendNotificationData } from "./send.js";
+export { sendBatch, type BatchNotification, type BatchResult } from "./batch.js";
+export { generateUnsubscribeToken, verifyUnsubscribeToken } from "./unsubscribe.js";

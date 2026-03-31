@@ -5,6 +5,19 @@ export async function migrate(sql: Sql): Promise<void> {
   await sql`CREATE TABLE IF NOT EXISTS flags._migrations (id SERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
   await run(sql, "001_flags_rules", m001);
   await run(sql, "002_experiments_overrides", m002);
+  await run(sql, "003_flag_history", async (sql) => {
+    await sql`
+      CREATE TABLE flags.flag_history (
+        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        flag_id    UUID NOT NULL REFERENCES flags.flags(id) ON DELETE CASCADE,
+        changed_by TEXT,
+        field      TEXT NOT NULL,
+        old_value  TEXT,
+        new_value  TEXT,
+        changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`CREATE INDEX ON flags.flag_history (flag_id, changed_at DESC)`;
+  });
 }
 
 async function run(sql: Sql, name: string, fn: (sql: Sql) => Promise<void>) {

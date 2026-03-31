@@ -33,3 +33,9 @@ export {
   applyRetention,
   type RetentionPolicy,
 } from "./retention.js";
+
+// Stats
+export {
+  getAuditStats,
+  type AuditStats,
+} from "./stats.js";

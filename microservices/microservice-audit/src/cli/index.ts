@@ -4,7 +4,8 @@ import { getDb, closeDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
 import { startServer } from "../http/index.js";
 import { queryEvents, exportEvents, countEvents } from "../lib/events.js";
-import { applyRetention } from "../lib/retention.js";
+import { applyRetention, getRetentionPolicy } from "../lib/retention.js";
+import { getAuditStats } from "../lib/stats.js";
 import { writeFileSync } from "fs";
 
 const program = new Command();
@@ -76,6 +77,7 @@ program
   .option("--from <date>", "Filter from date (ISO string)")
   .option("--to <date>", "Filter to date (ISO string)")
   .option("--limit <n>", "Max results", "20")
+  .option("--json", "Output as JSON")
   .option("--db <url>", "PostgreSQL connection URL")
   .action(async (opts) => {
     if (opts.db) process.env["DATABASE_URL"] = opts.db;
@@ -89,6 +91,10 @@ program
         to: opts.to ? new Date(opts.to) : undefined,
         limit: parseInt(opts.limit, 10),
       });
+      if (opts.json) {
+        console.log(JSON.stringify({ data: events, count: events.length }, null, 2));
+        return;
+      }
       if (events.length === 0) {
         console.log("No events found.");
         return;
@@ -134,4 +140,85 @@ program
     } finally { await closeDb(); }
   });
 
+program
+  .command("apply-retention")
+  .description("Apply retention policy and delete old events for a workspace")
+  .requiredOption("--workspace <id>", "Workspace ID")
+  .option("--db <url>", "PostgreSQL connection URL")
+  .action(async (opts) => {
+    if (opts.db) process.env["DATABASE_URL"] = opts.db;
+    const sql = getDb();
+    try {
+      await migrate(sql);
+      const policy = await getRetentionPolicy(sql, opts.workspace);
+      const deleted = await applyRetention(sql, opts.workspace);
+      const days = policy ? policy.retain_days : 0;
+      console.log(`✓ Deleted ${deleted} events older than ${days} days`);
+    } finally { await closeDb(); }
+  });
+
+program
+  .command("stats")
+  .description("Show audit statistics for a workspace")
+  .requiredOption("--workspace <id>", "Workspace ID")
+  .option("--days <n>", "Number of days to look back", "30")
+  .option("--json", "Output as JSON")
+  .option("--db <url>", "PostgreSQL connection URL")
+  .action(async (opts) => {
+    if (opts.db) process.env["DATABASE_URL"] = opts.db;
+    const sql = getDb();
+    try {
+      await migrate(sql);
+      const days = parseInt(opts.days, 10);
+      const stats = await getAuditStats(sql, opts.workspace, days);
+      if (opts.json) {
+        console.log(JSON.stringify(stats, null, 2));
+        return;
+      }
+      console.log(`\nAudit stats for workspace: ${opts.workspace} (last ${days} days)\n`);
+      console.log(`  Total events: ${stats.total_events}`);
+      if (stats.top_actions.length > 0) {
+        console.log("\n  Top actions:");
+        for (const a of stats.top_actions) {
+          console.log(`    ${a.action}: ${a.count}`);
+        }
+      }
+      if (stats.events_per_day.length > 0) {
+        console.log("\n  Events per day:");
+        for (const d of stats.events_per_day) {
+          console.log(`    ${d.date}: ${d.count}`);
+        }
+      }
+    } finally { await closeDb(); }
+  });
+
 program.parse();
+
+program.command("init").description("Run migrations and confirm setup").requiredOption("--db <url>").action(async o => {
+  process.env["DATABASE_URL"] = o.db;
+  const sql = getDb(); try { await migrate(sql); console.log("✓ microservice-audit ready\n  Schema: audit.*\n  Next: microservice-audit serve --port 3006"); } finally { await closeDb(); }
+});
+
+program.command("doctor").description("Check configuration and DB connectivity").option("--db <url>").action(async o => {
+  if (o.db) process.env["DATABASE_URL"] = o.db;
+  let allOk = true;
+  const check = (label: string, pass: boolean, hint?: string) => { console.log(`  ${pass ? "✓" : "✗"} ${label}${!pass && hint ? `  →  ${hint}` : ""}`); if (!pass) allOk = false; };
+  console.log("\nmicroservice-audit doctor\n");
+  check("DATABASE_URL", !!process.env["DATABASE_URL"], "set DATABASE_URL=postgres://...");
+  console.log(`  ℹ Retention: default 90 days (configurable per workspace)`);
+  if (process.env["DATABASE_URL"]) {
+    const sql = getDb();
+    try {
+      const start = Date.now(); await sql`SELECT 1`; check(`PostgreSQL reachable (${Date.now() - start}ms)`, true);
+      const schemas = await sql`SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'audit'`;
+      check("Schema 'audit' exists", schemas.length > 0, "run: microservice-audit migrate");
+      if (schemas.length > 0) {
+        const [{ count }] = await sql`SELECT COUNT(*) as count FROM audit.events`;
+        console.log(`  ℹ Events stored: ${count}`);
+      }
+    } catch (e) { check("PostgreSQL reachable", false, e instanceof Error ? e.message : String(e)); }
+    finally { await closeDb(); }
+  }
+  console.log(`\n${allOk ? "✓ All checks passed" : "✗ Some checks failed"}\n`);
+  if (!allOk) process.exit(1);
+});

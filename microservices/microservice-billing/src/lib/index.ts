@@ -5,3 +5,4 @@ export { getSubscription, getSubscriptionByStripeId, getWorkspaceSubscription, u
 export { upsertInvoice, getInvoice, listWorkspaceInvoices, listSubscriptionInvoices, type Invoice, type InvoiceStatus, type UpsertInvoiceData } from "./invoices.js";
 export { handleStripeWebhook, WebhookSignatureError } from "./stripe-webhooks.js";
 export { createCheckoutSession, createPortalSession, type CheckoutSessionData, type CheckoutSessionResult, type PortalSessionResult } from "./checkout.js";
+export { isTrialing, isActive, daysUntilRenewal, canAccess, type Subscription as SubscriptionHelper } from "./helpers.js";

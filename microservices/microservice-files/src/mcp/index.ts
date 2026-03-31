@@ -8,7 +8,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
-import { listFiles, getFile, softDeleteFile } from "../lib/files.js";
+import { listFiles, getFile, softDeleteFile, renameFile, moveFile, bulkSoftDelete, getStorageStats } from "../lib/files.js";
 import { createFolder, listFolders } from "../lib/folders.js";
 import { getUrl } from "../lib/storage.js";
 
@@ -92,6 +92,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["workspace_id"],
       },
     },
+    {
+      name: "files_rename_file",
+      description: "Rename a file by ID",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "File ID" },
+          name: { type: "string", description: "New name for the file" },
+        },
+        required: ["id", "name"],
+      },
+    },
+    {
+      name: "files_move_file",
+      description: "Move a file to a different folder",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "File ID" },
+          folder_id: { type: ["string", "null"], description: "Target folder ID (null to move to root)" },
+        },
+        required: ["id"],
+      },
+    },
+    {
+      name: "files_get_storage_stats",
+      description: "Get storage statistics for a workspace",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspace_id: { type: "string", description: "Workspace ID" },
+        },
+        required: ["workspace_id"],
+      },
+    },
+    {
+      name: "files_bulk_delete",
+      description: "Soft delete multiple files by IDs",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ids: { type: "array", items: { type: "string" }, description: "Array of file IDs to delete" },
+        },
+        required: ["ids"],
+      },
+    },
   ],
 }));
 
@@ -148,6 +194,24 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         a.parent_id !== undefined ? String(a.parent_id) : undefined
       )
     );
+  }
+
+  if (name === "files_rename_file") {
+    return text(await renameFile(sql, String(a.id), String(a.name)));
+  }
+
+  if (name === "files_move_file") {
+    const folderId = a.folder_id !== undefined && a.folder_id !== null ? String(a.folder_id) : null;
+    return text(await moveFile(sql, String(a.id), folderId));
+  }
+
+  if (name === "files_get_storage_stats") {
+    return text(await getStorageStats(sql, String(a.workspace_id)));
+  }
+
+  if (name === "files_bulk_delete") {
+    const ids = Array.isArray(a.ids) ? (a.ids as unknown[]).map(String) : [];
+    return text({ deleted: await bulkSoftDelete(sql, ids) });
   }
 
   throw new Error(`Unknown tool: ${name}`);

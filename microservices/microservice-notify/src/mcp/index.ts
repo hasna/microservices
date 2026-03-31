@@ -5,9 +5,10 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
 import { sendNotification } from "../lib/send.js";
-import { listUserNotifications, markRead, countUnread } from "../lib/notifications.js";
-import { setPreference } from "../lib/preferences.js";
-import { createTemplate, listTemplates } from "../lib/templates.js";
+import { listUserNotifications, markRead, countUnread, deleteNotification } from "../lib/notifications.js";
+import { setPreference, getUserPreferences } from "../lib/preferences.js";
+import { createTemplate, listTemplates, deleteTemplate } from "../lib/templates.js";
+import { sendBatch } from "../lib/batch.js";
 
 const server = new Server({ name: "microservice-notify", version: "0.0.1" }, { capabilities: { tools: {} } });
 
@@ -97,6 +98,59 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
     description: "List all notification templates",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "notify_delete_notification",
+    description: "Delete a notification by ID",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "notify_list_preferences",
+    description: "List all notification preferences for a user",
+    inputSchema: {
+      type: "object",
+      properties: { user_id: { type: "string" } },
+      required: ["user_id"],
+    },
+  },
+  {
+    name: "notify_delete_template",
+    description: "Delete a notification template by ID",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "notify_send_batch",
+    description: "Send multiple notifications in batch",
+    inputSchema: {
+      type: "object",
+      properties: {
+        notifications: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              userId: { type: "string" },
+              workspaceId: { type: "string" },
+              channel: { type: "string", enum: ["email", "sms", "in_app", "webhook"] },
+              type: { type: "string" },
+              title: { type: "string" },
+              body: { type: "string" },
+              data: { type: "object" },
+            },
+            required: ["userId", "channel", "type", "body"],
+          },
+        },
+      },
+      required: ["notifications"],
+    },
+  },
 ]}));
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -152,6 +206,34 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   if (name === "notify_list_templates") {
     return t(await listTemplates(sql));
+  }
+
+  if (name === "notify_delete_notification") {
+    const deleted = await deleteNotification(sql, String(a.id));
+    return t({ ok: deleted });
+  }
+
+  if (name === "notify_list_preferences") {
+    return t(await getUserPreferences(sql, String(a.user_id)));
+  }
+
+  if (name === "notify_delete_template") {
+    const deleted = await deleteTemplate(sql, String(a.id));
+    return t({ ok: deleted });
+  }
+
+  if (name === "notify_send_batch") {
+    const notifications = a.notifications as Array<{
+      userId: string;
+      workspaceId?: string;
+      channel: "email" | "sms" | "in_app" | "webhook";
+      type: string;
+      title?: string;
+      body: string;
+      data?: Record<string, unknown>;
+    }>;
+    const results = await sendBatch(sql, notifications);
+    return t({ results, total: notifications.length, succeeded: results.filter(r => r.success).length, failed: results.filter(r => !r.success).length });
   }
 
   throw new Error(`Unknown tool: ${name}`);

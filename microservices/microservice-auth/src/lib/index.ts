@@ -77,3 +77,6 @@ export {
 
 // High-level login flow
 export { login, register, refreshTokens } from "./auth.js";
+
+// Middleware / request validation helper
+export { validateRequest, requireScope, type RequestIdentity } from "./middleware.js";

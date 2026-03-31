@@ -8,7 +8,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
-import { listUsers, getUserById, createUser, deleteUser } from "../lib/users.js";
+import { listUsers, getUserById, createUser, deleteUser, updateUser } from "../lib/users.js";
 import { listUserSessions, revokeSession, revokeAllUserSessions } from "../lib/sessions.js";
 import { createApiKey, listApiKeys, revokeApiKey } from "../lib/api-keys.js";
 
@@ -29,6 +29,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     { name: "auth_create_api_key", description: "Create an API key for a user", inputSchema: { type: "object", properties: { user_id: { type: "string" }, name: { type: "string" }, scopes: { type: "array", items: { type: "string" } } }, required: ["user_id", "name"] } },
     { name: "auth_list_api_keys", description: "List API keys for a user", inputSchema: { type: "object", properties: { user_id: { type: "string" } }, required: ["user_id"] } },
     { name: "auth_revoke_api_key", description: "Revoke an API key", inputSchema: { type: "object", properties: { id: { type: "string" }, user_id: { type: "string" } }, required: ["id", "user_id"] } },
+    { name: "auth_update_user", description: "Update a user's profile (name, avatar_url, email_verified, metadata)", inputSchema: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, avatar_url: { type: "string" }, email_verified: { type: "boolean" }, metadata: { type: "object" } }, required: ["id"] } },
+    { name: "auth_search_users", description: "Search users by email prefix or name", inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] } },
   ],
 }));
 
@@ -51,6 +53,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (name === "auth_create_api_key") return text(await createApiKey(sql, String(a.user_id), { name: String(a.name), scopes: a.scopes as string[] | undefined }));
   if (name === "auth_list_api_keys") return text(await listApiKeys(sql, String(a.user_id)));
   if (name === "auth_revoke_api_key") return text({ revoked: await revokeApiKey(sql, String(a.id), String(a.user_id)) });
+  if (name === "auth_update_user") return text(await updateUser(sql, String(a.id), { name: a.name as string | undefined, avatar_url: a.avatar_url as string | undefined, email_verified: a.email_verified as boolean | undefined, metadata: a.metadata as Record<string, unknown> | undefined }));
+  if (name === "auth_search_users") {
+    const q = String(a.query).toLowerCase();
+    const all = await listUsers(sql, { limit: Number(a.limit ?? 20) });
+    return text(all.filter(u => u.email.includes(q) || (u.name ?? "").toLowerCase().includes(q)));
+  }
 
   throw new Error(`Unknown tool: ${name}`);
 });

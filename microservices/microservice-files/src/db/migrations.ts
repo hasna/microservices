@@ -18,6 +18,7 @@ export async function migrate(sql: Sql): Promise<void> {
 
   await runMigration(sql, "001_folders", migration001);
   await runMigration(sql, "002_files", migration002);
+  await runMigration(sql, "003_content_hash", migration003);
 }
 
 async function runMigration(
@@ -49,6 +50,11 @@ async function migration001(sql: Sql): Promise<void> {
 
   await sql`CREATE INDEX ON files.folders (workspace_id)`;
   await sql`CREATE INDEX ON files.folders (parent_id)`;
+}
+
+async function migration003(sql: Sql): Promise<void> {
+  await sql`ALTER TABLE files.files ADD COLUMN IF NOT EXISTS content_hash TEXT`;
+  await sql`CREATE INDEX IF NOT EXISTS files_files_content_hash ON files.files (content_hash) WHERE content_hash IS NOT NULL`;
 }
 
 async function migration002(sql: Sql): Promise<void> {

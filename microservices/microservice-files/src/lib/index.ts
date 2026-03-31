@@ -20,6 +20,11 @@ export {
   softDeleteFile,
   hardDeleteFile,
   countFiles,
+  renameFile,
+  moveFile,
+  bulkSoftDelete,
+  getStorageStats,
+  findDuplicates,
   type FileRecord,
 } from "./files.js";
 

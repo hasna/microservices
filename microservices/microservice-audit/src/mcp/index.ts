@@ -9,7 +9,8 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
 import { logEvent, queryEvents, countEvents, getEvent, exportEvents } from "../lib/events.js";
-import { setRetentionPolicy } from "../lib/retention.js";
+import { setRetentionPolicy, getRetentionPolicy, applyRetention } from "../lib/retention.js";
+import { getAuditStats } from "../lib/stats.js";
 
 const server = new Server(
   { name: "microservice-audit", version: "0.0.1" },
@@ -115,6 +116,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["workspace_id", "retain_days"],
       },
     },
+    {
+      name: "audit_get_retention",
+      description: "Get the retention policy for a workspace",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspace_id: { type: "string" },
+        },
+        required: ["workspace_id"],
+      },
+    },
+    {
+      name: "audit_apply_retention",
+      description: "Apply retention policy and delete old events for a workspace",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspace_id: { type: "string" },
+        },
+        required: ["workspace_id"],
+      },
+    },
+    {
+      name: "audit_get_stats",
+      description: "Get audit statistics for a workspace",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspace_id: { type: "string" },
+          days: { type: "number", description: "Number of days to look back (default 30)" },
+        },
+        required: ["workspace_id"],
+      },
+    },
   ],
 }));
 
@@ -188,6 +223,20 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   if (name === "audit_set_retention") {
     return text(await setRetentionPolicy(sql, String(a.workspace_id), Number(a.retain_days)));
+  }
+
+  if (name === "audit_get_retention") {
+    return text(await getRetentionPolicy(sql, String(a.workspace_id)));
+  }
+
+  if (name === "audit_apply_retention") {
+    const deleted = await applyRetention(sql, String(a.workspace_id));
+    return text({ deleted });
+  }
+
+  if (name === "audit_get_stats") {
+    const days = a.days ? Number(a.days) : 30;
+    return text(await getAuditStats(sql, String(a.workspace_id), days));
   }
 
   throw new Error(`Unknown tool: ${name}`);

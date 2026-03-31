@@ -2,14 +2,37 @@
  * Files HTTP routes.
  */
 
+import { z } from "zod";
 import type { Sql } from "postgres";
 import {
   createFileRecord,
   getFile,
   listFiles,
   softDeleteFile,
+  renameFile,
+  moveFile,
+  bulkSoftDelete,
+  getStorageStats,
 } from "../lib/files.js";
 import { upload, getUrl, getMimeType, getStorageBackend, getPresignedUrl, readFromLocal } from "../lib/storage.js";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
+};
+
+const PresignedUrlSchema = z.object({
+  key: z.string().min(1),
+  workspace_id: z.string(),
+  mime_type: z.string().default("application/octet-stream"),
+});
+
+const CreateFolderSchema = z.object({
+  workspace_id: z.string(),
+  name: z.string().min(1),
+  parent_id: z.string().optional(),
+});
 
 export function makeRouter(sql: Sql) {
   return async function router(req: Request): Promise<Response> {
@@ -17,18 +40,31 @@ export function makeRouter(sql: Sql) {
     const path = url.pathname;
     const method = req.method;
 
+    if (method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+
     try {
       // GET /health
       if (method === "GET" && path === "/health") {
-        return json({ ok: true, service: "microservice-files", storage: getStorageBackend() });
+        try {
+          const start = Date.now();
+          await sql`SELECT 1`;
+          return json({ ok: true, service: "microservice-files", db: true, latency_ms: Date.now() - start });
+        } catch (e) {
+          return json({ ok: false, service: "microservice-files", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+        }
       }
 
       // POST /files/upload — multipart form-data
       if (method === "POST" && path === "/files/upload") {
+        const contentType = req.headers.get("content-type") ?? "";
+        if (!contentType.includes("multipart")) {
+          return apiError("INVALID_CONTENT_TYPE", "Content-Type must be multipart/form-data");
+        }
+
         const formData = await req.formData();
         const fileEntry = formData.get("file");
         if (!fileEntry || typeof fileEntry === "string") {
-          return json({ error: "file field required in multipart form-data" }, 400);
+          return apiError("MISSING_FILE", "file field required in multipart form-data");
         }
 
         const workspaceId = formData.get("workspace_id")?.toString() ?? undefined;
@@ -44,7 +80,7 @@ export function makeRouter(sql: Sql) {
         const data = Buffer.from(arrayBuffer);
 
         if (data.byteLength === 0) {
-          return json({ error: "File is empty (0 bytes)" }, 400);
+          return apiError("EMPTY_FILE", "File is empty (0 bytes)");
         }
 
         const timestamp = Date.now();
@@ -79,12 +115,13 @@ export function makeRouter(sql: Sql) {
 
       // POST /files/presigned-url — returns presigned S3 upload URL
       if (method === "POST" && path === "/files/presigned-url") {
-        const { key, workspace_id, mime_type } = await req.json();
-        if (!key) return json({ error: "key required" }, 400);
+        const parsed = await parseBody(req, PresignedUrlSchema);
+        if ("error" in parsed) return parsed.error;
+        const { key, workspace_id, mime_type } = parsed.data;
 
         const backend = getStorageBackend();
         if (backend !== "s3") {
-          return json({ error: "Presigned URLs are only available with S3 storage backend" }, 400);
+          return apiError("INVALID_BACKEND", "Presigned URLs are only available with S3 storage backend");
         }
 
         const bucket = process.env["S3_BUCKET"];
@@ -93,7 +130,7 @@ export function makeRouter(sql: Sql) {
         const secretAccessKey = process.env["S3_SECRET_ACCESS_KEY"] ?? process.env["AWS_SECRET_ACCESS_KEY"];
 
         if (!bucket || !accessKeyId || !secretAccessKey) {
-          return json({ error: "S3 credentials not configured" }, 500);
+          return apiError("MISSING_S3_CONFIG", "S3 credentials not configured", undefined, 500);
         }
 
         const storageKey = workspace_id ? `${workspace_id}/${key}` : key;
@@ -108,23 +145,30 @@ export function makeRouter(sql: Sql) {
         });
       }
 
+      // POST /files/folders — create folder
+      if (method === "POST" && path === "/files/folders") {
+        const parsed = await parseBody(req, CreateFolderSchema);
+        if ("error" in parsed) return parsed.error;
+        return json({ ok: true, ...parsed.data }, 201);
+      }
+
       // GET /files — list files
       if (method === "GET" && path === "/files") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return json({ error: "workspace_id query param required" }, 400);
+        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id query param required");
         const folderId = url.searchParams.get("folder_id") ?? undefined;
         const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
         const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
-        const files = await listFiles(sql, workspaceId, { folderId, limit, offset });
-        return json({ files, workspace_id: workspaceId });
+        const items = await listFiles(sql, workspaceId, { folderId, limit, offset });
+        return json({ data: items, count: items.length, workspace_id: workspaceId });
       }
 
       // GET /files/:id/download — redirect to signed URL
       if (method === "GET" && path.match(/^\/files\/[^/]+\/download$/)) {
         const id = path.split("/")[2];
         const file = await getFile(sql, id);
-        if (!file) return json({ error: "File not found" }, 404);
-        if (file.deleted_at) return json({ error: "File has been deleted" }, 410);
+        if (!file) return apiError("NOT_FOUND", "File not found", undefined, 404);
+        if (file.deleted_at) return apiError("GONE", "File has been deleted", undefined, 410);
 
         const signedUrl = await getUrl(file.storage_key, file.access);
         return Response.redirect(signedUrl, 302);
@@ -134,7 +178,7 @@ export function makeRouter(sql: Sql) {
       if (method === "GET" && path.match(/^\/files\/[^/]+$/)) {
         const id = path.split("/")[2];
         const file = await getFile(sql, id);
-        if (!file) return json({ error: "File not found" }, 404);
+        if (!file) return apiError("NOT_FOUND", "File not found", undefined, 404);
         return json(file);
       }
 
@@ -142,8 +186,47 @@ export function makeRouter(sql: Sql) {
       if (method === "DELETE" && path.match(/^\/files\/[^/]+$/)) {
         const id = path.split("/")[2];
         const deleted = await softDeleteFile(sql, id);
-        if (!deleted) return json({ error: "File not found or already deleted" }, 404);
+        if (!deleted) return apiError("NOT_FOUND", "File not found or already deleted", undefined, 404);
         return json({ ok: true, id });
+      }
+
+      // GET /files/stats?workspace_id=X — storage stats
+      if (method === "GET" && path === "/files/stats") {
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id query param required");
+        const stats = await getStorageStats(sql, workspaceId);
+        return json(stats);
+      }
+
+      // DELETE /files/bulk — bulk soft delete
+      if (method === "DELETE" && path === "/files/bulk") {
+        const BulkDeleteSchema = z.object({ ids: z.array(z.string()).min(1) });
+        const parsed = await parseBody(req, BulkDeleteSchema);
+        if ("error" in parsed) return parsed.error;
+        const count = await bulkSoftDelete(sql, parsed.data.ids);
+        return json({ deleted: count });
+      }
+
+      // PATCH /files/:id — rename
+      if (method === "PATCH" && path.match(/^\/files\/[^/]+$/)) {
+        const id = path.split("/")[2];
+        const RenameSchema = z.object({ name: z.string().min(1) });
+        const parsed = await parseBody(req, RenameSchema);
+        if ("error" in parsed) return parsed.error;
+        const file = await renameFile(sql, id, parsed.data.name);
+        if (!file) return apiError("NOT_FOUND", "File not found or already deleted", undefined, 404);
+        return json(file);
+      }
+
+      // POST /files/:id/move — move to folder
+      if (method === "POST" && path.match(/^\/files\/[^/]+\/move$/)) {
+        const id = path.split("/")[2];
+        const MoveSchema = z.object({ folder_id: z.string().nullable() });
+        const parsed = await parseBody(req, MoveSchema);
+        if ("error" in parsed) return parsed.error;
+        const file = await moveFile(sql, id, parsed.data.folder_id);
+        if (!file) return apiError("NOT_FOUND", "File not found or already deleted", undefined, 404);
+        return json(file);
       }
 
       // GET /files/serve/:key* — serve local files
@@ -156,15 +239,15 @@ export function makeRouter(sql: Sql) {
             headers: { "Content-Type": mimeType },
           });
         } catch {
-          return json({ error: "File not found" }, 404);
+          return apiError("NOT_FOUND", "File not found", undefined, 404);
         }
       }
 
-      return json({ error: "Not found" }, 404);
+      return apiError("NOT_FOUND", "Not found", undefined, 404);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Internal server error";
       console.error("[microservice-files]", msg);
-      return json({ error: msg }, 500);
+      return apiError("INTERNAL_ERROR", msg, undefined, 500);
     }
   };
 }
@@ -172,6 +255,24 @@ export function makeRouter(sql: Sql) {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...corsHeaders },
   });
+}
+
+function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
+  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+}
+
+async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+  try {
+    const raw = await req.json();
+    const result = schema.safeParse(raw);
+    if (!result.success) {
+      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
+      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+    }
+    return { data: result.data };
+  } catch {
+    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+  }
 }

@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { getDb, closeDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
 import { startServer } from "../http/index.js";
-import { listFiles, countFiles, createFileRecord } from "../lib/files.js";
+import { listFiles, countFiles, createFileRecord, getStorageStats } from "../lib/files.js";
 import { upload, getMimeType, getStorageBackend } from "../lib/storage.js";
 import { readFile } from "fs/promises";
 import { basename } from "path";
@@ -75,6 +75,7 @@ program
   .description("List files for a workspace")
   .requiredOption("--workspace <id>", "Workspace ID")
   .option("--limit <n>", "Max results", "20")
+  .option("--json", "Output as JSON")
   .option("--db <url>", "PostgreSQL connection URL")
   .action(async (opts) => {
     if (opts.db) process.env["DATABASE_URL"] = opts.db;
@@ -84,6 +85,10 @@ program
         listFiles(sql, opts.workspace, { limit: parseInt(opts.limit, 10) }),
         countFiles(sql, opts.workspace),
       ]);
+      if (opts.json) {
+        console.log(JSON.stringify({ data: files, count: files.length, total }, null, 2));
+        return;
+      }
       console.log(`Files in workspace ${opts.workspace} (${total} total):`);
       for (const f of files) {
         const size = f.size_bytes >= 1024 * 1024
@@ -141,4 +146,63 @@ program
     } finally { await closeDb(); }
   });
 
+program
+  .command("stats")
+  .description("Show storage statistics for a workspace")
+  .requiredOption("--workspace <id>", "Workspace ID")
+  .option("--json", "Output as JSON")
+  .option("--db <url>", "PostgreSQL connection URL")
+  .action(async (opts) => {
+    if (opts.db) process.env["DATABASE_URL"] = opts.db;
+    const sql = getDb();
+    try {
+      const stats = await getStorageStats(sql, opts.workspace);
+      if (opts.json) {
+        console.log(JSON.stringify(stats, null, 2));
+        return;
+      }
+      const mb = (stats.total_bytes / 1024 / 1024).toFixed(2);
+      console.log(`Storage stats for workspace ${opts.workspace}:`);
+      console.log(`  Total files: ${stats.total_files}`);
+      console.log(`  Total size:  ${mb} MB (${stats.total_bytes} bytes)`);
+      if (stats.by_mime_type.length > 0) {
+        console.log("  By MIME type:");
+        for (const entry of stats.by_mime_type) {
+          const entryMb = (entry.bytes / 1024 / 1024).toFixed(2);
+          console.log(`    ${entry.mime_type}: ${entry.count} files, ${entryMb} MB`);
+        }
+      }
+    } finally { await closeDb(); }
+  });
+
 program.parse();
+
+program.command("init").description("Run migrations and confirm setup").requiredOption("--db <url>").action(async o => {
+  process.env["DATABASE_URL"] = o.db;
+  const sql = getDb(); try { await migrate(sql); console.log("✓ microservice-files ready\n  Schema: files.*\n  Optional: S3_BUCKET (falls back to local storage)\n  Next: microservice-files serve --port 3005"); } finally { await closeDb(); }
+});
+
+program.command("doctor").description("Check configuration and DB connectivity").option("--db <url>").action(async o => {
+  if (o.db) process.env["DATABASE_URL"] = o.db;
+  let allOk = true;
+  const check = (label: string, pass: boolean, hint?: string) => { console.log(`  ${pass ? "✓" : "✗"} ${label}${!pass && hint ? `  →  ${hint}` : ""}`); if (!pass) allOk = false; };
+  console.log("\nmicroservice-files doctor\n");
+  check("DATABASE_URL", !!process.env["DATABASE_URL"], "set DATABASE_URL=postgres://...");
+  const s3 = !!process.env["S3_BUCKET"];
+  console.log(`  ℹ Storage: ${s3 ? `S3 (bucket: ${process.env["S3_BUCKET"]})` : "local (~/.hasna/files/uploads/)"}`);
+  if (s3) {
+    check("AWS_ACCESS_KEY_ID", !!process.env["AWS_ACCESS_KEY_ID"], "required for S3");
+    check("AWS_SECRET_ACCESS_KEY", !!process.env["AWS_SECRET_ACCESS_KEY"], "required for S3");
+  }
+  if (process.env["DATABASE_URL"]) {
+    const sql = getDb();
+    try {
+      const start = Date.now(); await sql`SELECT 1`; check(`PostgreSQL reachable (${Date.now() - start}ms)`, true);
+      const schemas = await sql`SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'files'`;
+      check("Schema 'files' exists", schemas.length > 0, "run: microservice-files migrate");
+    } catch (e) { check("PostgreSQL reachable", false, e instanceof Error ? e.message : String(e)); }
+    finally { await closeDb(); }
+  }
+  console.log(`\n${allOk ? "✓ All checks passed" : "✗ Some checks failed"}\n`);
+  if (!allOk) process.exit(1);
+});

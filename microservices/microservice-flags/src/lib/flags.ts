@@ -64,3 +64,7 @@ export async function addRule(sql: Sql, flagId: string, data: { name?: string; t
 export async function listRules(sql: Sql, flagId: string) {
   return sql`SELECT * FROM flags.rules WHERE flag_id = ${flagId} ORDER BY priority DESC`;
 }
+
+export async function getFlagHistory(sql: Sql, flagId: string, limit = 50): Promise<unknown[]> {
+  return sql`SELECT * FROM flags.flag_history WHERE flag_id = ${flagId} ORDER BY changed_at DESC LIMIT ${limit}`;
+}
