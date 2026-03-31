@@ -1,7 +1,7 @@
 {
   "name": "@hasna/microservices",
-  "version": "0.0.17",
-  "description": "Production-grade microservice building blocks for SaaS apps — auth, teams, billing, notify, files, audit, flags, jobs. Each with PostgreSQL, HTTP API, MCP server, and CLI.",
+  "version": "0.0.18",
+  "description": "Production-grade microservice building blocks for SaaS apps — 15 services covering identity, billing, AI, storage, search, and more. Each with PostgreSQL, HTTP API, MCP server, and CLI.",
   "type": "module",
   "bin": {
     "microservices": "./bin/index.js",
@@ -32,16 +32,19 @@
   "keywords": [
     "microservices",
     "saas",
+    "ai-agents",
     "auth",
     "billing",
     "stripe",
     "postgresql",
+    "pgvector",
+    "llm-gateway",
     "feature-flags",
     "background-jobs",
+    "vector-search",
     "mcp",
     "model-context-protocol",
     "ai",
-    "agent",
     "cli"
   ],
   "author": "Hasna",
@@ -64,7 +67,14 @@
     "@hasna/microservice-files": "^0.0.1",
     "@hasna/microservice-audit": "^0.0.1",
     "@hasna/microservice-flags": "^0.0.1",
-    "@hasna/microservice-jobs": "^0.0.1"
+    "@hasna/microservice-jobs": "^0.0.1",
+    "@hasna/microservice-llm": "^0.0.1",
+    "@hasna/microservice-memory": "^0.0.1",
+    "@hasna/microservice-search": "^0.0.1",
+    "@hasna/microservice-usage": "^0.0.1",
+    "@hasna/microservice-webhooks": "^0.0.1",
+    "@hasna/microservice-onboarding": "^0.0.1",
+    "@hasna/microservice-waitlist": "^0.0.1"
   },
   "engines": {
     "bun": ">=1.0.0"

@@ -16,12 +16,15 @@ const HAS_DB = Boolean(DB_URL);
 // ─── Registry & Hub (no DB needed) ────────────────────────────────────────────
 
 describe("Hub registry", () => {
-  it("has exactly 8 production microservices", () => {
-    expect(MICROSERVICES).toHaveLength(8);
+  it("has 15 production microservices", () => {
+    expect(MICROSERVICES).toHaveLength(15);
   });
 
-  it("all 8 services have correct package names", () => {
-    const expected = ["auth", "teams", "billing", "notify", "files", "audit", "flags", "jobs"];
+  it("all 15 services have correct package names", () => {
+    const expected = [
+      "auth", "teams", "billing", "notify", "files", "audit", "flags", "jobs",
+      "llm", "memory", "search", "usage", "webhooks", "onboarding", "waitlist",
+    ];
     const actual = MICROSERVICES.map((m) => m.name).sort();
     expect(actual).toEqual(expected.sort());
   });
@@ -41,7 +44,7 @@ describe("Hub registry", () => {
 
   it("all services have unique schema prefixes", () => {
     const prefixes = MICROSERVICES.map((m) => m.schemaPrefix);
-    expect(new Set(prefixes).size).toBe(8);
+    expect(new Set(prefixes).size).toBe(15);
   });
 
   it("search finds auth by keyword", () => {

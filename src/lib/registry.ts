@@ -28,6 +28,7 @@ export const CATEGORIES = [
   "Observability",
   "Growth",
   "Infrastructure",
+  "AI",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
@@ -136,6 +137,106 @@ export const MICROSERVICES: MicroserviceMeta[] = [
     tags: ["jobs", "queues", "background", "cron", "scheduling", "workers", "retry"],
     requiredEnv: ["DATABASE_URL"],
     optionalEnv: ["JOBS_PORT", "JOBS_WORKER_CONCURRENCY"],
+  },
+
+  // ─── AI-Native Layer ──────────────────────────────────────────────────────
+
+  {
+    name: "llm",
+    displayName: "LLM",
+    description:
+      "LLM gateway: multi-provider routing (OpenAI/Anthropic/Groq), per-workspace rate limiting, token cost tracking, response caching, and fallback chains.",
+    category: "AI",
+    package: "@hasna/microservice-llm",
+    binary: "microservice-llm",
+    schemaPrefix: "llm",
+    tags: ["llm", "openai", "anthropic", "groq", "ai", "gateway", "cost-tracking", "rate-limiting"],
+    requiredEnv: ["DATABASE_URL"],
+    optionalEnv: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY", "LLM_PORT"],
+  },
+  {
+    name: "memory",
+    displayName: "Memory",
+    description:
+      "Persistent agent memory with pgvector semantic search, full-text fallback, importance scoring, collections, and per-user/workspace recall.",
+    category: "AI",
+    package: "@hasna/microservice-memory",
+    binary: "microservice-memory",
+    schemaPrefix: "memory",
+    tags: ["memory", "embeddings", "pgvector", "semantic-search", "rag", "ai-agents", "recall"],
+    requiredEnv: ["DATABASE_URL"],
+    optionalEnv: ["OPENAI_API_KEY", "MEMORY_PORT"],
+  },
+  {
+    name: "search",
+    displayName: "Search",
+    description:
+      "Full-text + semantic/vector search (pgvector) across any data collection. Hybrid BM25+cosine scoring. Works without API keys (text-only mode).",
+    category: "AI",
+    package: "@hasna/microservice-search",
+    binary: "microservice-search",
+    schemaPrefix: "search",
+    tags: ["search", "full-text", "semantic", "vector", "pgvector", "hybrid", "rag"],
+    requiredEnv: ["DATABASE_URL"],
+    optionalEnv: ["OPENAI_API_KEY", "SEARCH_PORT"],
+  },
+
+  // ─── Operations Layer ──────────────────────────────────────────────────────
+
+  {
+    name: "usage",
+    displayName: "Usage",
+    description:
+      "Usage metering for API calls, tokens, storage, or any custom metric. Quota enforcement, daily/monthly aggregates, overage detection.",
+    category: "Observability",
+    package: "@hasna/microservice-usage",
+    binary: "microservice-usage",
+    schemaPrefix: "usage",
+    tags: ["usage", "metering", "quotas", "billing", "limits", "analytics"],
+    requiredEnv: ["DATABASE_URL"],
+    optionalEnv: ["USAGE_PORT"],
+  },
+  {
+    name: "webhooks",
+    displayName: "Webhooks",
+    description:
+      "Reliable outbound webhook delivery with HMAC signing, retries (exponential backoff), delivery logs, and endpoint health tracking.",
+    category: "Infrastructure",
+    package: "@hasna/microservice-webhooks",
+    binary: "microservice-webhooks",
+    schemaPrefix: "webhooks",
+    tags: ["webhooks", "outbound", "delivery", "retry", "signing", "integrations"],
+    requiredEnv: ["DATABASE_URL"],
+    optionalEnv: ["WEBHOOKS_PORT"],
+  },
+
+  // ─── Growth Layer ──────────────────────────────────────────────────────────
+
+  {
+    name: "onboarding",
+    displayName: "Onboarding",
+    description:
+      "User activation flows with checklist step tracking, required vs optional steps, completion percentage, and per-user/workspace progress.",
+    category: "Growth",
+    package: "@hasna/microservice-onboarding",
+    binary: "microservice-onboarding",
+    schemaPrefix: "onboarding",
+    tags: ["onboarding", "activation", "checklists", "flows", "user-journey"],
+    requiredEnv: ["DATABASE_URL"],
+    optionalEnv: ["ONBOARDING_PORT"],
+  },
+  {
+    name: "waitlist",
+    displayName: "Waitlist",
+    description:
+      "Waitlist management with referral codes, priority scoring, batch invite logic, and per-campaign tracking. Standard for AI product launches.",
+    category: "Growth",
+    package: "@hasna/microservice-waitlist",
+    binary: "microservice-waitlist",
+    schemaPrefix: "waitlist",
+    tags: ["waitlist", "referral", "invites", "launch", "growth"],
+    requiredEnv: ["DATABASE_URL"],
+    optionalEnv: ["WAITLIST_PORT"],
   },
 ];
 

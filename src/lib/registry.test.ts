@@ -2,12 +2,13 @@ import { describe, test, expect } from "bun:test";
 import { MICROSERVICES, CATEGORIES, getMicroservice, getMicroservicesByCategory, searchMicroservices } from "./registry.js";
 
 describe("Registry", () => {
-  test("has 8 production microservices", () => {
-    expect(MICROSERVICES.length).toBe(8);
+  test("has 15 production microservices", () => {
+    expect(MICROSERVICES.length).toBe(15);
   });
 
   test("has all expected service names", () => {
     const names = MICROSERVICES.map((m) => m.name);
+    // Original 8
     expect(names).toContain("auth");
     expect(names).toContain("teams");
     expect(names).toContain("billing");
@@ -16,6 +17,14 @@ describe("Registry", () => {
     expect(names).toContain("audit");
     expect(names).toContain("flags");
     expect(names).toContain("jobs");
+    // New 7
+    expect(names).toContain("llm");
+    expect(names).toContain("memory");
+    expect(names).toContain("search");
+    expect(names).toContain("usage");
+    expect(names).toContain("webhooks");
+    expect(names).toContain("onboarding");
+    expect(names).toContain("waitlist");
   });
 
   test("has categories", () => {
