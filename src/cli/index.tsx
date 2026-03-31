@@ -1,455 +1,173 @@
 #!/usr/bin/env bun
-import React from "react";
-import { render } from "ink";
+/**
+ * @hasna/microservices hub CLI
+ * Manages all @hasna/microservice-* packages.
+ */
+
 import { Command } from "commander";
 import chalk from "chalk";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { App } from "./components/App.js";
-import {
-  ensureParentDirectory,
-  parseTimeoutMs,
-  upsertClaudeMcpConfig,
-  upsertCodexMcpConfig,
-  upsertGeminiMcpConfig,
-} from "./config-utils.js";
-import {
-  MICROSERVICES,
-  CATEGORIES,
-  getMicroservice,
-  getMicroservicesByCategory,
-  searchMicroservices,
-} from "../lib/registry.js";
+import { MICROSERVICES, getMicroservice, searchMicroservices } from "../lib/registry.js";
 import {
   installMicroservice,
   installMicroservices,
   getInstalledMicroservices,
   removeMicroservice,
   getMicroserviceStatus,
+  microserviceExists,
 } from "../lib/installer.js";
-import {
-  runMicroserviceCommand,
-  getMicroserviceOperations,
-  getMicroserviceCliPath,
-} from "../lib/runner.js";
+import { runMicroserviceCommand } from "../lib/runner.js";
 import { getPackageVersion } from "../lib/package-info.js";
-import { getHubAdapter } from "../lib/database.js";
-import { registerCloudCommands } from "@hasna/cloud";
-
-const isTTY = process.stdout.isTTY ?? false;
 
 const program = new Command();
 
 program
   .name("microservices")
-  .description("Mini business apps for AI agents — invoices, contacts, bookkeeping and more")
-  .version(getPackageVersion())
-  .enablePositionalOptions();
+  .description("Production-grade microservice building blocks for SaaS apps")
+  .version(getPackageVersion());
 
-// Interactive mode (default)
+// List all microservices
 program
-  .command("interactive", { isDefault: true })
-  .alias("i")
-  .description("Interactive microservice browser")
-  .action(() => {
-    if (!isTTY) {
-      console.log("Non-interactive environment detected. Use a subcommand:\n");
-      console.log("  microservices list              List all available microservices");
-      console.log("  microservices search <query>     Search microservices");
-      console.log("  microservices install <names...> Install microservices");
-      console.log("  microservices remove <name>      Remove a microservice");
-      console.log("  microservices info <name>        Show microservice details");
-      console.log("  microservices status             Show installed status");
-      console.log("  microservices categories         List categories");
-      console.log("  microservices run <name> [args]  Run a microservice command");
-      console.log("\nRun 'microservices --help' for full usage.");
-      process.exit(0);
+  .command("list")
+  .description("List all available microservices")
+  .option("--installed", "Show only installed microservices")
+  .action((opts) => {
+    const services = opts.installed
+      ? MICROSERVICES.filter((m) => microserviceExists(m.name))
+      : MICROSERVICES;
+
+    console.log(chalk.bold("\nAvailable microservices:\n"));
+    for (const m of services) {
+      const installed = microserviceExists(m.name);
+      const status = installed ? chalk.green("✓ installed") : chalk.gray("  available");
+      console.log(`  ${status}  ${chalk.cyan(m.binary.padEnd(22))}  ${m.description.slice(0, 60)}`);
     }
-    render(<App />);
+    console.log();
   });
 
-// Install command
+// Install one or more microservices
 program
-  .command("install")
-  .alias("add")
-  .argument("[services...]", "Microservices to install")
-  .option("-o, --overwrite", "Overwrite existing installations", false)
-  .option("-c, --category <category>", "Install all microservices in a category")
-  .option("--json", "Output results as JSON", false)
-  .description("Install one or more microservices")
-  .action((services: string[], options) => {
-    let toInstall = [...services];
+  .command("install [names...]")
+  .description("Install microservices globally via bun")
+  .option("--all", "Install all microservices")
+  .option("--force", "Reinstall even if already installed")
+  .action(async (names: string[], opts) => {
+    const targets = opts.all
+      ? MICROSERVICES.map((m) => m.name)
+      : names.length > 0
+      ? names
+      : [];
 
-    if (options.category) {
-      const matched = CATEGORIES.find(
-        (c) => c.toLowerCase() === options.category.toLowerCase()
-      );
-      if (!matched) {
-        console.error(
-          chalk.red(`Unknown category: "${options.category}". Available: ${CATEGORIES.join(", ")}`)
-        );
-        process.exit(1);
-      }
-      const categoryServices = getMicroservicesByCategory(matched);
-      toInstall.push(...categoryServices.map((m) => m.name));
-    }
-
-    if (toInstall.length === 0) {
-      console.error(chalk.red("No microservices specified. Use: microservices install <names...>"));
+    if (targets.length === 0) {
+      console.error(chalk.red("Specify microservice names or use --all"));
       process.exit(1);
     }
 
-    // Deduplicate
-    toInstall = [...new Set(toInstall)];
-
-    const results = installMicroservices(toInstall, {
-      overwrite: options.overwrite,
-    });
-
-    if (options.json) {
-      console.log(JSON.stringify(results, null, 2));
-      return;
-    }
+    console.log(chalk.bold(`\nInstalling ${targets.length} microservice(s)...\n`));
+    const results = installMicroservices(targets, { force: opts.force });
 
     for (const r of results) {
       if (r.success) {
-        console.log(chalk.green(`  + ${r.microservice}`) + chalk.gray(` -> ${r.path}`));
+        console.log(`  ${chalk.green("✓")} ${r.microservice}${r.version ? ` (${r.version})` : ""}`);
       } else {
-        console.log(chalk.red(`  x ${r.microservice}`) + chalk.gray(` ${r.error}`));
+        console.log(`  ${chalk.red("✗")} ${r.microservice}: ${r.error}`);
       }
     }
-
-    const successCount = results.filter((r) => r.success).length;
-    if (successCount > 0) {
-      console.log(chalk.green(`\nInstalled ${successCount} microservice(s).`));
-    }
+    console.log();
   });
 
-// Remove command
+// Remove a microservice
 program
-  .command("remove")
-  .alias("rm")
-  .argument("<name>", "Microservice to remove")
-  .option("--delete-data", "Also delete the database file", false)
+  .command("remove <name>")
   .description("Remove an installed microservice")
-  .action((name: string, options) => {
-    const removed = removeMicroservice(name, { deleteData: options.deleteData });
-    if (removed) {
-      console.log(
-        chalk.green(`Removed ${name}.`) +
-          (options.deleteData
-            ? chalk.yellow(" Database deleted.")
-            : chalk.gray(" Database preserved."))
-      );
-    } else {
-      console.log(chalk.red(`Microservice '${name}' not found.`));
-    }
+  .action((name: string) => {
+    const ok = removeMicroservice(name);
+    if (ok) console.log(chalk.green(`✓ Removed ${name}`));
+    else console.log(chalk.red(`✗ Failed to remove ${name} — is it installed?`));
   });
 
-// List command
+// Status of all or one microservice
 program
-  .command("list")
-  .alias("ls")
-  .option("-c, --category <category>", "Filter by category")
-  .option("--installed", "Show only installed", false)
-  .option("--json", "Output as JSON", false)
-  .description("List available microservices")
-  .action((options) => {
-    let services = MICROSERVICES;
-
-    if (options.category) {
-      const matched = CATEGORIES.find(
-        (c) => c.toLowerCase() === options.category.toLowerCase()
-      );
-      if (!matched) {
-        console.error(
-          chalk.red(`Unknown category. Available: ${CATEGORIES.join(", ")}`)
-        );
-        process.exit(1);
-      }
-      services = getMicroservicesByCategory(matched);
-    }
-
-    if (options.installed) {
-      const installed = getInstalledMicroservices();
-      services = services.filter((m) => installed.includes(m.name));
-    }
-
-    if (options.json) {
-      console.log(JSON.stringify(services, null, 2));
-      return;
-    }
-
-    const installed = getInstalledMicroservices();
-
-    // Group by category
-    const grouped = new Map<string, typeof services>();
-    for (const m of services) {
-      const cat = m.category;
-      if (!grouped.has(cat)) grouped.set(cat, []);
-      grouped.get(cat)!.push(m);
-    }
-
-    for (const [category, items] of grouped) {
-      console.log(chalk.bold.blue(`\n  ${category}`));
-      for (const m of items) {
-        const status = installed.includes(m.name) ? chalk.green(" [installed]") : "";
-        console.log(
-          `    ${chalk.white(m.name.padEnd(20))} ${chalk.gray(m.description)}${status}`
-        );
-      }
+  .command("status [name]")
+  .description("Show installation status")
+  .action((name?: string) => {
+    const targets = name ? [name] : MICROSERVICES.map((m) => m.name);
+    console.log(chalk.bold("\nMicroservice status:\n"));
+    for (const n of targets) {
+      const s = getMicroserviceStatus(n);
+      const icon = s.installed ? chalk.green("✓") : chalk.gray("✗");
+      const ver = s.version ? chalk.gray(`v${s.version}`) : "";
+      const env = s.meta?.requiredEnv.join(", ") ?? "";
+      console.log(`  ${icon} ${n.padEnd(20)} ${ver.padEnd(12)} ${env ? chalk.gray(`needs: ${env}`) : ""}`);
     }
     console.log();
   });
 
-// Search command
+// Run a command on an installed microservice
 program
-  .command("search")
-  .argument("<query>", "Search term")
-  .option("--json", "Output as JSON", false)
-  .description("Search microservices")
-  .action((query: string, options) => {
+  .command("run <name> [args...]")
+  .description("Run a command on an installed microservice")
+  .action(async (name: string, args: string[]) => {
+    const result = await runMicroserviceCommand(name, args);
+    if (result.stdout) process.stdout.write(result.stdout + "\n");
+    if (result.stderr) process.stderr.write(result.stderr + "\n");
+    process.exit(result.exitCode);
+  });
+
+// Search microservices
+program
+  .command("search <query>")
+  .description("Search microservices by name or keyword")
+  .action((query: string) => {
     const results = searchMicroservices(query);
-
-    if (options.json) {
-      console.log(JSON.stringify(results, null, 2));
-      return;
-    }
-
     if (results.length === 0) {
-      console.log(chalk.yellow(`No microservices matching "${query}".`));
+      console.log(chalk.gray(`No microservices matching "${query}"`));
       return;
     }
-
     for (const m of results) {
-      console.log(
-        `  ${chalk.white(m.name.padEnd(20))} ${chalk.blue(m.category.padEnd(15))} ${chalk.gray(m.description)}`
-      );
+      console.log(`  ${chalk.cyan(m.name.padEnd(20))}  ${m.description}`);
     }
   });
 
-// Info command
+// Migrate all installed microservices
 program
-  .command("info")
-  .argument("<name>", "Microservice name")
-  .option("--json", "Output as JSON", false)
-  .description("Show microservice details")
-  .action((name: string, options) => {
-    const meta = getMicroservice(name);
-    if (!meta) {
-      console.error(chalk.red(`Microservice '${name}' not found.`));
-      process.exit(1);
-    }
-
-    const status = getMicroserviceStatus(name);
-
-    if (options.json) {
-      console.log(JSON.stringify({ ...meta, ...status }, null, 2));
-      return;
-    }
-
-    console.log(chalk.bold(`\n  ${meta.displayName}`));
-    console.log(chalk.gray(`  ${meta.description}\n`));
-    console.log(`  Category:  ${chalk.blue(meta.category)}`);
-    console.log(`  Tags:      ${meta.tags.map((t) => chalk.cyan(t)).join(", ")}`);
-    console.log(`  Installed: ${status.installed ? chalk.green("yes") : chalk.gray("no")}`);
-    if (status.hasDatabase) {
-      const sizeKb = (status.dbSizeBytes / 1024).toFixed(1);
-      console.log(`  Database:  ${chalk.green(`${sizeKb} KB`)}`);
-    }
-    console.log(`  Data dir:  ${chalk.gray(status.dataDir)}`);
-    console.log();
-  });
-
-// Status command
-program
-  .command("status")
-  .description("Show status of all installed microservices")
-  .option("--json", "Output as JSON", false)
-  .action((options) => {
+  .command("migrate-all")
+  .description("Run migrations on all installed microservices")
+  .option("--db <url>", "PostgreSQL connection URL (overrides DATABASE_URL)")
+  .action(async (opts) => {
+    if (opts.db) process.env["DATABASE_URL"] = opts.db;
     const installed = getInstalledMicroservices();
-
     if (installed.length === 0) {
       console.log(chalk.yellow("No microservices installed."));
       return;
     }
-
-    const statuses = installed.map((name) => getMicroserviceStatus(name));
-
-    if (options.json) {
-      console.log(JSON.stringify(statuses, null, 2));
-      return;
-    }
-
-    console.log(chalk.bold("\n  Installed Microservices\n"));
-    for (const s of statuses) {
-      const sizeKb = s.hasDatabase ? `${(s.dbSizeBytes / 1024).toFixed(1)} KB` : "no db";
-      const dbIcon = s.hasDatabase ? chalk.green("●") : chalk.gray("○");
-      console.log(`  ${dbIcon} ${chalk.white(s.name.padEnd(20))} ${chalk.gray(sizeKb)}`);
+    console.log(chalk.bold(`\nMigrating ${installed.length} microservice(s)...\n`));
+    for (const name of installed) {
+      const result = await runMicroserviceCommand(name, ["migrate"]);
+      if (result.success) console.log(`  ${chalk.green("✓")} ${name}`);
+      else console.log(`  ${chalk.red("✗")} ${name}: ${result.stderr || result.stdout}`);
     }
     console.log();
   });
 
-// Categories command
+// Info about a microservice
 program
-  .command("categories")
-  .description("List microservice categories")
-  .option("--json", "Output as JSON", false)
-  .action((options) => {
-    const categoryCounts = CATEGORIES.map((cat) => ({
-      category: cat,
-      count: getMicroservicesByCategory(cat).length,
-    }));
-
-    if (options.json) {
-      console.log(JSON.stringify(categoryCounts, null, 2));
-      return;
-    }
-
-    console.log(chalk.bold("\n  Categories\n"));
-    for (const { category, count } of categoryCounts) {
-      console.log(`  ${chalk.blue(category.padEnd(20))} ${chalk.gray(`${count} microservices`)}`);
-    }
-    console.log(`\n  ${chalk.bold("Total:")} ${MICROSERVICES.length} microservices\n`);
+  .command("info <name>")
+  .description("Show detailed info about a microservice")
+  .action((name: string) => {
+    const m = getMicroservice(name);
+    if (!m) { console.error(chalk.red(`Unknown microservice: ${name}`)); process.exit(1); }
+    const installed = microserviceExists(name);
+    console.log(chalk.bold(`\n${m.displayName}`));
+    console.log(`  Package:     ${chalk.cyan(m.package)}`);
+    console.log(`  Binary:      ${m.binary}`);
+    console.log(`  Schema:      ${m.schemaPrefix}.*`);
+    console.log(`  Category:    ${m.category}`);
+    console.log(`  Status:      ${installed ? chalk.green("installed") : chalk.gray("not installed")}`);
+    console.log(`  Description: ${m.description}`);
+    console.log(`  Required env: ${m.requiredEnv.join(", ")}`);
+    if (m.optionalEnv?.length) console.log(`  Optional env: ${m.optionalEnv.join(", ")}`);
+    console.log(`  Tags:        ${m.tags.join(", ")}`);
+    console.log();
   });
 
-// Run command
-program
-  .command("run")
-  .argument("<name>", "Microservice name")
-  .argument("[args...]", "Command arguments")
-  .option("-t, --timeout <ms>", "Timeout in milliseconds", "30000")
-  .allowUnknownOption(true)
-  .passThroughOptions(true)
-  .description("Run a command on an installed microservice")
-  .action(async (name: string, args: string[], options) => {
-    const meta = getMicroservice(name);
-    if (!meta) {
-      console.error(chalk.red(`Microservice '${name}' not found.`));
-      process.exit(1);
-    }
-
-    if (!getMicroserviceCliPath(name)) {
-      console.error(chalk.red(`Microservice '${name}' is not installed or has no CLI.`));
-      process.exit(1);
-    }
-
-    let timeout: number;
-    try {
-      timeout = parseTimeoutMs(options.timeout);
-    } catch (error) {
-      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
-      process.exit(1);
-    }
-
-    const result = await runMicroserviceCommand(name, args, timeout);
-
-    if (result.stdout) console.log(result.stdout);
-    if (result.stderr) console.error(result.stderr);
-
-    process.exit(result.exitCode);
-  });
-
-// Operations command
-program
-  .command("ops")
-  .argument("<name>", "Microservice name")
-  .description("List available operations for a microservice")
-  .action(async (name: string) => {
-    const meta = getMicroservice(name);
-    if (!meta) {
-      console.error(chalk.red(`Microservice '${name}' not found.`));
-      process.exit(1);
-    }
-
-    if (!getMicroserviceCliPath(name)) {
-      console.error(chalk.red(`Microservice '${name}' is not installed.`));
-      process.exit(1);
-    }
-
-    const ops = await getMicroserviceOperations(name);
-    console.log(ops.helpText);
-  });
-
-// MCP setup command
-program
-  .command("mcp")
-  .description("Register MCP server with AI coding agents")
-  .option("--register <target>", "Register with: claude, codex, gemini, or all", "all")
-  .action((options) => {
-    const target = options.register;
-    const mcpBin = "microservices-mcp";
-    const mcpBinFull = join(homedir(), ".bun", "bin", "microservices-mcp");
-    let registered = 0;
-
-    // Claude Code (~/.claude.json)
-    if (target === "all" || target === "claude") {
-      const claudePath = join(homedir(), ".claude.json");
-      try {
-        const content = existsSync(claudePath) ? readFileSync(claudePath, "utf-8") : undefined;
-        writeFileSync(claudePath, upsertClaudeMcpConfig(content, mcpBin));
-        console.log(chalk.green("  + Claude Code") + chalk.gray(` (${claudePath})`));
-        registered++;
-      } catch (e) {
-        console.log(chalk.red(`  x Claude Code: ${e instanceof Error ? e.message : e}`));
-      }
-    }
-
-    // Codex CLI (~/.codex/config.toml)
-    if (target === "all" || target === "codex") {
-      const codexPath = join(homedir(), ".codex", "config.toml");
-      try {
-        const existing = existsSync(codexPath) ? readFileSync(codexPath, "utf-8") : undefined;
-        const updated = upsertCodexMcpConfig(existing, mcpBin);
-        if (updated.alreadyRegistered) {
-          console.log(chalk.yellow("  ~ Codex CLI (already registered)"));
-        } else {
-          ensureParentDirectory(codexPath);
-          writeFileSync(codexPath, updated.content);
-          console.log(chalk.green("  + Codex CLI") + chalk.gray(` (${codexPath})`));
-        }
-        registered++;
-      } catch (e) {
-        console.log(chalk.red(`  x Codex CLI: ${e instanceof Error ? e.message : e}`));
-      }
-    }
-
-    // Gemini CLI (~/.gemini/settings.json)
-    if (target === "all" || target === "gemini") {
-      const geminiPath = join(homedir(), ".gemini", "settings.json");
-      try {
-        const content = existsSync(geminiPath) ? readFileSync(geminiPath, "utf-8") : undefined;
-        ensureParentDirectory(geminiPath);
-        writeFileSync(geminiPath, upsertGeminiMcpConfig(content, mcpBinFull));
-        console.log(chalk.green("  + Gemini CLI") + chalk.gray(` (${geminiPath})`));
-        registered++;
-      } catch (e) {
-        console.log(chalk.red(`  x Gemini CLI: ${e instanceof Error ? e.message : e}`));
-      }
-    }
-
-    if (registered > 0) {
-      console.log(chalk.green(`\nMCP server registered. Restart your agent to activate.`));
-    }
-  });
-
-// --- Feedback ---
-program
-  .command("feedback <message>")
-  .description("Send feedback")
-  .option("--email <email>", "Contact email")
-  .option("--category <category>", "Category: bug, feature, general")
-  .action((message: string, opts: { email?: string; category?: string }) => {
-    const adapter = getHubAdapter();
-    adapter.run(
-      "INSERT INTO feedback (message, email, category, version) VALUES (?, ?, ?, ?)",
-      message, opts.email || null, opts.category || "general", getPackageVersion()
-    );
-    console.log(chalk.green("Feedback saved. Thank you!"));
-  });
-
-// ---- cloud sync/push/pull/feedback ----
-registerCloudCommands(program, "microservices");
-
-program.parse(process.argv);
+program.parse();

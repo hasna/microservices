@@ -1,7 +1,7 @@
 {
   "name": "@hasna/microservices",
-  "version": "0.0.16",
-  "description": "Mini business apps for AI agents - invoices, contacts, bookkeeping and more, each with its own SQLite database",
+  "version": "0.0.17",
+  "description": "Production-grade microservice building blocks for SaaS apps — auth, teams, billing, notify, files, audit, flags, jobs. Each with PostgreSQL, HTTP API, MCP server, and CLI.",
   "type": "module",
   "bin": {
     "microservices": "./bin/index.js",
@@ -11,11 +11,6 @@
     "bin/",
     "dist/",
     "microservices/",
-    "!microservices/**/node_modules",
-    "!microservices/**/bun.lock",
-    "!microservices/**/*.test.ts",
-    "!microservices/**/dashboard/node_modules",
-    "!microservices/**/dashboard/src",
     "README.md",
     "LICENSE"
   ],
@@ -28,43 +23,49 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "bun build ./src/cli/index.tsx --outdir ./bin --target bun --external ink --external react --external chalk --external conf && bun build ./src/mcp/index.ts --outfile ./bin/mcp.js --target bun && bun build ./src/index.ts --outdir ./dist --target bun",
+    "build": "bun build ./src/cli/index.tsx --outfile ./bin/index.js --target bun && bun build ./src/mcp/index.ts --outfile ./bin/mcp.js --target bun && bun build ./src/index.ts --outdir ./dist --target bun",
     "dev": "bun run ./src/cli/index.tsx",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "prepublishOnly": "bun run build",
-    "postinstall": "mkdir -p $HOME/.hasna/microservices 2>/dev/null || true"
+    "postinstall": "true"
   },
   "keywords": [
     "microservices",
+    "saas",
+    "auth",
+    "billing",
+    "stripe",
+    "postgresql",
+    "feature-flags",
+    "background-jobs",
+    "mcp",
+    "model-context-protocol",
     "ai",
     "agent",
-    "sqlite",
-    "invoices",
-    "contacts",
-    "bookkeeping",
-    "cli",
-    "mcp",
-    "model-context-protocol"
+    "cli"
   ],
   "author": "Hasna",
   "license": "Apache-2.0",
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/react": "^18.2.0",
     "typescript": "^5"
   },
   "dependencies": {
-    "@hasna/cloud": "^0.1.24",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
-    "ink": "^5.0.1",
-    "ink-select-input": "^6.0.0",
-    "ink-spinner": "^5.0.0",
-    "ink-text-input": "^6.0.0",
-    "react": "^18.2.0",
     "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "@hasna/microservice-auth": "^0.0.1",
+    "@hasna/microservice-teams": "^0.0.1",
+    "@hasna/microservice-billing": "^0.0.1",
+    "@hasna/microservice-notify": "^0.0.1",
+    "@hasna/microservice-files": "^0.0.1",
+    "@hasna/microservice-audit": "^0.0.1",
+    "@hasna/microservice-flags": "^0.0.1",
+    "@hasna/microservice-jobs": "^0.0.1"
   },
   "engines": {
     "bun": ">=1.0.0"
