@@ -1,7 +1,7 @@
 {
   "name": "@hasna/microservices",
-  "version": "0.0.18",
-  "description": "Production-grade microservice building blocks for SaaS apps — 15 services covering identity, billing, AI, storage, search, and more. Each with PostgreSQL, HTTP API, MCP server, and CLI.",
+  "version": "0.0.19",
+  "description": "21 production-grade microservice building blocks for AI-native SaaS — auth, billing, LLM gateway, agent registry, RAG, guardrails, tracing, and more. Each with PostgreSQL, HTTP API, MCP server, and CLI.",
   "type": "module",
   "bin": {
     "microservices": "./bin/index.js",
@@ -74,7 +74,13 @@
     "@hasna/microservice-usage": "^0.0.1",
     "@hasna/microservice-webhooks": "^0.0.1",
     "@hasna/microservice-onboarding": "^0.0.1",
-    "@hasna/microservice-waitlist": "^0.0.1"
+    "@hasna/microservice-waitlist": "^0.0.1",
+    "@hasna/microservice-sessions": "^0.0.1",
+    "@hasna/microservice-guardrails": "^0.0.1",
+    "@hasna/microservice-knowledge": "^0.0.1",
+    "@hasna/microservice-traces": "^0.0.1",
+    "@hasna/microservice-agents": "^0.0.1",
+    "@hasna/microservice-prompts": "^0.0.1"
   },
   "engines": {
     "bun": ">=1.0.0"

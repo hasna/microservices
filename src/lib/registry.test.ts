@@ -3,7 +3,7 @@ import { MICROSERVICES, CATEGORIES, getMicroservice, getMicroservicesByCategory,
 
 describe("Registry", () => {
   test("has 15 production microservices", () => {
-    expect(MICROSERVICES.length).toBe(15);
+    expect(MICROSERVICES.length).toBe(21);
   });
 
   test("has all expected service names", () => {
@@ -25,6 +25,13 @@ describe("Registry", () => {
     expect(names).toContain("webhooks");
     expect(names).toContain("onboarding");
     expect(names).toContain("waitlist");
+    // Agent infra 6
+    expect(names).toContain("sessions");
+    expect(names).toContain("guardrails");
+    expect(names).toContain("knowledge");
+    expect(names).toContain("traces");
+    expect(names).toContain("agents");
+    expect(names).toContain("prompts");
   });
 
   test("has categories", () => {
