@@ -22,11 +22,18 @@ export interface EvalResult {
   ruleId?: string;
 }
 
-export async function evaluateFlag(sql: Sql, key: string, ctx: EvalContext): Promise<EvalResult> {
-  const [flag] = await sql<[{ id: string; default_value: string; enabled: boolean; type: string }]>`
+export async function evaluateFlag(
+  sql: Sql,
+  key: string,
+  ctx: EvalContext,
+): Promise<EvalResult> {
+  const [flag] = await sql<
+    [{ id: string; default_value: string; enabled: boolean; type: string }]
+  >`
     SELECT id, default_value, enabled, type FROM flags.flags WHERE key = ${key}`;
   if (!flag) throw new Error(`Flag '${key}' not found`);
-  if (!flag.enabled) return { key, value: flag.default_value, source: "disabled" };
+  if (!flag.enabled)
+    return { key, value: flag.default_value, source: "disabled" };
 
   // 1. Check overrides
   if (ctx.userId) {
@@ -41,13 +48,16 @@ export async function evaluateFlag(sql: Sql, key: string, ctx: EvalContext): Pro
   }
 
   // 2. Evaluate rules by priority
-  const rules = await sql<{ id: string; type: string; config: Record<string, unknown>; value: string }[]>`
+  const rules = await sql<
+    { id: string; type: string; config: any; value: string }[]
+  >`
     SELECT id, type, config, value FROM flags.rules
     WHERE flag_id = ${flag.id} AND enabled = true ORDER BY priority DESC`;
 
   for (const rule of rules) {
     const match = evaluateRule(rule, ctx);
-    if (match) return { key, value: rule.value, source: "rule", ruleId: rule.id };
+    if (match)
+      return { key, value: rule.value, source: "rule", ruleId: rule.id };
   }
 
   // 3. Default
@@ -55,25 +65,25 @@ export async function evaluateFlag(sql: Sql, key: string, ctx: EvalContext): Pro
 }
 
 function evaluateRule(
-  rule: { type: string; config: Record<string, unknown> },
-  ctx: EvalContext
+  rule: { type: string; config: any },
+  ctx: EvalContext,
 ): boolean {
   switch (rule.type) {
     case "user_list": {
-      const users = (rule.config["users"] as string[]) ?? [];
+      const users = (rule.config.users as string[]) ?? [];
       return ctx.userId ? users.includes(ctx.userId) : false;
     }
     case "percentage": {
-      const pct = (rule.config["percentage"] as number) ?? 0;
+      const pct = (rule.config.percentage as number) ?? 0;
       if (!ctx.userId) return false;
       // Deterministic hash of userId for consistent assignment
       const hash = simpleHash(ctx.userId);
-      return (hash % 100) < pct;
+      return hash % 100 < pct;
     }
     case "attribute": {
-      const attr = rule.config["attribute"] as string;
-      const op = rule.config["operator"] as string;
-      const expected = rule.config["value"];
+      const attr = rule.config.attribute as string;
+      const op = rule.config.operator as string;
+      const expected = rule.config.value;
       const actual = ctx.attributes?.[attr];
       if (actual === undefined) return false;
       if (op === "eq") return String(actual) === String(expected);
@@ -84,8 +94,8 @@ function evaluateRule(
       return false;
     }
     case "plan": {
-      const plans = (rule.config["plans"] as string[]) ?? [];
-      const userPlan = ctx.attributes?.["plan"] as string | undefined;
+      const plans = (rule.config.plans as string[]) ?? [];
+      const userPlan = ctx.attributes?.plan as string | undefined;
       return userPlan ? plans.includes(userPlan) : false;
     }
     default:
@@ -105,13 +115,17 @@ function simpleHash(str: string): number {
 export async function evaluateAllFlags(
   sql: Sql,
   workspaceId: string | undefined,
-  ctx: EvalContext
+  ctx: EvalContext,
 ): Promise<Record<string, EvalResult>> {
   const flags = await sql<{ key: string }[]>`
     SELECT key FROM flags.flags WHERE enabled = true AND (workspace_id IS NULL OR workspace_id = ${workspaceId ?? null})`;
   const results: Record<string, EvalResult> = {};
-  await Promise.all(flags.map(async f => {
-    try { results[f.key] = await evaluateFlag(sql, f.key, ctx); } catch {}
-  }));
+  await Promise.all(
+    flags.map(async (f) => {
+      try {
+        results[f.key] = await evaluateFlag(sql, f.key, ctx);
+      } catch {}
+    }),
+  );
   return results;
 }

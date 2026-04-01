@@ -16,7 +16,7 @@ export async function addAllowlistEntry(
   sql: Sql,
   workspaceId: string,
   type: string,
-  value: string
+  value: string,
 ): Promise<AllowlistEntry> {
   const [row] = await sql`
     INSERT INTO guardrails.allowlists (workspace_id, type, value)
@@ -29,7 +29,7 @@ export async function addAllowlistEntry(
 
 export async function listAllowlistEntries(
   sql: Sql,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<AllowlistEntry[]> {
   const rows = await sql`
     SELECT * FROM guardrails.allowlists
@@ -41,7 +41,7 @@ export async function listAllowlistEntries(
 
 export async function deleteAllowlistEntry(
   sql: Sql,
-  id: string
+  id: string,
 ): Promise<boolean> {
   const result = await sql`DELETE FROM guardrails.allowlists WHERE id = ${id}`;
   return result.count > 0;

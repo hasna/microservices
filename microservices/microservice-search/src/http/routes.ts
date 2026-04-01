@@ -2,10 +2,15 @@
  * Search HTTP routes.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
-import { indexDocument, deleteDocument, deleteCollection, listCollections } from "../lib/index_ops.js";
-import { search, countDocuments } from "../lib/search_ops.js";
+import { z } from "zod";
+import {
+  deleteCollection,
+  deleteDocument,
+  indexDocument,
+  listCollections,
+} from "../lib/index_ops.js";
+import { search } from "../lib/search_ops.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -51,9 +56,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-search", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-search",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-search", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-search",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -89,13 +107,19 @@ export function makeRouter(sql: Sql) {
       if (method === "DELETE" && path === "/search/documents") {
         const parsed = await parseBody(req, DeleteDocSchema);
         if ("error" in parsed) return parsed.error;
-        const deleted = await deleteDocument(sql, parsed.data.collection, parsed.data.doc_id);
+        const deleted = await deleteDocument(
+          sql,
+          parsed.data.collection,
+          parsed.data.doc_id,
+        );
         return json({ ok: deleted, deleted });
       }
 
       // DELETE /search/collections/:name
       if (method === "DELETE" && path.startsWith("/search/collections/")) {
-        const name = decodeURIComponent(path.slice("/search/collections/".length));
+        const name = decodeURIComponent(
+          path.slice("/search/collections/".length),
+        );
         const workspaceId = url.searchParams.get("workspace_id") ?? undefined;
         const count = await deleteCollection(sql, name, workspaceId);
         return json({ ok: true, deleted: count });
@@ -123,20 +147,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

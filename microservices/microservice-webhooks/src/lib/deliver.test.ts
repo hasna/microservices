@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { computeSignature, backoffSeconds, matchesEvent } from "./deliver.js";
+import { describe, expect, it } from "bun:test";
+import { backoffSeconds, computeSignature, matchesEvent } from "./deliver.js";
 
 describe("computeSignature", () => {
   it("produces sha256=<64 hex chars> format", () => {
@@ -50,9 +50,15 @@ describe("matchesEvent", () => {
   });
 
   it("non-empty events array only matches listed events", () => {
-    expect(matchesEvent(["user.created", "user.deleted"], "user.created")).toBe(true);
-    expect(matchesEvent(["user.created", "user.deleted"], "user.deleted")).toBe(true);
-    expect(matchesEvent(["user.created", "user.deleted"], "payment.succeeded")).toBe(false);
+    expect(matchesEvent(["user.created", "user.deleted"], "user.created")).toBe(
+      true,
+    );
+    expect(matchesEvent(["user.created", "user.deleted"], "user.deleted")).toBe(
+      true,
+    );
+    expect(
+      matchesEvent(["user.created", "user.deleted"], "payment.succeeded"),
+    ).toBe(false);
   });
 
   it("exact match is required (no partial matching)", () => {

@@ -1,6 +1,11 @@
 import type { Sql } from "postgres";
 
-export type InvoiceStatus = "draft" | "open" | "paid" | "uncollectible" | "void";
+export type InvoiceStatus =
+  | "draft"
+  | "open"
+  | "paid"
+  | "uncollectible"
+  | "void";
 
 export interface Invoice {
   id: string;
@@ -28,7 +33,10 @@ export interface UpsertInvoiceData {
   due_date?: string;
 }
 
-export async function upsertInvoice(sql: Sql, data: UpsertInvoiceData): Promise<Invoice> {
+export async function upsertInvoice(
+  sql: Sql,
+  data: UpsertInvoiceData,
+): Promise<Invoice> {
   if (data.stripe_invoice_id) {
     const [inv] = await sql<Invoice[]>`
       INSERT INTO billing.invoices
@@ -59,15 +67,30 @@ export async function upsertInvoice(sql: Sql, data: UpsertInvoiceData): Promise<
   return inv;
 }
 
-export async function getInvoice(sql: Sql, id: string): Promise<Invoice | null> {
-  const [inv] = await sql<Invoice[]>`SELECT * FROM billing.invoices WHERE id = ${id}`;
+export async function getInvoice(
+  sql: Sql,
+  id: string,
+): Promise<Invoice | null> {
+  const [inv] = await sql<
+    Invoice[]
+  >`SELECT * FROM billing.invoices WHERE id = ${id}`;
   return inv ?? null;
 }
 
-export async function listWorkspaceInvoices(sql: Sql, workspaceId: string): Promise<Invoice[]> {
-  return sql<Invoice[]>`SELECT * FROM billing.invoices WHERE workspace_id = ${workspaceId} ORDER BY created_at DESC`;
+export async function listWorkspaceInvoices(
+  sql: Sql,
+  workspaceId: string,
+): Promise<Invoice[]> {
+  return sql<
+    Invoice[]
+  >`SELECT * FROM billing.invoices WHERE workspace_id = ${workspaceId} ORDER BY created_at DESC`;
 }
 
-export async function listSubscriptionInvoices(sql: Sql, subscriptionId: string): Promise<Invoice[]> {
-  return sql<Invoice[]>`SELECT * FROM billing.invoices WHERE subscription_id = ${subscriptionId} ORDER BY created_at DESC`;
+export async function listSubscriptionInvoices(
+  sql: Sql,
+  subscriptionId: string,
+): Promise<Invoice[]> {
+  return sql<
+    Invoice[]
+  >`SELECT * FROM billing.invoices WHERE subscription_id = ${subscriptionId} ORDER BY created_at DESC`;
 }

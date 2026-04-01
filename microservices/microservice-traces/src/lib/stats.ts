@@ -29,12 +29,14 @@ export interface TraceStats {
 export async function getTraceStats(
   sql: Sql,
   workspaceId: string,
-  since?: Date
+  since?: Date,
 ): Promise<TraceStats> {
   const sinceDate = since ?? new Date(Date.now() - 30 * 86400000);
 
   // Basic counts
-  const [counts] = await sql<[{ total: string; completed: string; errored: string }]>`
+  const [counts] = await sql<
+    [{ total: string; completed: string; errored: string }]
+  >`
     SELECT
       COUNT(*) as total,
       COUNT(*) FILTER (WHERE status = 'completed') as completed,
@@ -44,7 +46,9 @@ export async function getTraceStats(
   `;
 
   // Averages
-  const [avgs] = await sql<[{ avg_duration: string; avg_tokens: string; avg_cost: string }]>`
+  const [avgs] = await sql<
+    [{ avg_duration: string; avg_tokens: string; avg_cost: string }]
+  >`
     SELECT
       COALESCE(AVG(total_duration_ms), 0) as avg_duration,
       COALESCE(AVG(total_tokens), 0) as avg_tokens,
@@ -63,7 +67,15 @@ export async function getTraceStats(
   `;
 
   // By span type
-  const bySpanType = await sql<{ type: string; count: string; avg_duration: string; total_tokens: string; total_cost: string }[]>`
+  const bySpanType = await sql<
+    {
+      type: string;
+      count: string;
+      avg_duration: string;
+      total_tokens: string;
+      total_cost: string;
+    }[]
+  >`
     SELECT
       s.type,
       COUNT(*) as count,
@@ -94,23 +106,29 @@ export async function getTraceStats(
   `;
 
   return {
-    total_traces: parseInt(counts.total),
-    completed: parseInt(counts.completed),
-    errored: parseInt(counts.errored),
+    total_traces: parseInt(counts.total, 10),
+    completed: parseInt(counts.completed, 10),
+    errored: parseInt(counts.errored, 10),
     avg_duration_ms: Math.round(parseFloat(avgs.avg_duration)),
     avg_tokens: Math.round(parseFloat(avgs.avg_tokens)),
     avg_cost_usd: parseFloat(parseFloat(avgs.avg_cost).toFixed(6)),
     p50_duration_ms: Math.round(parseFloat(percentiles.p50)),
     p95_duration_ms: Math.round(parseFloat(percentiles.p95)),
-    by_span_type: bySpanType.map(r => ({
+    by_span_type: bySpanType.map((r) => ({
       type: r.type,
-      count: parseInt(r.count),
+      count: parseInt(r.count, 10),
       avg_duration_ms: Math.round(parseFloat(r.avg_duration)),
-      total_tokens: parseInt(r.total_tokens),
+      total_tokens: parseInt(r.total_tokens, 10),
       total_cost_usd: parseFloat(parseFloat(r.total_cost).toFixed(6)),
     })),
-    top_errors: topErrors.map(r => ({ error: r.error, count: parseInt(r.count) })),
-    traces_per_day: tracesPerDay.map(r => ({ date: r.date, count: parseInt(r.count) })),
+    top_errors: topErrors.map((r) => ({
+      error: r.error,
+      count: parseInt(r.count, 10),
+    })),
+    traces_per_day: tracesPerDay.map((r) => ({
+      date: r.date,
+      count: parseInt(r.count, 10),
+    })),
   };
 }
 

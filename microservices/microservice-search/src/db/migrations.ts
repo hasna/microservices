@@ -23,19 +23,22 @@ export async function migrate(sql: Sql): Promise<void> {
 async function runMigration(
   sql: Sql,
   name: string,
-  fn: (sql: Sql) => Promise<void>
+  fn: (sql: Sql) => Promise<void>,
 ): Promise<void> {
-  const [existing] = await sql`SELECT id FROM search._migrations WHERE name = ${name}`;
+  const [existing] =
+    await sql`SELECT id FROM search._migrations WHERE name = ${name}`;
   if (existing) return;
-  await sql.begin(async (tx) => {
-    await fn(tx);
-    await tx`INSERT INTO search._migrations (name) VALUES (${name})`;
+  await sql.begin(async (tx: any) => {
+    await fn(tx as any);
+    await (tx as any)`INSERT INTO search._migrations (name) VALUES (${name})`;
   });
 }
 
 async function migration001(sql: Sql): Promise<void> {
   // Try to enable pgvector extension (optional — may not be installed)
-  try { await sql`CREATE EXTENSION IF NOT EXISTS vector`; } catch {}
+  try {
+    await sql`CREATE EXTENSION IF NOT EXISTS vector`;
+  } catch {}
 
   await sql`
     CREATE TABLE search.documents (

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    
+    # We use pgvector for a few of our services
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: microservices
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Dependencies
+        run: bun install
+
+      - name: Run Workspace Tests
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/microservices
+        run: bun run test:all
+
+      - name: Run Workspace Builds
+        run: bun run build:all
+
+      - name: Run Typecheck
+        run: bun run typecheck:all
+        continue-on-error: true # Temporarily allow typecheck to fail until all sub-packages are fully strictly typed

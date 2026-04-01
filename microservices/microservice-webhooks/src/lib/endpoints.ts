@@ -13,12 +13,15 @@ export interface Endpoint {
   updated_at: string;
 }
 
-export async function createEndpoint(sql: Sql, data: {
-  workspace_id: string;
-  url: string;
-  secret?: string;
-  events?: string[];
-}): Promise<Endpoint> {
+export async function createEndpoint(
+  sql: Sql,
+  data: {
+    workspace_id: string;
+    url: string;
+    secret?: string;
+    events?: string[];
+  },
+): Promise<Endpoint> {
   const [ep] = await sql<Endpoint[]>`
     INSERT INTO webhooks.endpoints (workspace_id, url, secret, events)
     VALUES (${data.workspace_id}, ${data.url}, ${data.secret ?? null}, ${data.events ?? []})
@@ -26,22 +29,34 @@ export async function createEndpoint(sql: Sql, data: {
   return ep;
 }
 
-export async function getEndpoint(sql: Sql, id: string): Promise<Endpoint | null> {
-  const [ep] = await sql<Endpoint[]>`SELECT * FROM webhooks.endpoints WHERE id = ${id}`;
+export async function getEndpoint(
+  sql: Sql,
+  id: string,
+): Promise<Endpoint | null> {
+  const [ep] = await sql<
+    Endpoint[]
+  >`SELECT * FROM webhooks.endpoints WHERE id = ${id}`;
   return ep ?? null;
 }
 
-export async function listWorkspaceEndpoints(sql: Sql, workspaceId: string): Promise<Endpoint[]> {
+export async function listWorkspaceEndpoints(
+  sql: Sql,
+  workspaceId: string,
+): Promise<Endpoint[]> {
   return sql<Endpoint[]>`
     SELECT * FROM webhooks.endpoints WHERE workspace_id = ${workspaceId} ORDER BY created_at DESC`;
 }
 
-export async function updateEndpoint(sql: Sql, id: string, data: {
-  url?: string;
-  secret?: string | null;
-  events?: string[];
-  active?: boolean;
-}): Promise<Endpoint | null> {
+export async function updateEndpoint(
+  sql: Sql,
+  id: string,
+  data: {
+    url?: string;
+    secret?: string | null;
+    events?: string[];
+    active?: boolean;
+  },
+): Promise<Endpoint | null> {
   const [ep] = await sql<Endpoint[]>`
     UPDATE webhooks.endpoints SET
       url       = COALESCE(${data.url ?? null}, url),

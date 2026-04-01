@@ -2,12 +2,28 @@ import type { Sql } from "postgres";
 import { enqueue } from "./queue.js";
 
 export interface Schedule {
-  id: string; name: string; cron: string; queue: string; type: string;
-  payload: Record<string, unknown>; enabled: boolean;
-  last_run_at: string | null; next_run_at: string | null; created_at: string;
+  id: string;
+  name: string;
+  cron: string;
+  queue: string;
+  type: string;
+  payload: any;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  created_at: string;
 }
 
-export async function createSchedule(sql: Sql, data: { name: string; cron: string; type: string; payload?: Record<string, unknown>; queue?: string }): Promise<Schedule> {
+export async function createSchedule(
+  sql: Sql,
+  data: {
+    name: string;
+    cron: string;
+    type: string;
+    payload?: any;
+    queue?: string;
+  },
+): Promise<Schedule> {
   const [s] = await sql<Schedule[]>`
     INSERT INTO jobs.schedules (name, cron, type, payload, queue)
     VALUES (${data.name}, ${data.cron}, ${data.type}, ${JSON.stringify(data.payload ?? {})}, ${data.queue ?? "default"})
@@ -19,7 +35,11 @@ export async function listSchedules(sql: Sql): Promise<Schedule[]> {
   return sql<Schedule[]>`SELECT * FROM jobs.schedules ORDER BY name`;
 }
 
-export async function updateSchedule(sql: Sql, id: string, data: { enabled?: boolean; payload?: Record<string, unknown> }): Promise<void> {
+export async function updateSchedule(
+  sql: Sql,
+  id: string,
+  data: { enabled?: boolean; payload?: any },
+): Promise<void> {
   await sql`UPDATE jobs.schedules SET enabled = COALESCE(${data.enabled ?? null}, enabled), payload = COALESCE(${data.payload ? JSON.stringify(data.payload) : null}::jsonb, payload), updated_at = NOW() WHERE id = ${id}`;
 }
 
@@ -43,13 +63,18 @@ export function shouldFire(cron: string, now: Date = new Date()): boolean {
 
 function matchCronField(field: string, value: number): boolean {
   if (field === "*") return true;
-  if (field.startsWith("*/")) { const step = parseInt(field.slice(2)); return value % step === 0; }
-  return parseInt(field) === value;
+  if (field.startsWith("*/")) {
+    const step = parseInt(field.slice(2), 10);
+    return value % step === 0;
+  }
+  return parseInt(field, 10) === value;
 }
 
 /** Trigger due schedules (call from a cron job every minute) */
 export async function triggerDueSchedules(sql: Sql): Promise<number> {
-  const schedules = await sql<Schedule[]>`SELECT * FROM jobs.schedules WHERE enabled = true`;
+  const schedules = await sql<
+    Schedule[]
+  >`SELECT * FROM jobs.schedules WHERE enabled = true`;
   const now = new Date();
   let triggered = 0;
   for (const s of schedules) {

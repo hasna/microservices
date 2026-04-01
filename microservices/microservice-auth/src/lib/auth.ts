@@ -3,10 +3,10 @@
  */
 
 import type { Sql } from "postgres";
-import { createUser, getUserByEmail, type User } from "./users.js";
+import { generateAccessToken, generateRefreshToken } from "./jwt.js";
 import { verifyPassword } from "./passwords.js";
 import { createSession, type Session } from "./sessions.js";
-import { generateAccessToken, generateRefreshToken } from "./jwt.js";
+import { createUser, getUserByEmail, type User } from "./users.js";
 
 export interface AuthTokens {
   access_token: string;
@@ -19,7 +19,7 @@ export interface AuthTokens {
 export async function register(
   sql: Sql,
   data: { email: string; password: string; name?: string },
-  sessionOpts: { ip?: string; user_agent?: string } = {}
+  sessionOpts: { ip?: string; user_agent?: string } = {},
 ): Promise<AuthTokens> {
   const existing = await getUserByEmail(sql, data.email);
   if (existing) throw new Error("Email already in use");
@@ -31,10 +31,10 @@ export async function register(
 export async function login(
   sql: Sql,
   data: { email: string; password: string },
-  sessionOpts: { ip?: string; user_agent?: string } = {}
+  sessionOpts: { ip?: string; user_agent?: string } = {},
 ): Promise<AuthTokens> {
   const user = await getUserByEmail(sql, data.email);
-  if (!user || !user.password_hash) throw new Error("Invalid email or password");
+  if (!user?.password_hash) throw new Error("Invalid email or password");
 
   const valid = await verifyPassword(data.password, user.password_hash);
   if (!valid) throw new Error("Invalid email or password");
@@ -45,8 +45,8 @@ export async function login(
 }
 
 export async function refreshTokens(
-  sql: Sql,
-  refreshToken: string
+  _sql: Sql,
+  refreshToken: string,
 ): Promise<{ access_token: string; expires_in: number }> {
   const { verifyJwt } = await import("./jwt.js");
   const payload = await verifyJwt(refreshToken);
@@ -59,7 +59,7 @@ export async function refreshTokens(
 async function createAuthTokens(
   sql: Sql,
   user: User,
-  sessionOpts: { ip?: string; user_agent?: string }
+  sessionOpts: { ip?: string; user_agent?: string },
 ): Promise<AuthTokens> {
   const [session, access_token, refresh_token] = await Promise.all([
     createSession(sql, user.id, sessionOpts),

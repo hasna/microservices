@@ -3,7 +3,7 @@
  */
 
 import type { Sql } from "postgres";
-import type { Trace, Span } from "./tracing.js";
+import type { Span, Trace } from "./tracing.js";
 
 export interface TraceWithSpans extends Trace {
   spans: Span[];
@@ -31,8 +31,13 @@ export interface ListSpansOpts {
   status?: string;
 }
 
-export async function getTrace(sql: Sql, id: string): Promise<TraceWithSpans | null> {
-  const [trace] = await sql<Trace[]>`SELECT * FROM traces.traces WHERE id = ${id}`;
+export async function getTrace(
+  sql: Sql,
+  id: string,
+): Promise<TraceWithSpans | null> {
+  const [trace] = await sql<
+    Trace[]
+  >`SELECT * FROM traces.traces WHERE id = ${id}`;
   if (!trace) return null;
 
   const spans = await sql<Span[]>`
@@ -42,8 +47,13 @@ export async function getTrace(sql: Sql, id: string): Promise<TraceWithSpans | n
   return { ...trace, spans };
 }
 
-export async function getTraceTree(sql: Sql, id: string): Promise<TraceTree | null> {
-  const [trace] = await sql<Trace[]>`SELECT * FROM traces.traces WHERE id = ${id}`;
+export async function getTraceTree(
+  sql: Sql,
+  id: string,
+): Promise<TraceTree | null> {
+  const [trace] = await sql<
+    Trace[]
+  >`SELECT * FROM traces.traces WHERE id = ${id}`;
   if (!trace) return null;
 
   const spans = await sql<Span[]>`
@@ -65,7 +75,7 @@ export function buildSpanTree(spans: Span[]): SpanWithChildren[] {
   for (const span of spans) {
     const node = map.get(span.id)!;
     if (span.parent_span_id && map.has(span.parent_span_id)) {
-      map.get(span.parent_span_id)!.children.push(node);
+      map.get(span.parent_span_id)?.children.push(node);
     } else {
       roots.push(node);
     }
@@ -77,13 +87,13 @@ export function buildSpanTree(spans: Span[]): SpanWithChildren[] {
 export async function listTraces(
   sql: Sql,
   workspaceId: string,
-  opts: ListTracesOpts = {}
+  opts: ListTracesOpts = {},
 ): Promise<Trace[]> {
   const limit = opts.limit ?? 50;
   const offset = opts.offset ?? 0;
 
-  const conditions: string[] = [];
-  const values: unknown[] = [];
+  const _conditions: string[] = [];
+  const _values: any[] = [];
 
   // Build dynamic query with postgres tagged template
   let query = sql`
@@ -95,7 +105,7 @@ export async function listTraces(
     query = sql`${query} AND status = ${opts.status}`;
   }
   if (opts.name) {
-    query = sql`${query} AND name ILIKE ${"%" + opts.name + "%"}`;
+    query = sql`${query} AND name ILIKE ${`%${opts.name}%`}`;
   }
   if (opts.since) {
     query = sql`${query} AND started_at >= ${opts.since}`;
@@ -117,7 +127,7 @@ export async function getSpan(sql: Sql, id: string): Promise<Span | null> {
 export async function listSpans(
   sql: Sql,
   traceId: string,
-  opts: ListSpansOpts = {}
+  opts: ListSpansOpts = {},
 ): Promise<Span[]> {
   let query = sql`
     SELECT * FROM traces.spans

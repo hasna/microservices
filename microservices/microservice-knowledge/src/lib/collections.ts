@@ -29,7 +29,10 @@ export interface CreateCollectionInput {
   embeddingModel?: string;
 }
 
-export async function createCollection(sql: Sql, data: CreateCollectionInput): Promise<Collection> {
+export async function createCollection(
+  sql: Sql,
+  data: CreateCollectionInput,
+): Promise<Collection> {
   const [col] = await sql<Collection[]>`
     INSERT INTO knowledge.collections (workspace_id, name, description, chunk_size, chunk_overlap, chunking_strategy, embedding_model)
     VALUES (
@@ -46,12 +49,20 @@ export async function createCollection(sql: Sql, data: CreateCollectionInput): P
   return col!;
 }
 
-export async function getCollection(sql: Sql, id: string): Promise<Collection | null> {
-  const [col] = await sql<Collection[]>`SELECT * FROM knowledge.collections WHERE id = ${id}`;
+export async function getCollection(
+  sql: Sql,
+  id: string,
+): Promise<Collection | null> {
+  const [col] = await sql<
+    Collection[]
+  >`SELECT * FROM knowledge.collections WHERE id = ${id}`;
   return col ?? null;
 }
 
-export async function listCollections(sql: Sql, workspaceId: string): Promise<Collection[]> {
+export async function listCollections(
+  sql: Sql,
+  workspaceId: string,
+): Promise<Collection[]> {
   return sql<Collection[]>`
     SELECT * FROM knowledge.collections
     WHERE workspace_id = ${workspaceId}

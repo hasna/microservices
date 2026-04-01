@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import type { FlowStep } from "./flows.js";
 
 // Pure logic helpers extracted from progress.ts for unit testing (no DB required)
@@ -15,8 +15,10 @@ function computeProgressSummary(flow: TestFlow, progress: TestProgress | null) {
   const steps = flow.steps;
   const completedSteps = progress?.completed_steps ?? [];
 
-  const requiredSteps = steps.filter(s => s.required !== false);
-  const completedRequired = requiredSteps.filter(s => completedSteps.includes(s.id));
+  const requiredSteps = steps.filter((s) => s.required !== false);
+  const completedRequired = requiredSteps.filter((s) =>
+    completedSteps.includes(s.id),
+  );
 
   const percentage =
     requiredSteps.length === 0
@@ -25,20 +27,28 @@ function computeProgressSummary(flow: TestFlow, progress: TestProgress | null) {
 
   const isComplete =
     requiredSteps.length === 0 ||
-    requiredSteps.every(s => completedSteps.includes(s.id));
+    requiredSteps.every((s) => completedSteps.includes(s.id));
 
   const pendingSteps = steps
-    .filter(s => !completedSteps.includes(s.id))
-    .map(s => ({ id: s.id, title: s.title, required: s.required !== false }));
+    .filter((s) => !completedSteps.includes(s.id))
+    .map((s) => ({ id: s.id, title: s.title, required: s.required !== false }));
 
-  return { percentage, is_complete: isComplete, pending_steps: pendingSteps, completed_steps: completedSteps };
+  return {
+    percentage,
+    is_complete: isComplete,
+    pending_steps: pendingSteps,
+    completed_steps: completedSteps,
+  };
 }
 
 function addStep(progress: TestProgress, stepId: string): TestProgress {
   if (progress.completed_steps.includes(stepId)) {
     return progress; // idempotent — no duplicates
   }
-  return { ...progress, completed_steps: [...progress.completed_steps, stepId] };
+  return {
+    ...progress,
+    completed_steps: [...progress.completed_steps, stepId],
+  };
 }
 
 describe("progress logic", () => {
@@ -73,10 +83,13 @@ describe("progress logic", () => {
     };
     // Only required step is done — optional is still pending
     const progress: TestProgress = { completed_steps: ["step-req"] };
-    const { is_complete, pending_steps } = computeProgressSummary(flow, progress);
+    const { is_complete, pending_steps } = computeProgressSummary(
+      flow,
+      progress,
+    );
     expect(is_complete).toBe(true);
     // optional step still shows as pending but flow is complete
-    expect(pending_steps.some(s => s.id === "step-opt")).toBe(true);
+    expect(pending_steps.some((s) => s.id === "step-opt")).toBe(true);
   });
 
   it("flow with no steps is immediately complete and percentage is 100", () => {
@@ -116,11 +129,12 @@ describe("progress logic", () => {
 
   it("null progress (not started) produces 0% and no completed steps", () => {
     const flow: TestFlow = {
-      steps: [
-        { id: "step-1", title: "Step 1", required: true },
-      ],
+      steps: [{ id: "step-1", title: "Step 1", required: true }],
     };
-    const { percentage, completed_steps, is_complete } = computeProgressSummary(flow, null);
+    const { percentage, completed_steps, is_complete } = computeProgressSummary(
+      flow,
+      null,
+    );
     expect(percentage).toBe(0);
     expect(completed_steps).toEqual([]);
     expect(is_complete).toBe(false);

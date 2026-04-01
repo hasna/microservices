@@ -5,15 +5,24 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
-import { createFlow, listFlows, getFlow } from "../lib/flows.js";
-import { startFlow, markStep, getProgress, isComplete, resetProgress } from "../lib/progress.js";
+import { createFlow, listFlows } from "../lib/flows.js";
+import {
+  getProgress,
+  isComplete,
+  markStep,
+  resetProgress,
+  startFlow,
+} from "../lib/progress.js";
 
 const server = new Server(
   { name: "microservice-onboarding", version: "0.0.1" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {} } },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -79,7 +88,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "onboarding_start_flow",
-      description: "Start an onboarding flow for a user (creates progress record, idempotent)",
+      description:
+        "Start an onboarding flow for a user (creates progress record, idempotent)",
       inputSchema: {
         type: "object",
         properties: {
@@ -120,18 +130,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const sql = getDb();
   const { name, arguments: args } = req.params;
-  const a = args as Record<string, unknown>;
+  const a = args as any;
 
   const text = (data: unknown) => ({
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
   });
 
   if (name === "onboarding_create_flow") {
-    return text(await createFlow(sql, {
-      name: String(a.name),
-      description: a.description ? String(a.description) : undefined,
-      steps: a.steps as Parameters<typeof createFlow>[1]["steps"],
-    }));
+    return text(
+      await createFlow(sql, {
+        name: String(a.name),
+        description: a.description ? String(a.description) : undefined,
+        steps: a.steps as Parameters<typeof createFlow>[1]["steps"],
+      }),
+    );
   }
 
   if (name === "onboarding_list_flows") {
@@ -143,15 +155,31 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
 
   if (name === "onboarding_mark_step") {
-    return text(await markStep(sql, String(a.user_id), String(a.flow_id), String(a.step_id)));
+    return text(
+      await markStep(
+        sql,
+        String(a.user_id),
+        String(a.flow_id),
+        String(a.step_id),
+      ),
+    );
   }
 
   if (name === "onboarding_start_flow") {
-    return text(await startFlow(sql, String(a.user_id), String(a.flow_id), a.workspace_id ? String(a.workspace_id) : undefined));
+    return text(
+      await startFlow(
+        sql,
+        String(a.user_id),
+        String(a.flow_id),
+        a.workspace_id ? String(a.workspace_id) : undefined,
+      ),
+    );
   }
 
   if (name === "onboarding_is_complete") {
-    return text({ is_complete: await isComplete(sql, String(a.user_id), String(a.flow_id)) });
+    return text({
+      is_complete: await isComplete(sql, String(a.user_id), String(a.flow_id)),
+    });
   }
 
   if (name === "onboarding_reset") {

@@ -13,7 +13,7 @@ export interface Memory {
   content: string;
   summary: string | null;
   importance: number;
-  metadata: Record<string, unknown>;
+  metadata: any;
   embedding_text: string | null;
   expires_at: Date | null;
   created_at: Date;
@@ -27,7 +27,7 @@ export interface StoreMemoryInput {
   content: string;
   summary?: string;
   importance?: number;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
   expiresAt?: Date;
 }
 
@@ -40,7 +40,10 @@ export interface SearchQuery {
   collectionId?: string;
 }
 
-export async function storeMemory(sql: Sql, data: StoreMemoryInput): Promise<Memory> {
+export async function storeMemory(
+  sql: Sql,
+  data: StoreMemoryInput,
+): Promise<Memory> {
   if (!data.content || data.content.trim() === "") {
     throw new Error("Memory content cannot be empty");
   }
@@ -79,7 +82,10 @@ export async function storeMemory(sql: Sql, data: StoreMemoryInput): Promise<Mem
   }
 }
 
-export async function searchMemories(sql: Sql, query: SearchQuery): Promise<Memory[]> {
+export async function searchMemories(
+  sql: Sql,
+  query: SearchQuery,
+): Promise<Memory[]> {
   const limit = query.limit ?? 10;
   const mode = query.mode ?? "text";
   const hasPgvector = await checkPgvector(sql);
@@ -118,7 +124,7 @@ async function semanticSearch(
   sql: Sql,
   query: SearchQuery,
   embedding: number[],
-  limit: number
+  limit: number,
 ): Promise<Memory[]> {
   const embeddingStr = `[${embedding.join(",")}]`;
   if (query.collectionId) {
@@ -144,7 +150,11 @@ async function semanticSearch(
   `;
 }
 
-async function textSearch(sql: Sql, query: SearchQuery, limit: number): Promise<Memory[]> {
+async function textSearch(
+  sql: Sql,
+  query: SearchQuery,
+  limit: number,
+): Promise<Memory[]> {
   if (query.collectionId) {
     return sql<Memory[]>`
       SELECT * FROM memory.memories
@@ -169,7 +179,9 @@ async function textSearch(sql: Sql, query: SearchQuery, limit: number): Promise<
 }
 
 export async function getMemory(sql: Sql, id: string): Promise<Memory | null> {
-  const [mem] = await sql<Memory[]>`SELECT * FROM memory.memories WHERE id = ${id}`;
+  const [mem] = await sql<
+    Memory[]
+  >`SELECT * FROM memory.memories WHERE id = ${id}`;
   return mem ?? null;
 }
 
@@ -177,7 +189,7 @@ export async function listMemories(
   sql: Sql,
   workspaceId: string,
   userId?: string,
-  limit = 50
+  limit = 50,
 ): Promise<Memory[]> {
   if (userId) {
     return sql<Memory[]>`
@@ -203,7 +215,11 @@ export async function deleteMemory(sql: Sql, id: string): Promise<boolean> {
   return (result.count ?? 0) > 0;
 }
 
-export async function updateMemoryImportance(sql: Sql, id: string, importance: number): Promise<void> {
+export async function updateMemoryImportance(
+  sql: Sql,
+  id: string,
+  importance: number,
+): Promise<void> {
   const clamped = Math.max(0.0, Math.min(1.0, importance));
   await sql`
     UPDATE memory.memories

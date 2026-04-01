@@ -1,12 +1,19 @@
-import { z } from "zod";
 import type { Sql } from "postgres";
-import { sendNotification } from "../lib/send.js";
-import { listUserNotifications, markRead, markAllRead, countUnread } from "../lib/notifications.js";
-import { getUserPreferences, setPreference } from "../lib/preferences.js";
-import { createTemplate, listTemplates } from "../lib/templates.js";
-import { createWebhookEndpoint, listWorkspaceWebhooks } from "../lib/webhooks.js";
+import { z } from "zod";
 import { sendBatch } from "../lib/batch.js";
+import {
+  listUserNotifications,
+  markAllRead,
+  markRead,
+} from "../lib/notifications.js";
+import { getUserPreferences, setPreference } from "../lib/preferences.js";
+import { sendNotification } from "../lib/send.js";
+import { createTemplate, listTemplates } from "../lib/templates.js";
 import { verifyUnsubscribeToken } from "../lib/unsubscribe.js";
+import {
+  createWebhookEndpoint,
+  listWorkspaceWebhooks,
+} from "../lib/webhooks.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,15 +51,29 @@ export function makeRouter(sql: Sql) {
     const url = new URL(req.url);
     const p = url.pathname;
     const m = req.method;
-    if (m === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    if (m === "OPTIONS")
+      return new Response(null, { status: 204, headers: corsHeaders });
     try {
       if (m === "GET" && p === "/health") {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-notify", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-notify",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-notify", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-notify",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -77,8 +98,12 @@ export function makeRouter(sql: Sql) {
         const userId = url.searchParams.get("user_id");
         if (!userId) return apiError("MISSING_PARAM", "user_id required");
         const items = await listUserNotifications(sql, userId, {
-          limit: url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : undefined,
-          offset: url.searchParams.get("offset") ? parseInt(url.searchParams.get("offset")!, 10) : undefined,
+          limit: url.searchParams.get("limit")
+            ? parseInt(url.searchParams.get("limit")!, 10)
+            : undefined,
+          offset: url.searchParams.get("offset")
+            ? parseInt(url.searchParams.get("offset")!, 10)
+            : undefined,
           unreadOnly: url.searchParams.get("unread_only") === "true",
           channel: url.searchParams.get("channel") ?? undefined,
           type: url.searchParams.get("type") ?? undefined,
@@ -112,7 +137,13 @@ export function makeRouter(sql: Sql) {
       if (m === "PUT" && p === "/notify/preferences") {
         const parsed = await parseBody(req, PreferenceSchema);
         if ("error" in parsed) return parsed.error;
-        const pref = await setPreference(sql, parsed.data.user_id, parsed.data.channel, parsed.data.type, parsed.data.enabled);
+        const pref = await setPreference(
+          sql,
+          parsed.data.user_id,
+          parsed.data.channel,
+          parsed.data.type,
+          parsed.data.enabled,
+        );
         return json(pref);
       }
 
@@ -151,7 +182,8 @@ export function makeRouter(sql: Sql) {
       // GET /notify/webhooks?workspace_id=X
       if (m === "GET" && p === "/notify/webhooks") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id required");
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id required");
         return json(await listWorkspaceWebhooks(sql, workspaceId));
       }
 
@@ -159,10 +191,20 @@ export function makeRouter(sql: Sql) {
       if (m === "POST" && p === "/notify/send-batch") {
         const raw = await req.json().catch(() => null);
         if (!raw || !Array.isArray(raw.notifications)) {
-          return apiError("VALIDATION_ERROR", "body must have notifications array");
+          return apiError(
+            "VALIDATION_ERROR",
+            "body must have notifications array",
+          );
         }
         const results = await sendBatch(sql, raw.notifications);
-        return json({ results, total: raw.notifications.length, succeeded: results.filter((r: { success: boolean }) => r.success).length, failed: results.filter((r: { success: boolean }) => !r.success).length });
+        return json({
+          results,
+          total: raw.notifications.length,
+          succeeded: results.filter((r: { success: boolean }) => r.success)
+            .length,
+          failed: results.filter((r: { success: boolean }) => !r.success)
+            .length,
+        });
       }
 
       // GET /notify/unsubscribe?token=X
@@ -170,7 +212,13 @@ export function makeRouter(sql: Sql) {
         const token = url.searchParams.get("token");
         if (!token) return apiError("MISSING_PARAM", "token required");
         const parsed = await verifyUnsubscribeToken(token);
-        if (!parsed) return apiError("INVALID_TOKEN", "Invalid or expired unsubscribe token", undefined, 400);
+        if (!parsed)
+          return apiError(
+            "INVALID_TOKEN",
+            "Invalid or expired unsubscribe token",
+            undefined,
+            400,
+          );
         // Disable the preference for this user/type across all channels
         for (const channel of ["email", "sms", "in_app", "webhook"] as const) {
           await setPreference(sql, parsed.userId, channel, parsed.type, false);
@@ -180,7 +228,10 @@ export function makeRouter(sql: Sql) {
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);
     } catch (err) {
-      return json({ error: err instanceof Error ? err.message : "Server error" }, 500);
+      return json(
+        { error: err instanceof Error ? err.message : "Server error" },
+        500,
+      );
     }
   };
 }
@@ -192,20 +243,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

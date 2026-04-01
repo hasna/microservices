@@ -19,7 +19,9 @@ export interface PortalSessionResult {
   url: string;
 }
 
-export async function createCheckoutSession(data: CheckoutSessionData): Promise<CheckoutSessionResult> {
+export async function createCheckoutSession(
+  data: CheckoutSessionData,
+): Promise<CheckoutSessionResult> {
   const params = new URLSearchParams();
   params.set("mode", "subscription");
   params.set("success_url", data.successUrl);
@@ -35,7 +37,10 @@ export async function createCheckoutSession(data: CheckoutSessionData): Promise<
   }
 
   if (data.trialPeriodDays) {
-    params.set("subscription_data[trial_period_days]", String(data.trialPeriodDays));
+    params.set(
+      "subscription_data[trial_period_days]",
+      String(data.trialPeriodDays),
+    );
   }
 
   // Pass metadata so webhook can link back to our records
@@ -46,44 +51,51 @@ export async function createCheckoutSession(data: CheckoutSessionData): Promise<
   const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${data.stripeSecretKey}`,
+      Authorization: `Bearer ${data.stripeSecretKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: params.toString(),
   });
 
   if (!response.ok) {
-    const err = await response.json() as { error?: { message?: string } };
-    throw new Error(`Stripe checkout error: ${err.error?.message ?? response.statusText}`);
+    const err = (await response.json()) as { error?: { message?: string } };
+    throw new Error(
+      `Stripe checkout error: ${err.error?.message ?? response.statusText}`,
+    );
   }
 
-  const session = await response.json() as { id: string; url: string };
+  const session = (await response.json()) as { id: string; url: string };
   return { url: session.url, sessionId: session.id };
 }
 
 export async function createPortalSession(
   customerId: string,
   returnUrl: string,
-  stripeSecretKey: string
+  stripeSecretKey: string,
 ): Promise<PortalSessionResult> {
   const params = new URLSearchParams();
   params.set("customer", customerId);
   params.set("return_url", returnUrl);
 
-  const response = await fetch("https://api.stripe.com/v1/billing_portal/sessions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${stripeSecretKey}`,
-      "Content-Type": "application/x-www-form-urlencoded",
+  const response = await fetch(
+    "https://api.stripe.com/v1/billing_portal/sessions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${stripeSecretKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params.toString(),
     },
-    body: params.toString(),
-  });
+  );
 
   if (!response.ok) {
-    const err = await response.json() as { error?: { message?: string } };
-    throw new Error(`Stripe portal error: ${err.error?.message ?? response.statusText}`);
+    const err = (await response.json()) as { error?: { message?: string } };
+    throw new Error(
+      `Stripe portal error: ${err.error?.message ?? response.statusText}`,
+    );
   }
 
-  const session = await response.json() as { url: string };
+  const session = (await response.json()) as { url: string };
   return { url: session.url };
 }

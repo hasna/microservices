@@ -8,38 +8,34 @@
  *   const conv = await createConversation(sql, { workspace_id: '...', user_id: '...', title: 'My Chat' })
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-
+// Context window
+export {
+  type ContextWindow,
+  estimateTokens,
+  getContextWindow,
+} from "./context.js";
 // Conversations
 export {
+  archiveConversation,
+  type Conversation,
   createConversation,
+  deleteConversation,
+  forkConversation,
   getConversation,
   listConversations,
   updateConversation,
-  deleteConversation,
-  archiveConversation,
-  forkConversation,
-  type Conversation,
 } from "./conversations.js";
-
+// Export
+export { exportConversation } from "./export.js";
 // Messages
 export {
   addMessage,
-  getMessages,
-  getMessage,
   deleteMessage,
+  getMessage,
+  getMessages,
+  type Message,
   pinMessage,
   searchMessages,
-  type Message,
 } from "./messages.js";
-
-// Context window
-export {
-  getContextWindow,
-  estimateTokens,
-  type ContextWindow,
-} from "./context.js";
-
-// Export
-export { exportConversation } from "./export.js";

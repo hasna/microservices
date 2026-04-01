@@ -1,11 +1,22 @@
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
 export {
-  createEndpoint, getEndpoint, listWorkspaceEndpoints, updateEndpoint, deleteEndpoint, disableEndpoint,
-  type Endpoint,
-} from "./endpoints.js";
-export {
-  triggerWebhook, processDelivery, processPendingDeliveries, replayDelivery, listDeliveries,
-  computeSignature, backoffSeconds, matchesEvent,
+  backoffSeconds,
+  computeSignature,
   type Delivery,
+  listDeliveries,
+  matchesEvent,
+  processDelivery,
+  processPendingDeliveries,
+  replayDelivery,
+  triggerWebhook,
 } from "./deliver.js";
+export {
+  createEndpoint,
+  deleteEndpoint,
+  disableEndpoint,
+  type Endpoint,
+  getEndpoint,
+  listWorkspaceEndpoints,
+  updateEndpoint,
+} from "./endpoints.js";

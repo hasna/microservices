@@ -8,49 +8,49 @@
  *   const file = await createFileRecord(sql, { ... })
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
 
 // File records
 export {
-  createFileRecord,
-  getFile,
-  listFiles,
-  updateFile,
-  softDeleteFile,
-  hardDeleteFile,
-  countFiles,
-  renameFile,
-  moveFile,
   bulkSoftDelete,
-  getStorageStats,
-  findDuplicates,
+  countFiles,
+  createFileRecord,
   type FileRecord,
+  findDuplicates,
+  getFile,
+  getStorageStats,
+  hardDeleteFile,
+  listFiles,
+  moveFile,
+  renameFile,
+  softDeleteFile,
+  updateFile,
 } from "./files.js";
 
 // Folders
 export {
+  buildPath,
   createFolder,
+  deleteFolder,
+  type Folder,
   getFolder,
   listFolders,
-  deleteFolder,
-  buildPath,
-  type Folder,
 } from "./folders.js";
 
 // Storage
 export {
-  getStorageBackend,
-  getMimeType,
-  upload,
-  getUrl,
   deleteFile,
-  uploadToS3,
-  getPresignedUrl,
-  deleteFromS3,
-  uploadToLocal,
-  getLocalUrl,
   deleteFromLocal,
+  deleteFromS3,
+  getLocalUrl,
+  getMimeType,
+  getPresignedUrl,
+  getStorageBackend,
+  getUrl,
   readFromLocal,
   type StorageBackend,
+  upload,
+  uploadToLocal,
+  uploadToS3,
 } from "./storage.js";

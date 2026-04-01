@@ -1,10 +1,22 @@
-import { z } from "zod";
 import type { Sql } from "postgres";
-import { registerAgent, deregisterAgent, getAgent, listAgents, updateAgent, heartbeat } from "../lib/registry.js";
+import { z } from "zod";
 import { getAgentHealth } from "../lib/health.js";
-import { findAgentByCapability } from "../lib/routing.js";
-import { sendMessage, receiveMessages } from "../lib/messaging.js";
-import { createTask, listTasks, claimTask, completeTask, failTask } from "../lib/tasks.js";
+import { receiveMessages, sendMessage } from "../lib/messaging.js";
+import {
+  deregisterAgent,
+  getAgent,
+  heartbeat,
+  listAgents,
+  registerAgent,
+  updateAgent,
+} from "../lib/registry.js";
+import {
+  claimTask,
+  completeTask,
+  createTask,
+  failTask,
+  listTasks,
+} from "../lib/tasks.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -55,7 +67,9 @@ const CompleteTaskSchema = z.object({
 
 export function makeRouter(sql: Sql) {
   return async function router(req: Request): Promise<Response> {
-    const url = new URL(req.url); const p = url.pathname; const m = req.method;
+    const url = new URL(req.url);
+    const p = url.pathname;
+    const m = req.method;
 
     if (m === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders });
@@ -67,9 +81,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-agents", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-agents",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-agents", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-agents",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -78,17 +105,29 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, RegisterAgentSchema);
         if ("error" in parsed) return parsed.error;
         const d = parsed.data;
-        return json(await registerAgent(sql, {
-          workspaceId: d.workspace_id, name: d.name, description: d.description,
-          model: d.model, version: d.version, capabilities: d.capabilities,
-          config: d.config, maxConcurrent: d.max_concurrent,
-        }), 201);
+        return json(
+          await registerAgent(sql, {
+            workspaceId: d.workspace_id,
+            name: d.name,
+            description: d.description,
+            model: d.model,
+            version: d.version,
+            capabilities: d.capabilities,
+            config: d.config,
+            maxConcurrent: d.max_concurrent,
+          }),
+          201,
+        );
       }
 
       // GET /agents?workspace_id&status&capability
       if (m === "GET" && p === "/agents") {
         const wsId = url.searchParams.get("workspace_id");
-        if (!wsId) return apiError("VALIDATION_ERROR", "workspace_id query param required");
+        if (!wsId)
+          return apiError(
+            "VALIDATION_ERROR",
+            "workspace_id query param required",
+          );
         const status = url.searchParams.get("status") ?? undefined;
         const capability = url.searchParams.get("capability") ?? undefined;
         const agents = await listAgents(sql, wsId, { status, capability });
@@ -98,7 +137,11 @@ export function makeRouter(sql: Sql) {
       // GET /agents/health?workspace_id
       if (m === "GET" && p === "/agents/health") {
         const wsId = url.searchParams.get("workspace_id");
-        if (!wsId) return apiError("VALIDATION_ERROR", "workspace_id query param required");
+        if (!wsId)
+          return apiError(
+            "VALIDATION_ERROR",
+            "workspace_id query param required",
+          );
         return json(await getAgentHealth(sql, wsId));
       }
 
@@ -107,10 +150,16 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, SendMessageSchema);
         if ("error" in parsed) return parsed.error;
         const d = parsed.data;
-        return json(await sendMessage(sql, {
-          workspaceId: d.workspace_id, fromAgentId: d.from_agent_id,
-          toAgentId: d.to_agent_id, type: d.type, payload: d.payload,
-        }), 201);
+        return json(
+          await sendMessage(sql, {
+            workspaceId: d.workspace_id,
+            fromAgentId: d.from_agent_id,
+            toAgentId: d.to_agent_id,
+            type: d.type,
+            payload: d.payload,
+          }),
+          201,
+        );
       }
 
       // POST /agents/tasks — create
@@ -118,10 +167,16 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, CreateTaskSchema);
         if ("error" in parsed) return parsed.error;
         const d = parsed.data;
-        return json(await createTask(sql, {
-          workspaceId: d.workspace_id, type: d.type, payload: d.payload,
-          requiredCapability: d.required_capability, priority: d.priority,
-        }), 201);
+        return json(
+          await createTask(sql, {
+            workspaceId: d.workspace_id,
+            type: d.type,
+            payload: d.payload,
+            requiredCapability: d.required_capability,
+            priority: d.priority,
+          }),
+          201,
+        );
       }
 
       // GET /agents/tasks?workspace_id&agent_id&status
@@ -135,24 +190,44 @@ export function makeRouter(sql: Sql) {
       }
 
       // GET /agents/:id
-      if (m === "GET" && p.match(/^\/agents\/[^/]+$/) && !p.includes("/health") && !p.includes("/tasks") && !p.includes("/messages")) {
+      if (
+        m === "GET" &&
+        p.match(/^\/agents\/[^/]+$/) &&
+        !p.includes("/health") &&
+        !p.includes("/tasks") &&
+        !p.includes("/messages")
+      ) {
         const id = p.split("/").pop()!;
         const agent = await getAgent(sql, id);
-        return agent ? json(agent) : apiError("NOT_FOUND", "Agent not found", undefined, 404);
+        return agent
+          ? json(agent)
+          : apiError("NOT_FOUND", "Agent not found", undefined, 404);
       }
 
       // PATCH /agents/:id
-      if (m === "PATCH" && p.match(/^\/agents\/[^/]+$/) && !p.includes("/tasks")) {
+      if (
+        m === "PATCH" &&
+        p.match(/^\/agents\/[^/]+$/) &&
+        !p.includes("/tasks")
+      ) {
         const id = p.split("/").pop()!;
         const parsed = await parseBody(req, UpdateAgentSchema);
         if ("error" in parsed) return parsed.error;
         const d = parsed.data;
         const agent = await updateAgent(sql, id, {
-          name: d.name, description: d.description, model: d.model,
-          version: d.version, status: d.status, capabilities: d.capabilities,
-          config: d.config, maxConcurrent: d.max_concurrent, lastError: d.last_error,
+          name: d.name,
+          description: d.description,
+          model: d.model,
+          version: d.version,
+          status: d.status,
+          capabilities: d.capabilities,
+          config: d.config,
+          maxConcurrent: d.max_concurrent,
+          lastError: d.last_error,
         });
-        return agent ? json(agent) : apiError("NOT_FOUND", "Agent not found", undefined, 404);
+        return agent
+          ? json(agent)
+          : apiError("NOT_FOUND", "Agent not found", undefined, 404);
       }
 
       // DELETE /agents/:id
@@ -165,7 +240,9 @@ export function makeRouter(sql: Sql) {
       if (m === "POST" && p.match(/^\/agents\/[^/]+\/heartbeat$/)) {
         const id = p.split("/")[2];
         const agent = await heartbeat(sql, id);
-        return agent ? json(agent) : apiError("NOT_FOUND", "Agent not found", undefined, 404);
+        return agent
+          ? json(agent)
+          : apiError("NOT_FOUND", "Agent not found", undefined, 404);
       }
 
       // GET /agents/:id/messages?unread_only&since&limit
@@ -174,7 +251,9 @@ export function makeRouter(sql: Sql) {
         const msgs = await receiveMessages(sql, id, {
           unreadOnly: url.searchParams.get("unread_only") === "true",
           since: url.searchParams.get("since") ?? undefined,
-          limit: url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!) : undefined,
+          limit: url.searchParams.get("limit")
+            ? parseInt(url.searchParams.get("limit")!, 10)
+            : undefined,
         });
         return json({ data: msgs, count: msgs.length });
       }
@@ -183,7 +262,9 @@ export function makeRouter(sql: Sql) {
       if (m === "POST" && p.match(/^\/agents\/[^/]+\/claim-task$/)) {
         const id = p.split("/")[2];
         const task = await claimTask(sql, id);
-        return task ? json(task) : json({ task: null, message: "No tasks available" });
+        return task
+          ? json(task)
+          : json({ task: null, message: "No tasks available" });
       }
 
       // PATCH /agents/tasks/:id — complete or fail
@@ -194,36 +275,65 @@ export function makeRouter(sql: Sql) {
         const d = parsed.data;
         if (d.status === "completed") {
           const task = await completeTask(sql, id, d.result);
-          return task ? json(task) : apiError("NOT_FOUND", "Task not found", undefined, 404);
+          return task
+            ? json(task)
+            : apiError("NOT_FOUND", "Task not found", undefined, 404);
         } else {
           const task = await failTask(sql, id, d.error ?? "Unknown error");
-          return task ? json(task) : apiError("NOT_FOUND", "Task not found", undefined, 404);
+          return task
+            ? json(task)
+            : apiError("NOT_FOUND", "Task not found", undefined, 404);
         }
       }
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);
-    } catch (err) { return json({ error: err instanceof Error ? err.message : "Server error" }, 500); }
+    } catch (err) {
+      return json(
+        { error: err instanceof Error ? err.message : "Server error" },
+        500,
+      );
+    }
   };
 }
 
 function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", ...corsHeaders } });
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders },
+  });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

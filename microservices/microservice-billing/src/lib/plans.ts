@@ -11,7 +11,7 @@ export interface Plan {
   interval: PlanInterval;
   stripe_price_id: string | null;
   active: boolean;
-  metadata: Record<string, unknown>;
+  metadata: any;
   created_at: string;
 }
 
@@ -23,7 +23,7 @@ export interface CreatePlanData {
   interval?: PlanInterval;
   stripe_price_id?: string;
   active?: boolean;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
 }
 
 export interface UpdatePlanData {
@@ -34,25 +34,45 @@ export interface UpdatePlanData {
   interval?: PlanInterval;
   stripe_price_id?: string;
   active?: boolean;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
 }
 
-export const VALID_CURRENCIES = ["usd", "eur", "gbp", "cad", "aud", "jpy", "chf", "sek", "nok", "dkk"];
+export const VALID_CURRENCIES = [
+  "usd",
+  "eur",
+  "gbp",
+  "cad",
+  "aud",
+  "jpy",
+  "chf",
+  "sek",
+  "nok",
+  "dkk",
+];
 export const VALID_INTERVALS: PlanInterval[] = ["month", "year", "one_time"];
 
 export function validatePlanData(data: CreatePlanData): string[] {
   const errors: string[] = [];
-  if (!data.name || data.name.trim().length === 0) errors.push("name is required");
-  if (typeof data.amount_cents !== "number" || data.amount_cents < 0) errors.push("amount_cents must be a non-negative number");
-  if (!Number.isInteger(data.amount_cents)) errors.push("amount_cents must be an integer");
-  if (data.currency && !VALID_CURRENCIES.includes(data.currency.toLowerCase())) errors.push(`currency must be one of: ${VALID_CURRENCIES.join(", ")}`);
-  if (data.interval && !VALID_INTERVALS.includes(data.interval)) errors.push(`interval must be one of: ${VALID_INTERVALS.join(", ")}`);
+  if (!data.name || data.name.trim().length === 0)
+    errors.push("name is required");
+  if (typeof data.amount_cents !== "number" || data.amount_cents < 0)
+    errors.push("amount_cents must be a non-negative number");
+  if (!Number.isInteger(data.amount_cents))
+    errors.push("amount_cents must be an integer");
+  if (data.currency && !VALID_CURRENCIES.includes(data.currency.toLowerCase()))
+    errors.push(`currency must be one of: ${VALID_CURRENCIES.join(", ")}`);
+  if (data.interval && !VALID_INTERVALS.includes(data.interval))
+    errors.push(`interval must be one of: ${VALID_INTERVALS.join(", ")}`);
   return errors;
 }
 
-export async function createPlan(sql: Sql, data: CreatePlanData): Promise<Plan> {
+export async function createPlan(
+  sql: Sql,
+  data: CreatePlanData,
+): Promise<Plan> {
   const errors = validatePlanData(data);
-  if (errors.length > 0) throw new Error(`Invalid plan data: ${errors.join("; ")}`);
+  if (errors.length > 0)
+    throw new Error(`Invalid plan data: ${errors.join("; ")}`);
   const [plan] = await sql<Plan[]>`
     INSERT INTO billing.plans (name, description, amount_cents, currency, interval, stripe_price_id, active, metadata)
     VALUES (
@@ -70,18 +90,29 @@ export async function createPlan(sql: Sql, data: CreatePlanData): Promise<Plan> 
 }
 
 export async function getPlan(sql: Sql, id: string): Promise<Plan | null> {
-  const [plan] = await sql<Plan[]>`SELECT * FROM billing.plans WHERE id = ${id}`;
+  const [plan] = await sql<
+    Plan[]
+  >`SELECT * FROM billing.plans WHERE id = ${id}`;
   return plan ?? null;
 }
 
-export async function listPlans(sql: Sql, opts?: { activeOnly?: boolean }): Promise<Plan[]> {
+export async function listPlans(
+  sql: Sql,
+  opts?: { activeOnly?: boolean },
+): Promise<Plan[]> {
   if (opts?.activeOnly) {
-    return sql<Plan[]>`SELECT * FROM billing.plans WHERE active = true ORDER BY amount_cents ASC`;
+    return sql<
+      Plan[]
+    >`SELECT * FROM billing.plans WHERE active = true ORDER BY amount_cents ASC`;
   }
   return sql<Plan[]>`SELECT * FROM billing.plans ORDER BY amount_cents ASC`;
 }
 
-export async function updatePlan(sql: Sql, id: string, data: UpdatePlanData): Promise<Plan | null> {
+export async function updatePlan(
+  sql: Sql,
+  id: string,
+  data: UpdatePlanData,
+): Promise<Plan | null> {
   const [plan] = await sql<Plan[]>`
     UPDATE billing.plans SET
       name = COALESCE(${data.name ?? null}, name),

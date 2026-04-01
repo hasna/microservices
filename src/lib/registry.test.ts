@@ -1,8 +1,14 @@
-import { describe, test, expect } from "bun:test";
-import { MICROSERVICES, CATEGORIES, getMicroservice, getMicroservicesByCategory, searchMicroservices } from "./registry.js";
+import { describe, expect, test } from "bun:test";
+import {
+  CATEGORIES,
+  getMicroservice,
+  getMicroservicesByCategory,
+  MICROSERVICES,
+  searchMicroservices,
+} from "./registry.js";
 
 describe("Registry", () => {
-  test("has 15 production microservices", () => {
+  test("has 21 production microservices", () => {
     expect(MICROSERVICES.length).toBe(21);
   });
 
@@ -41,14 +47,14 @@ describe("Registry", () => {
   test("getMicroservice finds by name", () => {
     const ms = getMicroservice("auth");
     expect(ms).toBeDefined();
-    expect(ms!.name).toBe("auth");
-    expect(ms!.package).toBe("@hasna/microservice-auth");
+    expect(ms?.name).toBe("auth");
+    expect(ms?.package).toBe("@hasna/microservice-auth");
   });
 
   test("getMicroservice finds with microservice- prefix", () => {
     const ms = getMicroservice("microservice-billing");
     expect(ms).toBeDefined();
-    expect(ms!.name).toBe("billing");
+    expect(ms?.name).toBe("billing");
   });
 
   test("getMicroservice returns undefined for unknown", () => {

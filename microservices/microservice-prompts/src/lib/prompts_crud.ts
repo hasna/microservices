@@ -22,28 +22,37 @@ export interface PromptWithContent extends Prompt {
 function extractVariables(content: string): string[] {
   const matches = content.match(/\{\{(\w+)\}\}/g);
   if (!matches) return [];
-  return [...new Set(matches.map(m => m.slice(2, -2)))];
+  return [...new Set(matches.map((m) => m.slice(2, -2)))];
 }
 
 export async function createPrompt(
   sql: Sql,
-  opts: { workspaceId: string; name: string; content: string; description?: string; model?: string; variables?: string[]; tags?: string[]; createdBy?: string }
+  opts: {
+    workspaceId: string;
+    name: string;
+    content: string;
+    description?: string;
+    model?: string;
+    variables?: string[];
+    tags?: string[];
+    createdBy?: string;
+  },
 ): Promise<PromptWithContent> {
   const variables = opts.variables ?? extractVariables(opts.content);
   const tags = opts.tags ?? [];
 
-  return await sql.begin(async tx => {
-    const [prompt] = await tx`
+  return await sql.begin(async (tx: any) => {
+    const [prompt] = await (tx as any)`
       INSERT INTO prompts.prompts (workspace_id, name, description, tags)
       VALUES (${opts.workspaceId}, ${opts.name}, ${opts.description ?? null}, ${tags})
       RETURNING *`;
 
-    const [version] = await tx`
+    const [version] = await (tx as any)`
       INSERT INTO prompts.versions (prompt_id, version_number, content, variables, model, created_by, change_note)
       VALUES (${prompt.id}, 1, ${opts.content}, ${variables}, ${opts.model ?? null}, ${opts.createdBy ?? null}, 'Initial version')
       RETURNING *`;
 
-    await tx`UPDATE prompts.prompts SET current_version_id = ${version.id} WHERE id = ${prompt.id}`;
+    await (tx as any)`UPDATE prompts.prompts SET current_version_id = ${version.id} WHERE id = ${prompt.id}`;
 
     return {
       ...prompt,
@@ -56,7 +65,11 @@ export async function createPrompt(
   });
 }
 
-export async function getPrompt(sql: Sql, workspaceId: string, name: string): Promise<PromptWithContent | null> {
+export async function getPrompt(
+  sql: Sql,
+  workspaceId: string,
+  name: string,
+): Promise<PromptWithContent | null> {
   const [row] = await sql`
     SELECT p.*, v.content, v.version_number, v.model, v.variables
     FROM prompts.prompts p
@@ -65,7 +78,10 @@ export async function getPrompt(sql: Sql, workspaceId: string, name: string): Pr
   return row ? (row as unknown as PromptWithContent) : null;
 }
 
-export async function getPromptById(sql: Sql, id: string): Promise<PromptWithContent | null> {
+export async function getPromptById(
+  sql: Sql,
+  id: string,
+): Promise<PromptWithContent | null> {
   const [row] = await sql`
     SELECT p.*, v.content, v.version_number, v.model, v.variables
     FROM prompts.prompts p
@@ -77,7 +93,7 @@ export async function getPromptById(sql: Sql, id: string): Promise<PromptWithCon
 export async function listPrompts(
   sql: Sql,
   workspaceId: string,
-  opts?: { tags?: string[]; search?: string; limit?: number }
+  opts?: { tags?: string[]; search?: string; limit?: number },
 ): Promise<PromptWithContent[]> {
   const limit = opts?.limit ?? 100;
   const tags = opts?.tags;
@@ -90,7 +106,7 @@ export async function listPrompts(
       LEFT JOIN prompts.versions v ON v.id = p.current_version_id
       WHERE p.workspace_id = ${workspaceId}
         AND p.tags @> ${tags}
-        AND (p.name ILIKE ${"%" + search + "%"} OR p.description ILIKE ${"%" + search + "%"})
+        AND (p.name ILIKE ${`%${search}%`} OR p.description ILIKE ${`%${search}%`})
       ORDER BY p.updated_at DESC LIMIT ${limit}`) as unknown as PromptWithContent[];
   }
   if (tags && tags.length > 0) {
@@ -107,7 +123,7 @@ export async function listPrompts(
       FROM prompts.prompts p
       LEFT JOIN prompts.versions v ON v.id = p.current_version_id
       WHERE p.workspace_id = ${workspaceId}
-        AND (p.name ILIKE ${"%" + search + "%"} OR p.description ILIKE ${"%" + search + "%"})
+        AND (p.name ILIKE ${`%${search}%`} OR p.description ILIKE ${`%${search}%`})
       ORDER BY p.updated_at DESC LIMIT ${limit}`) as unknown as PromptWithContent[];
   }
   return (await sql`

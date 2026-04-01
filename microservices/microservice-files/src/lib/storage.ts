@@ -2,10 +2,10 @@
  * Storage backends — S3 (via SigV4) and local filesystem.
  */
 
-import { createHmac, createHash } from "crypto";
-import { join } from "path";
-import { mkdir, writeFile, unlink, readFile } from "fs/promises";
-import { existsSync } from "fs";
+import { createHash, createHmac } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 // ─── MIME TYPE DETECTION ──────────────────────────────────────────────────────
 
@@ -29,7 +29,8 @@ const MIME_MAP: Record<string, string> = {
   ".wav": "audio/wav",
   ".csv": "text/csv",
   ".doc": "application/msword",
-  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".xls": "application/vnd.ms-excel",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
@@ -44,7 +45,7 @@ export function getMimeType(filename: string): string {
 export type StorageBackend = "s3" | "local";
 
 export function getStorageBackend(): StorageBackend {
-  if (process.env["FILES_STORAGE"] === "s3" || process.env["S3_BUCKET"]) {
+  if (process.env.FILES_STORAGE === "s3" || process.env.S3_BUCKET) {
     return "s3";
   }
   return "local";
@@ -64,7 +65,7 @@ function getSigningKey(
   secretAccessKey: string,
   dateStamp: string,
   region: string,
-  service: string
+  service: string,
 ): Buffer {
   const kDate = hmacSha256(`AWS4${secretAccessKey}`, dateStamp);
   const kRegion = hmacSha256(kDate, region);
@@ -74,7 +75,10 @@ function getSigningKey(
 }
 
 function formatDate(d: Date): { dateStamp: string; amzDate: string } {
-  const iso = d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const iso = d
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}/, "");
   return {
     dateStamp: iso.slice(0, 8),
     amzDate: iso,
@@ -90,14 +94,14 @@ export async function uploadToS3(
   bucket: string,
   region: string,
   accessKeyId: string,
-  secretAccessKey: string
+  secretAccessKey: string,
 ): Promise<void> {
   const now = new Date();
   const { dateStamp, amzDate } = formatDate(now);
   const host = `${bucket}.s3.${region}.amazonaws.com`;
   const url = `https://${host}/${key}`;
 
-  const payloadHash = sha256Hex(Buffer.from(data));
+  const payloadHash = sha256Hex(data as any);
   const canonicalHeaders =
     `content-type:${mimeType}\n` +
     `host:${host}\n` +
@@ -123,7 +127,9 @@ export async function uploadToS3(
   ].join("\n");
 
   const signingKey = getSigningKey(secretAccessKey, dateStamp, region, "s3");
-  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+  const signature = createHmac("sha256", signingKey)
+    .update(stringToSign)
+    .digest("hex");
 
   const authorizationHeader =
     `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, ` +
@@ -137,7 +143,7 @@ export async function uploadToS3(
       "x-amz-content-sha256": payloadHash,
       Authorization: authorizationHeader,
     },
-    body: data,
+    body: data as any,
   });
 
   if (!resp.ok) {
@@ -152,7 +158,7 @@ export async function getPresignedUrl(
   region: string,
   accessKeyId: string,
   secretAccessKey: string,
-  expiresIn = 3600
+  expiresIn = 3600,
 ): Promise<string> {
   const now = new Date();
   const { dateStamp, amzDate } = formatDate(now);
@@ -190,7 +196,9 @@ export async function getPresignedUrl(
   ].join("\n");
 
   const signingKey = getSigningKey(secretAccessKey, dateStamp, region, "s3");
-  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+  const signature = createHmac("sha256", signingKey)
+    .update(stringToSign)
+    .digest("hex");
 
   return `https://${host}/${key}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
 }
@@ -200,7 +208,7 @@ export async function deleteFromS3(
   bucket: string,
   region: string,
   accessKeyId: string,
-  secretAccessKey: string
+  secretAccessKey: string,
 ): Promise<void> {
   const now = new Date();
   const { dateStamp, amzDate } = formatDate(now);
@@ -232,7 +240,9 @@ export async function deleteFromS3(
   ].join("\n");
 
   const signingKey = getSigningKey(secretAccessKey, dateStamp, region, "s3");
-  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+  const signature = createHmac("sha256", signingKey)
+    .update(stringToSign)
+    .digest("hex");
 
   const authorizationHeader =
     `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, ` +
@@ -257,16 +267,19 @@ export async function deleteFromS3(
 
 function getLocalDir(): string {
   return (
-    process.env["FILES_LOCAL_DIR"] ??
-    join(process.env["HOME"] ?? "/tmp", ".hasna", "files", "uploads")
+    process.env.FILES_LOCAL_DIR ??
+    join(process.env.HOME ?? "/tmp", ".hasna", "files", "uploads")
   );
 }
 
 function getLocalPort(): number {
-  return parseInt(process.env["FILES_PORT"] ?? "3005", 10);
+  return parseInt(process.env.FILES_PORT ?? "3005", 10);
 }
 
-export async function uploadToLocal(key: string, data: Buffer | Uint8Array): Promise<string> {
+export async function uploadToLocal(
+  key: string,
+  data: Buffer | Uint8Array,
+): Promise<string> {
   const dir = getLocalDir();
   const filePath = join(dir, key);
   const fileDir = filePath.slice(0, filePath.lastIndexOf("/"));
@@ -302,28 +315,47 @@ export async function readFromLocal(key: string): Promise<Buffer> {
 // ─── UNIFIED STORAGE API ──────────────────────────────────────────────────────
 
 function getS3Config() {
-  const bucket = process.env["S3_BUCKET"];
-  const region = process.env["S3_REGION"] ?? "us-east-1";
-  const accessKeyId = process.env["S3_ACCESS_KEY_ID"] ?? process.env["AWS_ACCESS_KEY_ID"];
-  const secretAccessKey = process.env["S3_SECRET_ACCESS_KEY"] ?? process.env["AWS_SECRET_ACCESS_KEY"];
+  const bucket = process.env.S3_BUCKET;
+  const region = process.env.S3_REGION ?? "us-east-1";
+  const accessKeyId =
+    process.env.S3_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey =
+    process.env.S3_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY;
   return { bucket, region, accessKeyId, secretAccessKey };
 }
 
-export async function upload(key: string, data: Buffer | Uint8Array, mimeType: string): Promise<string> {
+export async function upload(
+  key: string,
+  data: Buffer | Uint8Array,
+  mimeType: string,
+): Promise<string> {
   const backend = getStorageBackend();
   if (backend === "s3") {
     const { bucket, region, accessKeyId, secretAccessKey } = getS3Config();
     if (!bucket || !accessKeyId || !secretAccessKey) {
-      throw new Error("S3_BUCKET, S3_ACCESS_KEY_ID (or AWS_ACCESS_KEY_ID), and S3_SECRET_ACCESS_KEY (or AWS_SECRET_ACCESS_KEY) are required for S3 storage");
+      throw new Error(
+        "S3_BUCKET, S3_ACCESS_KEY_ID (or AWS_ACCESS_KEY_ID), and S3_SECRET_ACCESS_KEY (or AWS_SECRET_ACCESS_KEY) are required for S3 storage",
+      );
     }
-    await uploadToS3(key, data, mimeType, bucket, region, accessKeyId, secretAccessKey);
+    await uploadToS3(
+      key,
+      data,
+      mimeType,
+      bucket,
+      region,
+      accessKeyId,
+      secretAccessKey,
+    );
     return key;
   }
   await uploadToLocal(key, data);
   return key;
 }
 
-export async function getUrl(key: string, access: "public" | "private" | "signed"): Promise<string> {
+export async function getUrl(
+  key: string,
+  access: "public" | "private" | "signed",
+): Promise<string> {
   const backend = getStorageBackend();
   if (backend === "s3") {
     const { bucket, region, accessKeyId, secretAccessKey } = getS3Config();

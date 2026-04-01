@@ -2,10 +2,15 @@
  * Usage HTTP routes.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
+import { z } from "zod";
+import {
+  checkQuota,
+  getQuota,
+  getUsageSummary,
+  setQuota,
+} from "../lib/query.js";
 import { track } from "../lib/track.js";
-import { getUsageSummary, checkQuota, getQuota, setQuota } from "../lib/query.js";
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,7 +40,8 @@ export function makeRouter(sql: Sql) {
     const path = url.pathname;
     const method = req.method;
 
-    if (method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    if (method === "OPTIONS")
+      return new Response(null, { status: 204, headers: corsHeaders });
 
     try {
       // GET /health
@@ -43,9 +49,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-usage", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-usage",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-usage", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-usage",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -54,14 +73,21 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, TrackSchema);
         if ("error" in parsed) return parsed.error;
         const { workspace_id, metric, quantity, unit, metadata } = parsed.data;
-        await track(sql, { workspaceId: workspace_id, metric, quantity, unit, metadata });
+        await track(sql, {
+          workspaceId: workspace_id,
+          metric,
+          quantity,
+          unit,
+          metadata,
+        });
         return json({ ok: true }, 201);
       }
 
       // GET /usage/summary?workspace_id=X&metric=Y&since=Z
       if (method === "GET" && path === "/usage/summary") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id is required");
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id is required");
         const metric = url.searchParams.get("metric") ?? undefined;
         const sinceParam = url.searchParams.get("since");
         const since = sinceParam ? new Date(sinceParam) : undefined;
@@ -83,8 +109,16 @@ export function makeRouter(sql: Sql) {
       if (method === "POST" && path === "/usage/quotas") {
         const parsed = await parseBody(req, SetQuotaSchema);
         if ("error" in parsed) return parsed.error;
-        const { workspace_id, metric, limit_value, period, hard_limit } = parsed.data;
-        await setQuota(sql, workspace_id, metric, limit_value, period, hard_limit);
+        const { workspace_id, metric, limit_value, period, hard_limit } =
+          parsed.data;
+        await setQuota(
+          sql,
+          workspace_id,
+          metric,
+          limit_value,
+          period,
+          hard_limit,
+        );
         const quota = await getQuota(sql, workspace_id, metric);
         return json(quota, 201);
       }
@@ -104,20 +138,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-export function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+export function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-export async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+export async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

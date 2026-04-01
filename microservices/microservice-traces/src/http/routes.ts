@@ -2,11 +2,11 @@
  * Traces HTTP routes.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
-import { startTrace, endTrace, startSpan, endSpan } from "../lib/tracing.js";
-import { getTrace, getTraceTree, listTraces, getSpan, listSpans } from "../lib/query.js";
+import { z } from "zod";
+import { getTrace, getTraceTree, listTraces } from "../lib/query.js";
 import { getTraceStats } from "../lib/stats.js";
+import { endSpan, endTrace, startSpan, startTrace } from "../lib/tracing.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,7 +31,14 @@ const StartSpanSchema = z.object({
   trace_id: z.string().min(1),
   parent_span_id: z.string().optional(),
   name: z.string().min(1),
-  type: z.enum(["llm", "tool", "retrieval", "guardrail", "embedding", "custom"]),
+  type: z.enum([
+    "llm",
+    "tool",
+    "retrieval",
+    "guardrail",
+    "embedding",
+    "custom",
+  ]),
   input: z.unknown().optional(),
   model: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -52,7 +59,8 @@ export function makeRouter(sql: Sql) {
     const path = url.pathname;
     const method = req.method;
 
-    if (method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    if (method === "OPTIONS")
+      return new Response(null, { status: 204, headers: corsHeaders });
 
     try {
       // GET /health
@@ -60,9 +68,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-traces", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-traces",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-traces", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-traces",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -81,7 +102,11 @@ export function makeRouter(sql: Sql) {
       }
 
       // PATCH /traces/:id — end a trace
-      if (method === "PATCH" && path.match(/^\/traces\/[^/]+$/) && !path.includes("/spans")) {
+      if (
+        method === "PATCH" &&
+        path.match(/^\/traces\/[^/]+$/) &&
+        !path.includes("/spans")
+      ) {
         const id = path.split("/").pop()!;
         const parsed = await parseBody(req, EndTraceSchema);
         if ("error" in parsed) return parsed.error;
@@ -98,29 +123,45 @@ export function makeRouter(sql: Sql) {
       if (method === "GET" && path.match(/^\/traces\/[^/]+\/tree$/)) {
         const id = path.split("/")[2];
         const trace = await getTraceTree(sql, id);
-        if (!trace) return apiError("NOT_FOUND", "Trace not found", undefined, 404);
+        if (!trace)
+          return apiError("NOT_FOUND", "Trace not found", undefined, 404);
         return json(trace);
       }
 
       // GET /traces/:id — get trace with flat spans
-      if (method === "GET" && path.match(/^\/traces\/[^/]+$/) && !path.includes("/spans") && !path.includes("/stats")) {
+      if (
+        method === "GET" &&
+        path.match(/^\/traces\/[^/]+$/) &&
+        !path.includes("/spans") &&
+        !path.includes("/stats")
+      ) {
         const id = path.split("/").pop()!;
         const trace = await getTrace(sql, id);
-        if (!trace) return apiError("NOT_FOUND", "Trace not found", undefined, 404);
+        if (!trace)
+          return apiError("NOT_FOUND", "Trace not found", undefined, 404);
         return json(trace);
       }
 
       // GET /traces — list traces
       if (method === "GET" && path === "/traces") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id is required");
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id is required");
         const traces = await listTraces(sql, workspaceId, {
           status: url.searchParams.get("status") ?? undefined,
           name: url.searchParams.get("name") ?? undefined,
-          since: url.searchParams.get("since") ? new Date(url.searchParams.get("since")!) : undefined,
-          until: url.searchParams.get("until") ? new Date(url.searchParams.get("until")!) : undefined,
-          limit: url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : undefined,
-          offset: url.searchParams.get("offset") ? parseInt(url.searchParams.get("offset")!, 10) : undefined,
+          since: url.searchParams.get("since")
+            ? new Date(url.searchParams.get("since")!)
+            : undefined,
+          until: url.searchParams.get("until")
+            ? new Date(url.searchParams.get("until")!)
+            : undefined,
+          limit: url.searchParams.get("limit")
+            ? parseInt(url.searchParams.get("limit")!, 10)
+            : undefined,
+          offset: url.searchParams.get("offset")
+            ? parseInt(url.searchParams.get("offset")!, 10)
+            : undefined,
         });
         return json({ data: traces, count: traces.length });
       }
@@ -128,7 +169,10 @@ export function makeRouter(sql: Sql) {
       // POST /traces/:id/spans — start a span
       if (method === "POST" && path.match(/^\/traces\/[^/]+\/spans$/)) {
         const traceId = path.split("/")[2];
-        const parsed = await parseBody(req, StartSpanSchema.omit({ trace_id: true }));
+        const parsed = await parseBody(
+          req,
+          StartSpanSchema.omit({ trace_id: true }),
+        );
         if ("error" in parsed) return parsed.error;
         const body = parsed.data;
         const span = await startSpan(sql, {
@@ -163,8 +207,11 @@ export function makeRouter(sql: Sql) {
       // GET /traces/stats — get trace statistics
       if (method === "GET" && path === "/traces/stats") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id is required");
-        const since = url.searchParams.get("since") ? new Date(url.searchParams.get("since")!) : undefined;
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id is required");
+        const since = url.searchParams.get("since")
+          ? new Date(url.searchParams.get("since")!)
+          : undefined;
         const stats = await getTraceStats(sql, workspaceId, since);
         return json(stats);
       }
@@ -184,20 +231,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

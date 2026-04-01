@@ -10,9 +10,13 @@ export async function migrate(sql: Sql): Promise<void> {
 }
 
 async function run(sql: Sql, name: string, fn: (sql: Sql) => Promise<void>) {
-  const [e] = await sql`SELECT id FROM billing._migrations WHERE name = ${name}`;
+  const [e] =
+    await sql`SELECT id FROM billing._migrations WHERE name = ${name}`;
   if (e) return;
-  await sql.begin(async tx => { await fn(tx); await tx`INSERT INTO billing._migrations (name) VALUES (${name})`; });
+  await sql.begin(async (tx: any) => {
+    await fn(tx as any);
+    await (tx as any)`INSERT INTO billing._migrations (name) VALUES (${name})`;
+  });
 }
 
 async function m001(sql: Sql) {

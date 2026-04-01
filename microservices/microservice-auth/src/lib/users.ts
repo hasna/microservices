@@ -11,16 +11,18 @@ export interface User {
   email_verified: boolean;
   name: string | null;
   avatar_url: string | null;
-  metadata: Record<string, unknown>;
+  metadata: any;
   created_at: string;
   updated_at: string;
 }
 
 export async function createUser(
   sql: Sql,
-  data: { email: string; password?: string; name?: string }
+  data: { email: string; password?: string; name?: string },
 ): Promise<User> {
-  const password_hash = data.password ? await hashPassword(data.password) : null;
+  const password_hash = data.password
+    ? await hashPassword(data.password)
+    : null;
   const [user] = await sql<User[]>`
     INSERT INTO auth.users (email, password_hash, name)
     VALUES (${data.email.toLowerCase()}, ${password_hash}, ${data.name ?? null})
@@ -37,7 +39,10 @@ export async function getUserById(sql: Sql, id: string): Promise<User | null> {
   return user ?? null;
 }
 
-export async function getUserByEmail(sql: Sql, email: string): Promise<(User & { password_hash: string | null }) | null> {
+export async function getUserByEmail(
+  sql: Sql,
+  email: string,
+): Promise<(User & { password_hash: string | null }) | null> {
   const [user] = await sql<(User & { password_hash: string | null })[]>`
     SELECT id, email, email_verified, name, avatar_url, metadata, password_hash, created_at, updated_at
     FROM auth.users WHERE email = ${email.toLowerCase()}
@@ -45,7 +50,10 @@ export async function getUserByEmail(sql: Sql, email: string): Promise<(User & {
   return user ?? null;
 }
 
-export async function listUsers(sql: Sql, opts: { limit?: number; offset?: number } = {}): Promise<User[]> {
+export async function listUsers(
+  sql: Sql,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<User[]> {
   return sql<User[]>`
     SELECT id, email, email_verified, name, avatar_url, metadata, created_at, updated_at
     FROM auth.users
@@ -57,7 +65,12 @@ export async function listUsers(sql: Sql, opts: { limit?: number; offset?: numbe
 export async function updateUser(
   sql: Sql,
   id: string,
-  data: { name?: string; avatar_url?: string; email_verified?: boolean; metadata?: Record<string, unknown> }
+  data: {
+    name?: string;
+    avatar_url?: string;
+    email_verified?: boolean;
+    metadata?: any;
+  },
 ): Promise<User | null> {
   const [user] = await sql<User[]>`
     UPDATE auth.users SET
@@ -78,6 +91,8 @@ export async function deleteUser(sql: Sql, id: string): Promise<boolean> {
 }
 
 export async function countUsers(sql: Sql): Promise<number> {
-  const [{ count }] = await sql<[{ count: string }]>`SELECT COUNT(*) as count FROM auth.users`;
+  const [{ count }] = await sql<
+    [{ count: string }]
+  >`SELECT COUNT(*) as count FROM auth.users`;
   return parseInt(count, 10);
 }

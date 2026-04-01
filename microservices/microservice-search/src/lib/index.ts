@@ -9,25 +9,22 @@
  *   const results = await search(sql, { text: 'hello', collection: 'docs' })
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-
-// Indexing
-export {
-  indexDocument,
-  deleteDocument,
-  deleteCollection,
-  listCollections,
-  type IndexDocumentInput,
-} from "./index_ops.js";
-
-// Search
-export {
-  search,
-  countDocuments,
-  type SearchResult,
-  type SearchQuery,
-} from "./search_ops.js";
-
 // Embeddings
 export { generateEmbedding } from "./embeddings.js";
+// Indexing
+export {
+  deleteCollection,
+  deleteDocument,
+  type IndexDocumentInput,
+  indexDocument,
+  listCollections,
+} from "./index_ops.js";
+// Search
+export {
+  countDocuments,
+  type SearchQuery,
+  type SearchResult,
+  search,
+} from "./search_ops.js";

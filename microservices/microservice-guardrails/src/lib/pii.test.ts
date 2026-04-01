@@ -2,15 +2,15 @@
  * Unit tests for PII detection and redaction — no database required.
  */
 
-import { describe, test, expect } from "bun:test";
-import { scanPII, redactPII } from "./pii.js";
+import { describe, expect, test } from "bun:test";
+import { redactPII, scanPII } from "./pii.js";
 
 describe("scanPII", () => {
   test("detects email addresses", () => {
     const matches = scanPII("Contact me at user@example.com for details");
     const emails = matches.filter((m) => m.type === "email");
     expect(emails.length).toBe(1);
-    expect(emails[0]!.value).toBe("user@example.com");
+    expect(emails[0]?.value).toBe("user@example.com");
   });
 
   test("detects US phone number with parentheses", () => {
@@ -31,14 +31,14 @@ describe("scanPII", () => {
     const matches = scanPII("My SSN is 123-45-6789");
     const ssns = matches.filter((m) => m.type === "ssn");
     expect(ssns.length).toBe(1);
-    expect(ssns[0]!.value).toBe("123-45-6789");
+    expect(ssns[0]?.value).toBe("123-45-6789");
   });
 
   test("detects valid Visa credit card number (Luhn check)", () => {
     const matches = scanPII("Card: 4111111111111111");
     const ccs = matches.filter((m) => m.type === "credit_card");
     expect(ccs.length).toBe(1);
-    expect(ccs[0]!.value.replace(/\D/g, "")).toBe("4111111111111111");
+    expect(ccs[0]?.value.replace(/\D/g, "")).toBe("4111111111111111");
   });
 
   test("detects credit card with spaces", () => {
@@ -63,7 +63,7 @@ describe("scanPII", () => {
     const matches = scanPII("Server at 192.168.1.100");
     const ips = matches.filter((m) => m.type === "ip_address");
     expect(ips.length).toBe(1);
-    expect(ips[0]!.value).toBe("192.168.1.100");
+    expect(ips[0]?.value).toBe("192.168.1.100");
   });
 
   test("does NOT false-positive on normal text", () => {
@@ -72,7 +72,9 @@ describe("scanPII", () => {
   });
 
   test("detects multiple PII types in one string", () => {
-    const matches = scanPII("Email: test@example.com, SSN: 123-45-6789, IP: 10.0.0.1");
+    const matches = scanPII(
+      "Email: test@example.com, SSN: 123-45-6789, IP: 10.0.0.1",
+    );
     const types = [...new Set(matches.map((m) => m.type))];
     expect(types).toContain("email");
     expect(types).toContain("ssn");

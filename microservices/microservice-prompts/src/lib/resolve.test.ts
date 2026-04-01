@@ -1,23 +1,29 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { pickVariant } from "./experiments.js";
 import { interpolateVariables } from "./resolve.js";
 import { diffVersions } from "./versions.js";
-import { pickVariant } from "./experiments.js";
 
 describe("interpolateVariables", () => {
   it("replaces {{name}} with value", () => {
-    expect(interpolateVariables("Hello {{name}}!", { name: "Alice" })).toBe("Hello Alice!");
+    expect(interpolateVariables("Hello {{name}}!", { name: "Alice" })).toBe(
+      "Hello Alice!",
+    );
   });
 
   it("leaves {{unknown}} as-is when not in variables", () => {
-    expect(interpolateVariables("Hello {{unknown}}!", {})).toBe("Hello {{unknown}}!");
+    expect(interpolateVariables("Hello {{unknown}}!", {})).toBe(
+      "Hello {{unknown}}!",
+    );
   });
 
   it("handles multiple variables", () => {
-    expect(interpolateVariables("{{greeting}} {{name}}, welcome to {{place}}!", {
-      greeting: "Hi",
-      name: "Bob",
-      place: "Earth",
-    })).toBe("Hi Bob, welcome to Earth!");
+    expect(
+      interpolateVariables("{{greeting}} {{name}}, welcome to {{place}}!", {
+        greeting: "Hi",
+        name: "Bob",
+        place: "Earth",
+      }),
+    ).toBe("Hi Bob, welcome to Earth!");
   });
 
   it("returns content unchanged with empty variables", () => {
@@ -68,9 +74,12 @@ describe("override priority: user > agent > workspace", () => {
       workspace: "workspace content",
     };
     const resolve = (userId?: string, agentId?: string, wsId?: string) => {
-      if (userId && overrides.user) return { source: "override", scope: "user" };
-      if (agentId && overrides.agent) return { source: "override", scope: "agent" };
-      if (wsId && overrides.workspace) return { source: "override", scope: "workspace" };
+      if (userId && overrides.user)
+        return { source: "override", scope: "user" };
+      if (agentId && overrides.agent)
+        return { source: "override", scope: "agent" };
+      if (wsId && overrides.workspace)
+        return { source: "override", scope: "workspace" };
       return { source: "current", scope: null };
     };
     expect(resolve("u1", "a1", "w1").scope).toBe("user");

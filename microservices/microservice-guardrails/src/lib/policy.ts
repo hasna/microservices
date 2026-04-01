@@ -6,7 +6,7 @@ import type { Sql } from "postgres";
 
 export interface PolicyRule {
   type: "block_words" | "max_length" | "require_format" | "custom_regex";
-  config: Record<string, unknown>;
+  config: any;
   action: "block" | "warn" | "sanitize";
 }
 
@@ -24,7 +24,7 @@ export interface PolicyViolation {
   rule_name: string;
   rule_type: string;
   action: string;
-  details: Record<string, unknown>;
+  details: any;
 }
 
 export interface PolicyResult {
@@ -40,7 +40,7 @@ export async function createPolicy(
   workspaceId: string,
   name: string,
   rules: PolicyRule[],
-  active = true
+  active = true,
 ): Promise<Policy> {
   const [row] = await sql`
     INSERT INTO guardrails.policies (workspace_id, name, rules, active)
@@ -52,7 +52,7 @@ export async function createPolicy(
 
 export async function listPolicies(
   sql: Sql,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<Policy[]> {
   const rows = await sql`
     SELECT * FROM guardrails.policies
@@ -70,7 +70,7 @@ export async function getPolicy(sql: Sql, id: string): Promise<Policy | null> {
 export async function updatePolicy(
   sql: Sql,
   id: string,
-  updates: { name?: string; rules?: PolicyRule[]; active?: boolean }
+  updates: { name?: string; rules?: PolicyRule[]; active?: boolean },
 ): Promise<Policy | null> {
   const current = await getPolicy(sql, id);
   if (!current) return null;
@@ -105,7 +105,7 @@ export async function evaluatePolicy(
   sql: Sql,
   workspaceId: string,
   text: string,
-  _direction: "input" | "output"
+  _direction: "input" | "output",
 ): Promise<PolicyResult> {
   const policies = await sql`
     SELECT * FROM guardrails.policies
@@ -118,7 +118,9 @@ export async function evaluatePolicy(
   let blocked = false;
 
   for (const policy of policies) {
-    const rules = (typeof policy.rules === "string" ? JSON.parse(policy.rules) : policy.rules) as PolicyRule[];
+    const rules = (
+      typeof policy.rules === "string" ? JSON.parse(policy.rules) : policy.rules
+    ) as PolicyRule[];
 
     for (const rule of rules) {
       const result = evaluateRule(rule, sanitized);
@@ -138,7 +140,8 @@ export async function evaluatePolicy(
   }
 
   return {
-    passed: !blocked && violations.filter((v) => v.action === "block").length === 0,
+    passed:
+      !blocked && violations.filter((v) => v.action === "block").length === 0,
     violations,
     sanitized,
   };
@@ -146,20 +149,26 @@ export async function evaluatePolicy(
 
 function evaluateRule(
   rule: PolicyRule,
-  text: string
-): { violated: boolean; details: Record<string, unknown>; sanitized?: string } {
+  text: string,
+): { violated: boolean; details: any; sanitized?: string } {
   switch (rule.type) {
     case "block_words": {
       const words = (rule.config.words as string[]) ?? [];
       const found = words.filter((w) => {
-        const re = new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+        const re = new RegExp(
+          `\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+          "i",
+        );
         return re.test(text);
       });
       if (found.length === 0) return { violated: false, details: {} };
       let sanitized = text;
       if (rule.action === "sanitize") {
         for (const w of found) {
-          const re = new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi");
+          const re = new RegExp(
+            `\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+            "gi",
+          );
           sanitized = sanitized.replace(re, "[BLOCKED]");
         }
       }
@@ -169,8 +178,13 @@ function evaluateRule(
     case "max_length": {
       const maxLen = (rule.config.max_length as number) ?? 10000;
       if (text.length <= maxLen) return { violated: false, details: {} };
-      const sanitized = rule.action === "sanitize" ? text.slice(0, maxLen) : undefined;
-      return { violated: true, details: { length: text.length, max_length: maxLen }, sanitized };
+      const sanitized =
+        rule.action === "sanitize" ? text.slice(0, maxLen) : undefined;
+      return {
+        violated: true,
+        details: { length: text.length, max_length: maxLen },
+        sanitized,
+      };
     }
 
     case "require_format": {
@@ -181,7 +195,10 @@ function evaluateRule(
         if (re.test(text)) return { violated: false, details: {} };
         return { violated: true, details: { expected_format: format } };
       } catch {
-        return { violated: false, details: { error: "invalid regex in format" } };
+        return {
+          violated: false,
+          details: { error: "invalid regex in format" },
+        };
       }
     }
 
@@ -196,13 +213,20 @@ function evaluateRule(
         if (rule.action === "sanitize") {
           sanitized = text.replace(re, "[REDACTED]");
         }
-        return { violated: true, details: { pattern, matches_count: matches.length }, sanitized };
+        return {
+          violated: true,
+          details: { pattern, matches_count: matches.length },
+          sanitized,
+        };
       } catch {
         return { violated: false, details: { error: "invalid regex" } };
       }
     }
 
     default:
-      return { violated: false, details: { error: `unknown rule type: ${rule.type}` } };
+      return {
+        violated: false,
+        details: { error: `unknown rule type: ${rule.type}` },
+      };
   }
 }

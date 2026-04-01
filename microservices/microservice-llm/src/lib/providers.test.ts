@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { calculateCost, COST_PER_1K_TOKENS } from "./costs.js";
+import { describe, expect, it } from "bun:test";
+import { COST_PER_1K_TOKENS, calculateCost } from "./costs.js";
 import { getProvider } from "./providers.js";
 
 describe("calculateCost", () => {
@@ -75,7 +75,11 @@ describe("getProvider", () => {
   });
 
   it("returns first available provider for unknown model when config provided", () => {
-    const provider = getProvider("some-unknown-model", { openai: "sk-test", anthropic: undefined, groq: undefined });
+    const provider = getProvider("some-unknown-model", {
+      openai: "sk-test",
+      anthropic: undefined,
+      groq: undefined,
+    });
     expect(provider).toBe("openai");
   });
 
@@ -90,9 +94,9 @@ describe("getProvider", () => {
 
 describe("COST_PER_1K_TOKENS", () => {
   it("has a default entry", () => {
-    expect(COST_PER_1K_TOKENS["default"]).toBeDefined();
-    expect(COST_PER_1K_TOKENS["default"]!.input).toBeGreaterThan(0);
-    expect(COST_PER_1K_TOKENS["default"]!.output).toBeGreaterThan(0);
+    expect(COST_PER_1K_TOKENS.default).toBeDefined();
+    expect(COST_PER_1K_TOKENS.default?.input).toBeGreaterThan(0);
+    expect(COST_PER_1K_TOKENS.default?.output).toBeGreaterThan(0);
   });
 
   it("output cost is higher than input for gpt-4o", () => {

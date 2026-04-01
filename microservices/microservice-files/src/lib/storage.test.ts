@@ -2,34 +2,34 @@
  * Unit tests for storage utilities — pure logic, no actual file I/O or S3 calls.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { getStorageBackend, getMimeType, buildPath } from "./index.js";
+import { afterEach, describe, expect, it } from "bun:test";
+import { buildPath, getMimeType, getStorageBackend } from "./index.js";
 
 describe("getStorageBackend", () => {
   const originalEnv = { ...process.env };
 
   afterEach(() => {
     // Restore environment
-    delete process.env["FILES_STORAGE"];
-    delete process.env["S3_BUCKET"];
+    delete process.env.FILES_STORAGE;
+    delete process.env.S3_BUCKET;
     Object.assign(process.env, originalEnv);
   });
 
   it("returns 's3' when S3_BUCKET is set", () => {
-    delete process.env["FILES_STORAGE"];
-    process.env["S3_BUCKET"] = "my-test-bucket";
+    delete process.env.FILES_STORAGE;
+    process.env.S3_BUCKET = "my-test-bucket";
     expect(getStorageBackend()).toBe("s3");
   });
 
   it("returns 's3' when FILES_STORAGE=s3", () => {
-    delete process.env["S3_BUCKET"];
-    process.env["FILES_STORAGE"] = "s3";
+    delete process.env.S3_BUCKET;
+    process.env.FILES_STORAGE = "s3";
     expect(getStorageBackend()).toBe("s3");
   });
 
   it("returns 'local' when neither S3_BUCKET nor FILES_STORAGE=s3 is set", () => {
-    delete process.env["S3_BUCKET"];
-    delete process.env["FILES_STORAGE"];
+    delete process.env.S3_BUCKET;
+    delete process.env.FILES_STORAGE;
     expect(getStorageBackend()).toBe("local");
   });
 });
@@ -69,7 +69,9 @@ describe("buildPath", () => {
   });
 
   it("handles deeply nested paths", () => {
-    expect(buildPath("2024", "/documents/invoices")).toBe("/documents/invoices/2024");
+    expect(buildPath("2024", "/documents/invoices")).toBe(
+      "/documents/invoices/2024",
+    );
   });
 
   it("handles root slash as parent", () => {

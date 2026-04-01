@@ -25,13 +25,14 @@ export async function migrate(sql: Sql): Promise<void> {
 async function runMigration(
   sql: Sql,
   name: string,
-  fn: (sql: Sql) => Promise<void>
+  fn: (sql: Sql) => Promise<void>,
 ): Promise<void> {
-  const [existing] = await sql`SELECT id FROM usage._migrations WHERE name = ${name}`;
+  const [existing] =
+    await sql`SELECT id FROM usage._migrations WHERE name = ${name}`;
   if (existing) return;
-  await sql.begin(async (tx) => {
-    await fn(tx);
-    await tx`INSERT INTO usage._migrations (name) VALUES (${name})`;
+  await sql.begin(async (tx: any) => {
+    await fn(tx as any);
+    await (tx as any)`INSERT INTO usage._migrations (name) VALUES (${name})`;
   });
 }
 

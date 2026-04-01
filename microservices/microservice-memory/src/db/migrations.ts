@@ -18,7 +18,9 @@ export async function migrate(sql: Sql): Promise<void> {
 
   await run(sql, "001_collections_memories", async (sql) => {
     // Try to enable pgvector, fall back gracefully
-    try { await sql`CREATE EXTENSION IF NOT EXISTS vector`; } catch {}
+    try {
+      await sql`CREATE EXTENSION IF NOT EXISTS vector`;
+    } catch {}
 
     await sql`CREATE TABLE memory.collections (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -60,12 +62,13 @@ export async function migrate(sql: Sql): Promise<void> {
 async function run(
   sql: Sql,
   name: string,
-  fn: (sql: Sql) => Promise<void>
+  fn: (sql: Sql) => Promise<void>,
 ): Promise<void> {
-  const [existing] = await sql`SELECT id FROM memory._migrations WHERE name = ${name}`;
+  const [existing] =
+    await sql`SELECT id FROM memory._migrations WHERE name = ${name}`;
   if (existing) return;
-  await sql.begin(async (tx) => {
-    await fn(tx);
-    await tx`INSERT INTO memory._migrations (name) VALUES (${name})`;
+  await sql.begin(async (tx: any) => {
+    await fn(tx as any);
+    await (tx as any)`INSERT INTO memory._migrations (name) VALUES (${name})`;
   });
 }

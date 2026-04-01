@@ -34,7 +34,11 @@ export function chunkText(text: string, opts: ChunkOptions): string[] {
 /**
  * Fixed: split every chunkSize chars with overlap.
  */
-function fixedChunk(text: string, chunkSize: number, overlap: number): string[] {
+function fixedChunk(
+  text: string,
+  chunkSize: number,
+  overlap: number,
+): string[] {
   if (text.length <= chunkSize) return [text];
 
   const chunks: string[] = [];
@@ -51,7 +55,11 @@ function fixedChunk(text: string, chunkSize: number, overlap: number): string[] 
 /**
  * Paragraph: split on double newlines, merge small paragraphs to reach chunkSize.
  */
-function paragraphChunk(text: string, chunkSize: number, overlap: number): string[] {
+function paragraphChunk(
+  text: string,
+  chunkSize: number,
+  overlap: number,
+): string[] {
   const paragraphs = text.split(/\n\n+/).filter((p) => p.trim().length > 0);
   if (paragraphs.length === 0) return [];
 
@@ -64,9 +72,15 @@ function paragraphChunk(text: string, chunkSize: number, overlap: number): strin
 /**
  * Sentence: split on sentence boundaries (. ! ?), merge to chunkSize.
  */
-function sentenceChunk(text: string, chunkSize: number, overlap: number): string[] {
+function sentenceChunk(
+  text: string,
+  chunkSize: number,
+  overlap: number,
+): string[] {
   // Split on sentence-ending punctuation followed by whitespace or end of string
-  const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .filter((s) => s.trim().length > 0);
   if (sentences.length === 0) return [];
 
   const merged = mergeParts(sentences, chunkSize, " ");
@@ -78,7 +92,11 @@ function sentenceChunk(text: string, chunkSize: number, overlap: number): string
 /**
  * Recursive: try paragraph -> sentence -> fixed (fallback chain).
  */
-function recursiveChunk(text: string, chunkSize: number, overlap: number): string[] {
+function recursiveChunk(
+  text: string,
+  chunkSize: number,
+  overlap: number,
+): string[] {
   // Try paragraph splitting first
   const paragraphs = text.split(/\n\n+/).filter((p) => p.trim().length > 0);
   if (paragraphs.length > 1) {
@@ -96,7 +114,9 @@ function recursiveChunk(text: string, chunkSize: number, overlap: number): strin
   }
 
   // Try sentence splitting
-  const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .filter((s) => s.trim().length > 0);
   if (sentences.length > 1) {
     return sentenceChunk(text, chunkSize, overlap);
   }
@@ -108,7 +128,11 @@ function recursiveChunk(text: string, chunkSize: number, overlap: number): strin
 /**
  * Merge small parts until they reach chunkSize.
  */
-function mergeParts(parts: string[], chunkSize: number, separator: string): string[] {
+function mergeParts(
+  parts: string[],
+  chunkSize: number,
+  separator: string,
+): string[] {
   const chunks: string[] = [];
   let current = "";
 

@@ -23,7 +23,7 @@ export interface ApiKeyWithSecret extends ApiKey {
 export async function createApiKey(
   sql: Sql,
   userId: string,
-  opts: { name: string; scopes?: string[]; expiresAt?: Date }
+  opts: { name: string; scopes?: string[]; expiresAt?: Date },
 ): Promise<ApiKeyWithSecret> {
   const { key, prefix, hash } = generateApiKey();
   const keyHash = await hash;
@@ -42,10 +42,12 @@ export async function createApiKey(
 
 export async function validateApiKey(
   sql: Sql,
-  key: string
+  key: string,
 ): Promise<{ userId: string; scopes: string[] } | null> {
   const keyHash = await hashToken(key);
-  const [row] = await sql<[{ user_id: string; scopes: string[]; expires_at: string | null }]>`
+  const [row] = await sql<
+    [{ user_id: string; scopes: string[]; expires_at: string | null }]
+  >`
     SELECT user_id, scopes, expires_at FROM auth.api_keys
     WHERE key_hash = ${keyHash}
   `;
@@ -53,7 +55,9 @@ export async function validateApiKey(
   if (row.expires_at && new Date(row.expires_at) < new Date()) return null;
 
   // Update last_used_at asynchronously
-  sql`UPDATE auth.api_keys SET last_used_at = NOW() WHERE key_hash = ${keyHash}`.catch(() => {});
+  sql`UPDATE auth.api_keys SET last_used_at = NOW() WHERE key_hash = ${keyHash}`.catch(
+    () => {},
+  );
 
   return { userId: row.user_id, scopes: row.scopes };
 }
@@ -66,7 +70,12 @@ export async function listApiKeys(sql: Sql, userId: string): Promise<ApiKey[]> {
   `;
 }
 
-export async function revokeApiKey(sql: Sql, id: string, userId: string): Promise<boolean> {
-  const result = await sql`DELETE FROM auth.api_keys WHERE id = ${id} AND user_id = ${userId}`;
+export async function revokeApiKey(
+  sql: Sql,
+  id: string,
+  userId: string,
+): Promise<boolean> {
+  const result =
+    await sql`DELETE FROM auth.api_keys WHERE id = ${id} AND user_id = ${userId}`;
   return result.count > 0;
 }

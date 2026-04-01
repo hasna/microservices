@@ -2,18 +2,17 @@
  * HTTP route handlers for microservice-waitlist.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
+import { z } from "zod";
+import { createCampaign, listCampaigns } from "../lib/campaigns.js";
 import {
-  joinWaitlist,
   getPosition,
   inviteBatch,
+  joinWaitlist,
   listEntries,
-  updateScore,
   markJoined,
   removeEntry,
 } from "../lib/entries.js";
-import { createCampaign, listCampaigns } from "../lib/campaigns.js";
 import { getWaitlistStats } from "../lib/stats.js";
 
 const corsHeaders = {
@@ -51,7 +50,8 @@ export function makeRouter(sql: Sql) {
     const path = url.pathname;
     const method = req.method;
 
-    if (method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    if (method === "OPTIONS")
+      return new Response(null, { status: 204, headers: corsHeaders });
 
     try {
       // GET /health
@@ -59,9 +59,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-waitlist", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-waitlist",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-waitlist", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-waitlist",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -121,15 +134,21 @@ export function makeRouter(sql: Sql) {
       // GET /waitlist/entries
       if (method === "GET" && path === "/waitlist/entries") {
         const campaignId = url.searchParams.get("campaign_id");
-        if (!campaignId) return apiError("MISSING_PARAM", "campaign_id is required");
+        if (!campaignId)
+          return apiError("MISSING_PARAM", "campaign_id is required");
         const status = url.searchParams.get("status") ?? undefined;
-        const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : undefined;
+        const limit = url.searchParams.get("limit")
+          ? parseInt(url.searchParams.get("limit")!, 10)
+          : undefined;
         const entries = await listEntries(sql, campaignId, status, limit);
         return json({ data: entries, count: entries.length });
       }
 
       // PATCH /waitlist/entries/:id/status
-      if (method === "PATCH" && path.match(/^\/waitlist\/entries\/[^/]+\/status$/)) {
+      if (
+        method === "PATCH" &&
+        path.match(/^\/waitlist\/entries\/[^/]+\/status$/)
+      ) {
         const parts = path.split("/");
         const id = parts[parts.length - 2];
         const parsed = await parseBody(req, UpdateStatusSchema);
@@ -142,8 +161,10 @@ export function makeRouter(sql: Sql) {
         } else if (status === "waiting" || status === "invited") {
           await sql`UPDATE waitlist.entries SET status = ${status} WHERE id = ${id}`;
         }
-        const [entry] = await sql`SELECT * FROM waitlist.entries WHERE id = ${id}`;
-        if (!entry) return apiError("NOT_FOUND", "Entry not found", undefined, 404);
+        const [entry] =
+          await sql`SELECT * FROM waitlist.entries WHERE id = ${id}`;
+        if (!entry)
+          return apiError("NOT_FOUND", "Entry not found", undefined, 404);
         return json(entry);
       }
 
@@ -162,20 +183,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

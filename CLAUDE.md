@@ -3,18 +3,19 @@
 ## Project Overview
 Production-grade microservice building blocks for SaaS apps. Each microservice is an independent npm package (`@hasna/microservice-<name>`) with its own PostgreSQL schema, HTTP API (standalone mode), MCP server, and CLI. This repo also contains the `@hasna/microservices` meta-package that provides a registry, installer, and hub MCP/CLI for managing them all.
 
-## The 8 Microservices
+## The 21 Microservices
 
-| Service | Package | Schema | Purpose |
-|---------|---------|--------|---------|
-| **auth** | `@hasna/microservice-auth` | `auth.*` | Users, sessions, JWT, OAuth, 2FA, API keys |
-| **teams** | `@hasna/microservice-teams` | `teams.*` | Workspaces, members, RBAC, invites |
-| **billing** | `@hasna/microservice-billing` | `billing.*` | Stripe subscriptions, plans, invoices |
-| **notify** | `@hasna/microservice-notify` | `notify.*` | Email, SMS, in-app, outbound webhooks |
-| **files** | `@hasna/microservice-files` | `files.*` | Uploads, S3, presigned URLs, transforms |
-| **audit** | `@hasna/microservice-audit` | `audit.*` | Immutable event log, compliance trail |
-| **flags** | `@hasna/microservice-flags` | `flags.*` | Feature flags, rollouts, A/B experiments |
-| **jobs** | `@hasna/microservice-jobs` | `jobs.*` | Background jobs, queues, cron, retries |
+| Category | Services |
+|----------|----------|
+| **Identity** | `auth` |
+| **Organization** | `teams` |
+| **Monetization** | `billing` |
+| **Communication** | `notify` |
+| **Storage** | `files` |
+| **Observability** | `audit`, `usage`, `traces` |
+| **Growth** | `flags`, `onboarding`, `waitlist` |
+| **Infrastructure** | `jobs`, `webhooks` |
+| **AI Layer** | `llm`, `memory`, `search`, `knowledge`, `sessions`, `guardrails`, `agents`, `prompts` |
 
 ## Architecture
 
@@ -42,11 +43,11 @@ const res = await fetch('http://localhost:3001/auth/session', { headers: { Autho
 ```
 src/
   lib/
-    registry.ts      — list of all 8 microservices with metadata
+    registry.ts      — list of all 21 microservices with metadata
     installer.ts     — installs npm packages globally via bun
     runner.ts        — runs microservice binaries
   cli/
-    index.tsx        — hub CLI (list, install, status, migrate-all)
+    index.tsx        — hub CLI (list, install, status, migrate-all, check-env)
   mcp/
     index.ts         — hub MCP server
 
@@ -58,8 +59,21 @@ microservices/
   microservice-notify/
   microservice-files/
   microservice-audit/
+  microservice-usage/
+  microservice-traces/
   microservice-flags/
+  microservice-onboarding/
+  microservice-waitlist/
   microservice-jobs/
+  microservice-webhooks/
+  microservice-llm/
+  microservice-memory/
+  microservice-search/
+  microservice-knowledge/
+  microservice-sessions/
+  microservice-guardrails/
+  microservice-agents/
+  microservice-prompts/
 ```
 
 ## Each Microservice Structure
@@ -101,16 +115,24 @@ bun test
 bun run build
 ```
 
-## Install a Microservice
+## API Gateway
+Since the 21 microservices run on independent ports, you can run the API Gateway to route traffic over a single port (8000) using path prefixes (`/auth/*`, `/billing/*`).
 ```bash
-bun install -g @hasna/microservice-auth
-microservice-auth init --db postgres://localhost/myapp
-microservice-auth migrate
-microservice-auth serve
+bun run gateway
+```
+
+## Install & Run All Microservices
+```bash
+docker-compose up -d
+bun install
+bun run build:all
+microservices init-all --db postgres://postgres:password@localhost:5432/microservices
+microservices serve-all
 ```
 
 ## Adding a New Microservice
-1. Copy `microservices/_template/` to `microservices/microservice-<name>/`
-2. Implement schema, core logic, HTTP API, MCP, CLI
-3. Add entry to `src/lib/registry.ts`
-4. Publish as `@hasna/microservice-<name>`
+1. Run the scaffold command: `bun run dev scaffold <name>` (or `microservices scaffold <name>` if installed globally)
+2. Add an entry to `src/lib/registry.ts`
+3. Run `bun install` to link the workspace
+4. Run `bun run build:all`
+5. Implement schema, core logic, HTTP API, MCP, CLI

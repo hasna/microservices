@@ -22,7 +22,7 @@ export interface ChatResponse {
 export async function chatOpenAI(
   messages: Message[],
   model: string,
-  apiKey: string
+  apiKey: string,
 ): Promise<ChatResponse> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -38,10 +38,14 @@ export async function chatOpenAI(
     throw new Error(`OpenAI API error ${res.status}: ${err}`);
   }
 
-  const data = await res.json() as {
+  const data = (await res.json()) as {
     choices: Array<{ message: { content: string } }>;
     model: string;
-    usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    usage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    };
   };
 
   return {
@@ -59,13 +63,13 @@ export async function chatOpenAI(
 export async function chatAnthropic(
   messages: Message[],
   model: string,
-  apiKey: string
+  apiKey: string,
 ): Promise<ChatResponse> {
   // Separate system message from conversation messages
   const systemMsg = messages.find((m) => m.role === "system");
   const conversationMsgs = messages.filter((m) => m.role !== "system");
 
-  const body: Record<string, unknown> = {
+  const body: any = {
     model,
     max_tokens: 4096,
     messages: conversationMsgs,
@@ -87,7 +91,7 @@ export async function chatAnthropic(
     throw new Error(`Anthropic API error ${res.status}: ${err}`);
   }
 
-  const data = await res.json() as {
+  const data = (await res.json()) as {
     content: Array<{ text: string }>;
     model: string;
     usage: { input_tokens: number; output_tokens: number };
@@ -111,7 +115,7 @@ export async function chatAnthropic(
 export async function chatGroq(
   messages: Message[],
   model: string,
-  apiKey: string
+  apiKey: string,
 ): Promise<ChatResponse> {
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -127,10 +131,14 @@ export async function chatGroq(
     throw new Error(`Groq API error ${res.status}: ${err}`);
   }
 
-  const data = await res.json() as {
+  const data = (await res.json()) as {
     choices: Array<{ message: { content: string } }>;
     model: string;
-    usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    usage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    };
   };
 
   return {
@@ -156,7 +164,10 @@ export interface ProviderConfig {
 /**
  * Get the provider name for a given model string.
  */
-export function getProvider(model: string, config?: ProviderConfig): ProviderName {
+export function getProvider(
+  model: string,
+  config?: ProviderConfig,
+): ProviderName {
   if (model.startsWith("gpt-")) {
     if (!config || config.openai) return "openai";
   }
@@ -185,13 +196,13 @@ export function getProvider(model: string, config?: ProviderConfig): ProviderNam
 export function getAvailableModels(): string[] {
   const models: string[] = [];
 
-  if (process.env["OPENAI_API_KEY"]) {
+  if (process.env.OPENAI_API_KEY) {
     models.push("gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo");
   }
-  if (process.env["ANTHROPIC_API_KEY"]) {
+  if (process.env.ANTHROPIC_API_KEY) {
     models.push("claude-3-5-sonnet-20241022", "claude-3-haiku-20240307");
   }
-  if (process.env["GROQ_API_KEY"]) {
+  if (process.env.GROQ_API_KEY) {
     models.push("llama-3.1-70b-versatile", "mixtral-8x7b-32768", "gemma-7b-it");
   }
 
@@ -201,20 +212,20 @@ export function getAvailableModels(): string[] {
 export async function callProvider(
   provider: ProviderName,
   messages: Message[],
-  model: string
+  model: string,
 ): Promise<ChatResponse> {
   if (provider === "openai") {
-    const key = process.env["OPENAI_API_KEY"];
+    const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error("OPENAI_API_KEY is not set");
     return chatOpenAI(messages, model, key);
   }
   if (provider === "anthropic") {
-    const key = process.env["ANTHROPIC_API_KEY"];
+    const key = process.env.ANTHROPIC_API_KEY;
     if (!key) throw new Error("ANTHROPIC_API_KEY is not set");
     return chatAnthropic(messages, model, key);
   }
   if (provider === "groq") {
-    const key = process.env["GROQ_API_KEY"];
+    const key = process.env.GROQ_API_KEY;
     if (!key) throw new Error("GROQ_API_KEY is not set");
     return chatGroq(messages, model, key);
   }

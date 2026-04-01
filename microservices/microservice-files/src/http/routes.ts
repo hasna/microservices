@@ -2,19 +2,26 @@
  * Files HTTP routes.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
+import { z } from "zod";
 import {
+  bulkSoftDelete,
   createFileRecord,
   getFile,
-  listFiles,
-  softDeleteFile,
-  renameFile,
-  moveFile,
-  bulkSoftDelete,
   getStorageStats,
+  listFiles,
+  moveFile,
+  renameFile,
+  softDeleteFile,
 } from "../lib/files.js";
-import { upload, getUrl, getMimeType, getStorageBackend, getPresignedUrl, readFromLocal } from "../lib/storage.js";
+import {
+  getMimeType,
+  getPresignedUrl,
+  getStorageBackend,
+  getUrl,
+  readFromLocal,
+  upload,
+} from "../lib/storage.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,7 +47,8 @@ export function makeRouter(sql: Sql) {
     const path = url.pathname;
     const method = req.method;
 
-    if (method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    if (method === "OPTIONS")
+      return new Response(null, { status: 204, headers: corsHeaders });
 
     try {
       // GET /health
@@ -48,9 +56,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-files", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-files",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-files", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-files",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -58,26 +79,36 @@ export function makeRouter(sql: Sql) {
       if (method === "POST" && path === "/files/upload") {
         const contentType = req.headers.get("content-type") ?? "";
         if (!contentType.includes("multipart")) {
-          return apiError("INVALID_CONTENT_TYPE", "Content-Type must be multipart/form-data");
+          return apiError(
+            "INVALID_CONTENT_TYPE",
+            "Content-Type must be multipart/form-data",
+          );
         }
 
         const formData = await req.formData();
         const fileEntry = formData.get("file");
         if (!fileEntry || typeof fileEntry === "string") {
-          return apiError("MISSING_FILE", "file field required in multipart form-data");
+          return apiError(
+            "MISSING_FILE",
+            "file field required in multipart form-data",
+          );
         }
 
-        const workspaceId = formData.get("workspace_id")?.toString() ?? undefined;
+        const workspaceId =
+          formData.get("workspace_id")?.toString() ?? undefined;
         const folderId = formData.get("folder_id")?.toString() ?? undefined;
         const customName = formData.get("name")?.toString();
-        const access = (formData.get("access")?.toString() ?? "private") as "public" | "private" | "signed";
+        const access = (formData.get("access")?.toString() ?? "private") as
+          | "public"
+          | "private"
+          | "signed";
         const uploadedBy = formData.get("uploaded_by")?.toString() ?? undefined;
 
         const file = fileEntry as File;
         const originalName = file.name;
         const mimeType = file.type || getMimeType(originalName);
         const arrayBuffer = await file.arrayBuffer();
-        const data = Buffer.from(arrayBuffer);
+        const data = new Uint8Array(arrayBuffer);
 
         if (data.byteLength === 0) {
           return apiError("EMPTY_FILE", "File is empty (0 bytes)");
@@ -121,20 +152,37 @@ export function makeRouter(sql: Sql) {
 
         const backend = getStorageBackend();
         if (backend !== "s3") {
-          return apiError("INVALID_BACKEND", "Presigned URLs are only available with S3 storage backend");
+          return apiError(
+            "INVALID_BACKEND",
+            "Presigned URLs are only available with S3 storage backend",
+          );
         }
 
-        const bucket = process.env["S3_BUCKET"];
-        const region = process.env["S3_REGION"] ?? "us-east-1";
-        const accessKeyId = process.env["S3_ACCESS_KEY_ID"] ?? process.env["AWS_ACCESS_KEY_ID"];
-        const secretAccessKey = process.env["S3_SECRET_ACCESS_KEY"] ?? process.env["AWS_SECRET_ACCESS_KEY"];
+        const bucket = process.env.S3_BUCKET;
+        const region = process.env.S3_REGION ?? "us-east-1";
+        const accessKeyId =
+          process.env.S3_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID;
+        const secretAccessKey =
+          process.env.S3_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY;
 
         if (!bucket || !accessKeyId || !secretAccessKey) {
-          return apiError("MISSING_S3_CONFIG", "S3 credentials not configured", undefined, 500);
+          return apiError(
+            "MISSING_S3_CONFIG",
+            "S3 credentials not configured",
+            undefined,
+            500,
+          );
         }
 
         const storageKey = workspace_id ? `${workspace_id}/${key}` : key;
-        const presignedUrl = await getPresignedUrl(storageKey, bucket, region, accessKeyId, secretAccessKey, 3600);
+        const presignedUrl = await getPresignedUrl(
+          storageKey,
+          bucket,
+          region,
+          accessKeyId,
+          secretAccessKey,
+          3600,
+        );
 
         return json({
           presigned_url: presignedUrl,
@@ -155,20 +203,31 @@ export function makeRouter(sql: Sql) {
       // GET /files — list files
       if (method === "GET" && path === "/files") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id query param required");
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id query param required");
         const folderId = url.searchParams.get("folder_id") ?? undefined;
         const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
         const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
-        const items = await listFiles(sql, workspaceId, { folderId, limit, offset });
-        return json({ data: items, count: items.length, workspace_id: workspaceId });
+        const items = await listFiles(sql, workspaceId, {
+          folderId,
+          limit,
+          offset,
+        });
+        return json({
+          data: items,
+          count: items.length,
+          workspace_id: workspaceId,
+        });
       }
 
       // GET /files/:id/download — redirect to signed URL
       if (method === "GET" && path.match(/^\/files\/[^/]+\/download$/)) {
         const id = path.split("/")[2];
         const file = await getFile(sql, id);
-        if (!file) return apiError("NOT_FOUND", "File not found", undefined, 404);
-        if (file.deleted_at) return apiError("GONE", "File has been deleted", undefined, 410);
+        if (!file)
+          return apiError("NOT_FOUND", "File not found", undefined, 404);
+        if (file.deleted_at)
+          return apiError("GONE", "File has been deleted", undefined, 410);
 
         const signedUrl = await getUrl(file.storage_key, file.access);
         return Response.redirect(signedUrl, 302);
@@ -178,7 +237,8 @@ export function makeRouter(sql: Sql) {
       if (method === "GET" && path.match(/^\/files\/[^/]+$/)) {
         const id = path.split("/")[2];
         const file = await getFile(sql, id);
-        if (!file) return apiError("NOT_FOUND", "File not found", undefined, 404);
+        if (!file)
+          return apiError("NOT_FOUND", "File not found", undefined, 404);
         return json(file);
       }
 
@@ -186,14 +246,21 @@ export function makeRouter(sql: Sql) {
       if (method === "DELETE" && path.match(/^\/files\/[^/]+$/)) {
         const id = path.split("/")[2];
         const deleted = await softDeleteFile(sql, id);
-        if (!deleted) return apiError("NOT_FOUND", "File not found or already deleted", undefined, 404);
+        if (!deleted)
+          return apiError(
+            "NOT_FOUND",
+            "File not found or already deleted",
+            undefined,
+            404,
+          );
         return json({ ok: true, id });
       }
 
       // GET /files/stats?workspace_id=X — storage stats
       if (method === "GET" && path === "/files/stats") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id query param required");
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id query param required");
         const stats = await getStorageStats(sql, workspaceId);
         return json(stats);
       }
@@ -214,7 +281,13 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, RenameSchema);
         if ("error" in parsed) return parsed.error;
         const file = await renameFile(sql, id, parsed.data.name);
-        if (!file) return apiError("NOT_FOUND", "File not found or already deleted", undefined, 404);
+        if (!file)
+          return apiError(
+            "NOT_FOUND",
+            "File not found or already deleted",
+            undefined,
+            404,
+          );
         return json(file);
       }
 
@@ -225,7 +298,13 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, MoveSchema);
         if ("error" in parsed) return parsed.error;
         const file = await moveFile(sql, id, parsed.data.folder_id);
-        if (!file) return apiError("NOT_FOUND", "File not found or already deleted", undefined, 404);
+        if (!file)
+          return apiError(
+            "NOT_FOUND",
+            "File not found or already deleted",
+            undefined,
+            404,
+          );
         return json(file);
       }
 
@@ -235,7 +314,7 @@ export function makeRouter(sql: Sql) {
         try {
           const data = await readFromLocal(key);
           const mimeType = getMimeType(key);
-          return new Response(data, {
+          return new Response(data as any, {
             headers: { "Content-Type": mimeType },
           });
         } catch {
@@ -259,20 +338,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

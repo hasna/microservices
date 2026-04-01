@@ -1,32 +1,32 @@
-# @hasna/microservice-NAME
+# @hasna/microservice-__name__
 
-> NAME — part of [@hasna/microservices](https://github.com/hasna/microservices)
+> __NAME__ — part of [@hasna/microservices](https://github.com/hasna/microservices)
 
 DESCRIPTION
 
 ## Install
 
 ```bash
-bun install -g @hasna/microservice-NAME
+bun install -g @hasna/microservice-__name__
 ```
 
 ## Quick Start
 
 ```bash
 # Run migrations against your PostgreSQL database
-microservice-NAME migrate --db postgres://localhost/myapp
+microservice-__name__ migrate --db postgres://localhost/myapp
 
 # Start the HTTP API (standalone mode)
-microservice-NAME serve --port 3001
+microservice-__name__ serve --port 3001
 
 # Start the MCP server (for AI agents)
-microservice-NAME mcp
+microservice-__name__ mcp
 ```
 
 ## Embedded Usage
 
 ```ts
-import { migrate, getDb } from '@hasna/microservice-NAME'
+import { migrate, getDb } from '@hasna/microservice-__name__'
 
 const sql = getDb('postgres://localhost/myapp')
 await migrate(sql)
@@ -40,7 +40,7 @@ await migrate(sql)
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `NAME_PORT` | No | HTTP server port (default: 3000) |
+| `____NAME_____PORT` | No | HTTP server port (default: 3000) |
 
 ## HTTP API
 
@@ -56,10 +56,10 @@ await migrate(sql)
 ## CLI Commands
 
 ```
-microservice-NAME migrate    Run database migrations
-microservice-NAME serve      Start HTTP API server
-microservice-NAME mcp        Start MCP server
-microservice-NAME status     Show connection status
+microservice-__name__ migrate    Run database migrations
+microservice-__name__ serve      Start HTTP API server
+microservice-__name__ mcp        Start MCP server
+microservice-__name__ status     Show connection status
 ```
 
 ## License

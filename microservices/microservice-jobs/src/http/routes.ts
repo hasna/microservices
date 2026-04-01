@@ -1,7 +1,22 @@
-import { z } from "zod";
 import type { Sql } from "postgres";
-import { enqueue, getJob, listJobs, cancelJob, listDeadLetterJobs, retryDeadLetterJob, getQueueStats, retryFailedJobs, purgeJobs } from "../lib/queue.js";
-import { createSchedule, listSchedules, updateSchedule, deleteSchedule } from "../lib/schedules.js";
+import { z } from "zod";
+import {
+  cancelJob,
+  enqueue,
+  getJob,
+  getQueueStats,
+  listDeadLetterJobs,
+  listJobs,
+  purgeJobs,
+  retryDeadLetterJob,
+  retryFailedJobs,
+} from "../lib/queue.js";
+import {
+  createSchedule,
+  deleteSchedule,
+  listSchedules,
+  updateSchedule,
+} from "../lib/schedules.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -34,16 +49,32 @@ const UpdateScheduleSchema = z.object({
 
 export function makeRouter(sql: Sql) {
   return async (req: Request): Promise<Response> => {
-    const url = new URL(req.url); const p = url.pathname; const m = req.method;
-    if (m === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    const url = new URL(req.url);
+    const p = url.pathname;
+    const m = req.method;
+    if (m === "OPTIONS")
+      return new Response(null, { status: 204, headers: corsHeaders });
     try {
       if (m === "GET" && p === "/health") {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-jobs", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-jobs",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-jobs", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-jobs",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
       if (m === "POST" && p === "/jobs/enqueue") {
@@ -52,18 +83,33 @@ export function makeRouter(sql: Sql) {
         return json(await enqueue(sql, parsed.data), 201);
       }
       if (m === "GET" && p === "/jobs") {
-        const items = await listJobs(sql, { queue: url.searchParams.get("queue") ?? undefined, status: url.searchParams.get("status") ?? undefined, workspaceId: url.searchParams.get("workspace_id") ?? undefined });
+        const items = await listJobs(sql, {
+          queue: url.searchParams.get("queue") ?? undefined,
+          status: url.searchParams.get("status") ?? undefined,
+          workspaceId: url.searchParams.get("workspace_id") ?? undefined,
+        });
         return json({ data: items, count: items.length });
       }
-      if (m === "GET" && p.match(/^\/jobs\/[^/]+$/) && !p.includes("dead-letter") && !p.includes("schedules")) {
-        const j = await getJob(sql, p.split("/")[2]); return j ? json(j) : json({ error: "Not found" }, 404);
+      if (
+        m === "GET" &&
+        p.match(/^\/jobs\/[^/]+$/) &&
+        !p.includes("dead-letter") &&
+        !p.includes("schedules")
+      ) {
+        const j = await getJob(sql, p.split("/")[2]);
+        return j ? json(j) : json({ error: "Not found" }, 404);
       }
-      if (m === "DELETE" && p.match(/^\/jobs\/[^/]+$/)) return json({ cancelled: await cancelJob(sql, p.split("/")[2]) });
+      if (m === "DELETE" && p.match(/^\/jobs\/[^/]+$/))
+        return json({ cancelled: await cancelJob(sql, p.split("/")[2]) });
       if (m === "GET" && p === "/jobs/dead-letter") {
-        const items = await listDeadLetterJobs(sql, url.searchParams.get("queue") ?? undefined);
+        const items = await listDeadLetterJobs(
+          sql,
+          url.searchParams.get("queue") ?? undefined,
+        );
         return json({ data: items, count: items.length });
       }
-      if (m === "POST" && p.match(/^\/jobs\/dead-letter\/[^/]+\/retry$/)) return json(await retryDeadLetterJob(sql, p.split("/")[3]));
+      if (m === "POST" && p.match(/^\/jobs\/dead-letter\/[^/]+\/retry$/))
+        return json(await retryDeadLetterJob(sql, p.split("/")[3]));
       if (m === "POST" && p === "/jobs/schedules") {
         const parsed = await parseBody(req, CreateScheduleSchema);
         if ("error" in parsed) return parsed.error;
@@ -79,13 +125,20 @@ export function makeRouter(sql: Sql) {
         await updateSchedule(sql, p.split("/")[3], parsed.data);
         return json({ ok: true });
       }
-      if (m === "DELETE" && p.match(/^\/jobs\/schedules\/[^/]+$/)) return json({ deleted: await deleteSchedule(sql, p.split("/")[3]) });
+      if (m === "DELETE" && p.match(/^\/jobs\/schedules\/[^/]+$/))
+        return json({ deleted: await deleteSchedule(sql, p.split("/")[3]) });
       if (m === "GET" && p === "/jobs/stats") {
-        const stats = await getQueueStats(sql, url.searchParams.get("queue") ?? undefined);
+        const stats = await getQueueStats(
+          sql,
+          url.searchParams.get("queue") ?? undefined,
+        );
         return json({ data: stats, count: stats.length });
       }
       if (m === "POST" && p === "/jobs/retry-failed") {
-        const parsed = await parseBody(req, z.object({ queue: z.string().min(1) }));
+        const parsed = await parseBody(
+          req,
+          z.object({ queue: z.string().min(1) }),
+        );
         if ("error" in parsed) return parsed.error;
         const retried = await retryFailedJobs(sql, parsed.data.queue);
         return json({ retried });
@@ -93,12 +146,19 @@ export function makeRouter(sql: Sql) {
       if (m === "DELETE" && p === "/jobs/purge") {
         const queue = url.searchParams.get("queue") ?? undefined;
         const status = url.searchParams.get("status") ?? undefined;
-        const olderThanDays = url.searchParams.get("older_than_days") ? parseInt(url.searchParams.get("older_than_days")!, 10) : undefined;
+        const olderThanDays = url.searchParams.get("older_than_days")
+          ? parseInt(url.searchParams.get("older_than_days")!, 10)
+          : undefined;
         const purged = await purgeJobs(sql, { queue, status, olderThanDays });
         return json({ purged });
       }
       return json({ error: "Not found" }, 404);
-    } catch (e) { return json({ error: e instanceof Error ? e.message : "Server error" }, 500); }
+    } catch (e) {
+      return json(
+        { error: e instanceof Error ? e.message : "Server error" },
+        500,
+      );
+    }
   };
 }
 
@@ -109,20 +169,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

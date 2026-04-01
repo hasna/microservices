@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { generateToken, generateApiKey, hashToken } from "./tokens.js";
+import { describe, expect, it } from "bun:test";
+import { generateApiKey, generateToken, hashToken } from "./tokens.js";
 
 describe("tokens", () => {
   it("generates unique tokens", () => {

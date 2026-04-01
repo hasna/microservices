@@ -5,15 +5,23 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
+import {
+  checkQuota,
+  getUsageSummary,
+  listMetrics,
+  setQuota,
+} from "../lib/query.js";
 import { track } from "../lib/track.js";
-import { getUsageSummary, checkQuota, setQuota, listMetrics } from "../lib/query.js";
 
 const server = new Server(
   { name: "microservice-usage", version: "0.0.1" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {} } },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -25,10 +33,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           workspace_id: { type: "string", description: "Workspace UUID" },
-          metric: { type: "string", description: "Metric name (e.g. api.calls, storage.gb)" },
+          metric: {
+            type: "string",
+            description: "Metric name (e.g. api.calls, storage.gb)",
+          },
           quantity: { type: "number", description: "Amount consumed" },
-          unit: { type: "string", description: "Unit of measure (default: count)" },
-          metadata: { type: "object", description: "Optional key-value metadata" },
+          unit: {
+            type: "string",
+            description: "Unit of measure (default: count)",
+          },
+          metadata: {
+            type: "object",
+            description: "Optional key-value metadata",
+          },
         },
         required: ["workspace_id", "metric", "quantity"],
       },
@@ -41,7 +58,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           workspace_id: { type: "string" },
           metric: { type: "string", description: "Filter by metric name" },
-          since: { type: "string", description: "ISO date string — only include events after this date" },
+          since: {
+            type: "string",
+            description:
+              "ISO date string — only include events after this date",
+          },
         },
         required: ["workspace_id"],
       },
@@ -54,7 +75,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           workspace_id: { type: "string" },
           metric: { type: "string" },
-          period: { type: "string", enum: ["hour", "day", "month", "total"], description: "Period to check (default: month)" },
+          period: {
+            type: "string",
+            enum: ["hour", "day", "month", "total"],
+            description: "Period to check (default: month)",
+          },
         },
         required: ["workspace_id", "metric"],
       },
@@ -67,9 +92,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           workspace_id: { type: "string" },
           metric: { type: "string" },
-          limit_value: { type: "number", description: "Maximum allowed usage in the period" },
-          period: { type: "string", enum: ["hour", "day", "month", "total"], description: "Period (default: month)" },
-          hard_limit: { type: "boolean", description: "If true, enforce hard block when limit is exceeded" },
+          limit_value: {
+            type: "number",
+            description: "Maximum allowed usage in the period",
+          },
+          period: {
+            type: "string",
+            enum: ["hour", "day", "month", "total"],
+            description: "Period (default: month)",
+          },
+          hard_limit: {
+            type: "boolean",
+            description: "If true, enforce hard block when limit is exceeded",
+          },
         },
         required: ["workspace_id", "metric", "limit_value"],
       },
@@ -91,7 +126,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const sql = getDb();
   const { name, arguments: args } = req.params;
-  const a = args as Record<string, unknown>;
+  const a = args as any;
 
   const text = (data: unknown) => ({
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -103,27 +138,31 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       metric: String(a.metric),
       quantity: Number(a.quantity),
       unit: a.unit ? String(a.unit) : undefined,
-      metadata: a.metadata as Record<string, unknown> | undefined,
+      metadata: a.metadata as any | undefined,
     });
     return text({ ok: true });
   }
 
   if (name === "usage_get_summary") {
-    return text(await getUsageSummary(
-      sql,
-      String(a.workspace_id),
-      a.metric ? String(a.metric) : undefined,
-      a.since ? new Date(String(a.since)) : undefined
-    ));
+    return text(
+      await getUsageSummary(
+        sql,
+        String(a.workspace_id),
+        a.metric ? String(a.metric) : undefined,
+        a.since ? new Date(String(a.since)) : undefined,
+      ),
+    );
   }
 
   if (name === "usage_check_quota") {
-    return text(await checkQuota(
-      sql,
-      String(a.workspace_id),
-      String(a.metric),
-      a.period ? String(a.period) : "month"
-    ));
+    return text(
+      await checkQuota(
+        sql,
+        String(a.workspace_id),
+        String(a.metric),
+        a.period ? String(a.period) : "month",
+      ),
+    );
   }
 
   if (name === "usage_set_quota") {
@@ -133,7 +172,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       String(a.metric),
       Number(a.limit_value),
       a.period ? String(a.period) : "month",
-      a.hard_limit ? Boolean(a.hard_limit) : false
+      a.hard_limit ? Boolean(a.hard_limit) : false,
     );
     return text({ ok: true });
   }

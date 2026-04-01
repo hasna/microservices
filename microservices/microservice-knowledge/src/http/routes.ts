@@ -2,10 +2,15 @@
  * Knowledge HTTP routes.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
-import { createCollection, getCollection, listCollections, deleteCollection } from "../lib/collections.js";
-import { listDocuments, deleteDocument } from "../lib/documents.js";
+import { z } from "zod";
+import {
+  createCollection,
+  deleteCollection,
+  getCollection,
+  listCollections,
+} from "../lib/collections.js";
+import { deleteDocument, listDocuments } from "../lib/documents.js";
 import { ingestDocument } from "../lib/ingest.js";
 import { retrieve } from "../lib/retrieve.js";
 import { getCollectionStats } from "../lib/stats.js";
@@ -23,21 +28,38 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-export function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+export function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }
 
@@ -47,7 +69,9 @@ const CreateCollectionSchema = z.object({
   description: z.string().optional(),
   chunk_size: z.number().int().positive().optional(),
   chunk_overlap: z.number().int().min(0).optional(),
-  chunking_strategy: z.enum(["fixed", "paragraph", "sentence", "recursive"]).optional(),
+  chunking_strategy: z
+    .enum(["fixed", "paragraph", "sentence", "recursive"])
+    .optional(),
   embedding_model: z.string().optional(),
 });
 
@@ -85,9 +109,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-knowledge", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-knowledge",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-knowledge", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-knowledge",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -95,7 +132,15 @@ export function makeRouter(sql: Sql) {
       if (method === "POST" && path === "/knowledge/collections") {
         const parsed = await parseBody(req, CreateCollectionSchema);
         if ("error" in parsed) return parsed.error;
-        const { workspace_id, name, description, chunk_size, chunk_overlap, chunking_strategy, embedding_model } = parsed.data;
+        const {
+          workspace_id,
+          name,
+          description,
+          chunk_size,
+          chunk_overlap,
+          chunking_strategy,
+          embedding_model,
+        } = parsed.data;
         const col = await createCollection(sql, {
           workspaceId: workspace_id,
           name,
@@ -111,13 +156,17 @@ export function makeRouter(sql: Sql) {
       // GET /knowledge/collections?workspace_id=
       if (method === "GET" && path === "/knowledge/collections") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("VALIDATION_ERROR", "workspace_id is required");
+        if (!workspaceId)
+          return apiError("VALIDATION_ERROR", "workspace_id is required");
         const cols = await listCollections(sql, workspaceId);
         return json({ data: cols, count: cols.length });
       }
 
       // GET /knowledge/collections/:id/stats
-      if (method === "GET" && path.match(/^\/knowledge\/collections\/[^/]+\/stats$/)) {
+      if (
+        method === "GET" &&
+        path.match(/^\/knowledge\/collections\/[^/]+\/stats$/)
+      ) {
         const parts = path.split("/");
         const id = parts[3]!;
         const stats = await getCollectionStats(sql, id);
@@ -125,11 +174,15 @@ export function makeRouter(sql: Sql) {
       }
 
       // POST /knowledge/collections/:id/reindex
-      if (method === "POST" && path.match(/^\/knowledge\/collections\/[^/]+\/reindex$/)) {
+      if (
+        method === "POST" &&
+        path.match(/^\/knowledge\/collections\/[^/]+\/reindex$/)
+      ) {
         const parts = path.split("/");
         const id = parts[3]!;
         const collection = await getCollection(sql, id);
-        if (!collection) return apiError("NOT_FOUND", "Collection not found", undefined, 404);
+        if (!collection)
+          return apiError("NOT_FOUND", "Collection not found", undefined, 404);
 
         // Delete all chunks and re-ingest all documents
         await sql`DELETE FROM knowledge.chunks WHERE collection_id = ${id}`;
@@ -143,7 +196,9 @@ export function makeRouter(sql: Sql) {
             await sql`UPDATE knowledge.documents SET status = 'pending', chunk_count = 0, error = NULL WHERE id = ${doc.id}`;
             // Delete existing chunks for this doc (already done above)
             // Re-ingest by inserting chunks directly
-            const { chunkText, estimateTokens } = await import("../lib/chunking.js");
+            const { chunkText, estimateTokens } = await import(
+              "../lib/chunking.js"
+            );
             const { generateEmbedding } = await import("../lib/embeddings.js");
 
             const chunks = chunkText(doc.content, {
@@ -158,7 +213,12 @@ export function makeRouter(sql: Sql) {
               const chunkContent = chunks[i]!;
               const tokenCount = estimateTokens(chunkContent);
               const embedding = await generateEmbedding(chunkContent);
-              const chunkMeta = { ...(doc.metadata ?? {}), chunk_index: i, total_chunks: chunks.length, document_title: doc.title };
+              const chunkMeta = {
+                ...(doc.metadata ?? {}),
+                chunk_index: i,
+                total_chunks: chunks.length,
+                document_title: doc.title,
+              };
 
               if (hasPgvector && embedding) {
                 await sql`
@@ -186,15 +246,24 @@ export function makeRouter(sql: Sql) {
       }
 
       // GET /knowledge/collections/:id
-      if (method === "GET" && path.match(/^\/knowledge\/collections\/[^/]+$/) && !path.includes("/stats") && !path.includes("/reindex")) {
+      if (
+        method === "GET" &&
+        path.match(/^\/knowledge\/collections\/[^/]+$/) &&
+        !path.includes("/stats") &&
+        !path.includes("/reindex")
+      ) {
         const id = path.split("/").pop()!;
         const col = await getCollection(sql, id);
-        if (!col) return apiError("NOT_FOUND", "Collection not found", undefined, 404);
+        if (!col)
+          return apiError("NOT_FOUND", "Collection not found", undefined, 404);
         return json(col);
       }
 
       // DELETE /knowledge/collections/:id
-      if (method === "DELETE" && path.match(/^\/knowledge\/collections\/[^/]+$/)) {
+      if (
+        method === "DELETE" &&
+        path.match(/^\/knowledge\/collections\/[^/]+$/)
+      ) {
         const id = path.split("/").pop()!;
         const ok = await deleteCollection(sql, id);
         return json({ ok });
@@ -204,7 +273,14 @@ export function makeRouter(sql: Sql) {
       if (method === "POST" && path === "/knowledge/ingest") {
         const parsed = await parseBody(req, IngestSchema);
         if ("error" in parsed) return parsed.error;
-        const { collection_id, title, content, source_type, source_url, metadata } = parsed.data;
+        const {
+          collection_id,
+          title,
+          content,
+          source_type,
+          source_url,
+          metadata,
+        } = parsed.data;
         const doc = await ingestDocument(sql, collection_id, {
           title,
           content,
@@ -218,13 +294,17 @@ export function makeRouter(sql: Sql) {
       // GET /knowledge/documents?collection_id=
       if (method === "GET" && path === "/knowledge/documents") {
         const collectionId = url.searchParams.get("collection_id");
-        if (!collectionId) return apiError("VALIDATION_ERROR", "collection_id is required");
+        if (!collectionId)
+          return apiError("VALIDATION_ERROR", "collection_id is required");
         const docs = await listDocuments(sql, collectionId);
         return json({ data: docs, count: docs.length });
       }
 
       // DELETE /knowledge/documents/:id
-      if (method === "DELETE" && path.match(/^\/knowledge\/documents\/[^/]+$/)) {
+      if (
+        method === "DELETE" &&
+        path.match(/^\/knowledge\/documents\/[^/]+$/)
+      ) {
         const id = path.split("/").pop()!;
         const ok = await deleteDocument(sql, id);
         return json({ ok });

@@ -1,24 +1,51 @@
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
 export {
-  createNotification, getNotification, listUserNotifications,
-  markRead, markAllRead, deleteNotification, countUnread,
-  type Notification, type CreateNotificationData, type ListNotificationsOptions
+  type BatchNotification,
+  type BatchResult,
+  sendBatch,
+} from "./batch.js";
+export {
+  type CreateNotificationData,
+  countUnread,
+  createNotification,
+  deleteNotification,
+  getNotification,
+  type ListNotificationsOptions,
+  listUserNotifications,
+  markAllRead,
+  markRead,
+  type Notification,
 } from "./notifications.js";
 export {
-  createTemplate, getTemplate, getTemplateByName, listTemplates,
-  updateTemplate, deleteTemplate, renderTemplate,
-  type Template, type CreateTemplateData
+  getPreference,
+  getUserPreferences,
+  isChannelEnabled,
+  type Preference,
+  setPreference,
+} from "./preferences.js";
+export { type SendNotificationData, sendNotification } from "./send.js";
+export {
+  type CreateTemplateData,
+  createTemplate,
+  deleteTemplate,
+  getTemplate,
+  getTemplateByName,
+  listTemplates,
+  renderTemplate,
+  type Template,
+  updateTemplate,
 } from "./templates.js";
 export {
-  getPreference, setPreference, getUserPreferences, isChannelEnabled,
-  type Preference
-} from "./preferences.js";
+  generateUnsubscribeToken,
+  verifyUnsubscribeToken,
+} from "./unsubscribe.js";
 export {
-  createWebhookEndpoint, listWorkspaceWebhooks, updateWebhookEndpoint,
-  deleteWebhookEndpoint, triggerWebhooks,
-  type WebhookEndpoint, type CreateWebhookEndpointData
+  type CreateWebhookEndpointData,
+  createWebhookEndpoint,
+  deleteWebhookEndpoint,
+  listWorkspaceWebhooks,
+  triggerWebhooks,
+  updateWebhookEndpoint,
+  type WebhookEndpoint,
 } from "./webhooks.js";
-export { sendNotification, type SendNotificationData } from "./send.js";
-export { sendBatch, type BatchNotification, type BatchResult } from "./batch.js";
-export { generateUnsubscribeToken, verifyUnsubscribeToken } from "./unsubscribe.js";

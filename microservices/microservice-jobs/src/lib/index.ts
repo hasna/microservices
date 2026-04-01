@@ -1,5 +1,29 @@
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-export { enqueue, dequeue, completeJob, failJob, cancelJob, getJob, listJobs, listDeadLetterJobs, retryDeadLetterJob, getQueueStats, retryFailedJobs, purgeJobs, updateJobProgress, type Job, type QueueStats } from "./queue.js";
-export { Worker, type JobHandler, type WorkerOptions } from "./worker.js";
-export { createSchedule, listSchedules, updateSchedule, deleteSchedule, shouldFire, triggerDueSchedules, type Schedule } from "./schedules.js";
+export {
+  cancelJob,
+  completeJob,
+  dequeue,
+  enqueue,
+  failJob,
+  getJob,
+  getQueueStats,
+  type Job,
+  listDeadLetterJobs,
+  listJobs,
+  purgeJobs,
+  type QueueStats,
+  retryDeadLetterJob,
+  retryFailedJobs,
+  updateJobProgress,
+} from "./queue.js";
+export {
+  createSchedule,
+  deleteSchedule,
+  listSchedules,
+  type Schedule,
+  shouldFire,
+  triggerDueSchedules,
+  updateSchedule,
+} from "./schedules.js";
+export { type JobHandler, Worker, type WorkerOptions } from "./worker.js";

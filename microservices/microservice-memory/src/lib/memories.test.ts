@@ -3,7 +3,7 @@
  * No database, no OpenAI API — pure logic tests.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 // --------------------------------------------------------------------------
 // Test: importance clamping logic
@@ -48,13 +48,19 @@ describe("content validation", () => {
   });
 
   it("throws for whitespace-only string", () => {
-    expect(() => validateContent("   ")).toThrow("Memory content cannot be empty");
-    expect(() => validateContent("\t\n")).toThrow("Memory content cannot be empty");
+    expect(() => validateContent("   ")).toThrow(
+      "Memory content cannot be empty",
+    );
+    expect(() => validateContent("\t\n")).toThrow(
+      "Memory content cannot be empty",
+    );
   });
 
   it("accepts valid content", () => {
     expect(() => validateContent("Hello, world")).not.toThrow();
-    expect(() => validateContent("The user prefers TypeScript over JavaScript")).not.toThrow();
+    expect(() =>
+      validateContent("The user prefers TypeScript over JavaScript"),
+    ).not.toThrow();
   });
 });
 
@@ -63,17 +69,17 @@ describe("content validation", () => {
 // --------------------------------------------------------------------------
 
 describe("generateEmbedding", () => {
-  const originalKey = process.env["OPENAI_API_KEY"];
+  const originalKey = process.env.OPENAI_API_KEY;
 
   beforeEach(() => {
-    delete process.env["OPENAI_API_KEY"];
+    delete process.env.OPENAI_API_KEY;
   });
 
   afterEach(() => {
     if (originalKey !== undefined) {
-      process.env["OPENAI_API_KEY"] = originalKey;
+      process.env.OPENAI_API_KEY = originalKey;
     } else {
-      delete process.env["OPENAI_API_KEY"];
+      delete process.env.OPENAI_API_KEY;
     }
   });
 
@@ -89,10 +95,10 @@ describe("generateEmbedding", () => {
   });
 
   it("hasEmbeddingKey returns true when OPENAI_API_KEY is set", async () => {
-    process.env["OPENAI_API_KEY"] = "sk-test-fake-key";
+    process.env.OPENAI_API_KEY = "sk-test-fake-key";
     const { hasEmbeddingKey } = await import("./embeddings.js");
     // Re-evaluate the function with new env state
-    const result = !!process.env["OPENAI_API_KEY"];
+    const result = !!process.env.OPENAI_API_KEY;
     expect(result).toBe(true);
   });
 });
@@ -105,10 +111,13 @@ describe("search mode selection", () => {
   function resolveSearchMode(
     requestedMode: "semantic" | "text" | "hybrid" | undefined,
     hasPgvector: boolean,
-    hasEmbedding: boolean
+    hasEmbedding: boolean,
   ): "semantic" | "text" | "hybrid" {
     const mode = requestedMode ?? "text";
-    if ((mode === "semantic" || mode === "hybrid") && (!hasPgvector || !hasEmbedding)) {
+    if (
+      (mode === "semantic" || mode === "hybrid") &&
+      (!hasPgvector || !hasEmbedding)
+    ) {
       return "text";
     }
     return mode;
@@ -149,7 +158,7 @@ describe("search mode selection", () => {
 // --------------------------------------------------------------------------
 
 describe("metadata defaults", () => {
-  function resolveMetadata(metadata?: Record<string, unknown>): Record<string, unknown> {
+  function resolveMetadata(metadata?: any): any {
     return metadata ?? {};
   }
 

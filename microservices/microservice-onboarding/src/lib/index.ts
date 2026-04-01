@@ -8,29 +8,29 @@
  *   const flow = await createFlow(sql, { name: 'welcome', steps: [...] })
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
 
 // Flows
 export {
   createFlow,
+  deleteFlow,
+  type Flow,
+  type FlowStep,
   getFlow,
   getFlowByName,
   listFlows,
   updateFlow,
-  deleteFlow,
-  type Flow,
-  type FlowStep,
 } from "./flows.js";
 
 // Progress
 export {
-  startFlow,
-  markStep,
   getProgress,
-  isComplete,
-  resetProgress,
   getUserFlows,
+  isComplete,
+  markStep,
   type Progress,
   type ProgressSummary,
+  resetProgress,
+  startFlow,
 } from "./progress.js";

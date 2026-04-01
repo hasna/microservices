@@ -2,9 +2,9 @@
  * Unit tests for usage query logic — no database required.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { isValidPeriod, VALID_PERIODS } from "./query.js";
 import { getPeriodStart } from "./track.js";
-import { VALID_PERIODS, isValidPeriod } from "./query.js";
 
 // ---- Period calculation tests -----------------------------------------------
 

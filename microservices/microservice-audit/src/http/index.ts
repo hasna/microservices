@@ -8,5 +8,7 @@ export async function startServer(port: number = 3006): Promise<void> {
   const router = makeRouter(sql);
 
   const server = Bun.serve({ port, fetch: router });
-  console.log(`microservice-audit listening on http://localhost:${server.port}`);
+  console.log(
+    `microservice-audit listening on http://localhost:${server.port}`,
+  );
 }

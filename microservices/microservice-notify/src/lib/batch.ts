@@ -7,7 +7,7 @@ export interface BatchNotification {
   type: string;
   title?: string;
   body: string;
-  data?: Record<string, unknown>;
+  data?: any;
 }
 
 export interface BatchResult {
@@ -17,7 +17,10 @@ export interface BatchResult {
   error?: string;
 }
 
-export async function sendBatch(sql: Sql, notifications: BatchNotification[]): Promise<BatchResult[]> {
+export async function sendBatch(
+  sql: Sql,
+  notifications: BatchNotification[],
+): Promise<BatchResult[]> {
   const { sendNotification } = await import("./send.js");
   const results: BatchResult[] = [];
   await Promise.allSettled(
@@ -26,9 +29,14 @@ export async function sendBatch(sql: Sql, notifications: BatchNotification[]): P
         await sendNotification(sql, n);
         results[i] = { index: i, userId: n.userId, success: true };
       } catch (e) {
-        results[i] = { index: i, userId: n.userId, success: false, error: e instanceof Error ? e.message : String(e) };
+        results[i] = {
+          index: i,
+          userId: n.userId,
+          success: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
       }
-    })
+    }),
   );
   return results.filter(Boolean);
 }

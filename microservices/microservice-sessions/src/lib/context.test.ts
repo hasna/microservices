@@ -84,7 +84,7 @@ describe("context window logic", () => {
 
   function simulateContextWindow(
     messages: Array<{ role: string; content: string; tokens: number }>,
-    maxTokens: number
+    maxTokens: number,
   ) {
     const totalCount = messages.length;
 
@@ -113,7 +113,8 @@ describe("context window logic", () => {
 
     for (let i = nonSystemMessages.length - 1; i >= 0; i--) {
       const msg = nonSystemMessages[i];
-      const msgTokens = msg.tokens > 0 ? msg.tokens : estimateTokens(msg.content);
+      const msgTokens =
+        msg.tokens > 0 ? msg.tokens : estimateTokens(msg.content);
 
       if (usedTokens + msgTokens <= remainingBudget) {
         included.unshift(msg);
@@ -206,7 +207,9 @@ describe("fork logic", () => {
 
     const forkFromId = "m2";
     const targetMsg = messages.find((m) => m.id === forkFromId)!;
-    const forkedMessages = messages.filter((m) => m.created_at <= targetMsg.created_at);
+    const forkedMessages = messages.filter(
+      (m) => m.created_at <= targetMsg.created_at,
+    );
 
     expect(forkedMessages).toHaveLength(2);
     expect(forkedMessages[0].content).toBe("First");

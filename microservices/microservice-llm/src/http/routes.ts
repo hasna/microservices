@@ -2,11 +2,11 @@
  * LLM HTTP routes.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
+import { z } from "zod";
 import { chat } from "../lib/gateway.js";
-import { getWorkspaceUsage } from "../lib/usage.js";
 import { getAvailableModels } from "../lib/providers.js";
+import { getWorkspaceUsage } from "../lib/usage.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,10 +16,14 @@ const corsHeaders = {
 
 const ChatSchema = z.object({
   workspace_id: z.string().uuid(),
-  messages: z.array(z.object({
-    role: z.enum(["system", "user", "assistant"]),
-    content: z.string(),
-  })).min(1),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(["system", "user", "assistant"]),
+        content: z.string(),
+      }),
+    )
+    .min(1),
   model: z.string().optional(),
 });
 
@@ -40,9 +44,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-llm", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-llm",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-llm", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-llm",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -67,7 +84,8 @@ export function makeRouter(sql: Sql) {
       // GET /llm/usage/:workspace_id
       if (method === "GET" && path.startsWith("/llm/usage/")) {
         const workspaceId = path.slice("/llm/usage/".length);
-        if (!workspaceId) return apiError("BAD_REQUEST", "workspace_id is required");
+        if (!workspaceId)
+          return apiError("BAD_REQUEST", "workspace_id is required");
         const sinceParam = url.searchParams.get("since");
         const since = sinceParam ? new Date(sinceParam) : undefined;
         const usage = await getWorkspaceUsage(sql, workspaceId, since);
@@ -89,20 +107,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

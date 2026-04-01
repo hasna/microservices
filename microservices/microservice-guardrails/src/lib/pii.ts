@@ -14,9 +14,11 @@ const PHONE_US_RE = /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g;
 const PHONE_INTL_RE = /\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}/g;
 const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
 const CC_RE = /\b(\d[ -]?){13,19}\b/g;
-const IP_RE = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g;
+const IP_RE =
+  /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g;
 const ZIP_US_RE = /\b\d{5}(?:-\d{4})?\b/g;
-const DOB_RE = /\b(?:0[1-9]|1[0-2])\/(?:0[1-9]|[12]\d|3[01])\/(?:19|20)\d{2}\b/g;
+const DOB_RE =
+  /\b(?:0[1-9]|1[0-2])\/(?:0[1-9]|[12]\d|3[01])\/(?:19|20)\d{2}\b/g;
 
 /**
  * Luhn algorithm — validates credit card numbers.
@@ -43,7 +45,12 @@ function findMatches(text: string, regex: RegExp, type: string): PIIMatch[] {
   let m: RegExpExecArray | null;
   const re = new RegExp(regex.source, regex.flags);
   while ((m = re.exec(text)) !== null) {
-    matches.push({ type, value: m[0], start: m.index, end: m.index + m[0].length });
+    matches.push({
+      type,
+      value: m[0],
+      start: m.index,
+      end: m.index + m[0].length,
+    });
   }
   return matches;
 }
@@ -89,9 +96,7 @@ export function scanPII(text: string): PIIMatch[] {
   // ZIP codes: only match if not already part of another match (SSN, CC, phone)
   const zipCandidates = findMatches(text, ZIP_US_RE, "zip_code");
   for (const z of zipCandidates) {
-    const overlaps = matches.some(
-      (m) => z.start >= m.start && z.end <= m.end
-    );
+    const overlaps = matches.some((m) => z.start >= m.start && z.end <= m.end);
     if (!overlaps) {
       matches.push(z);
     }

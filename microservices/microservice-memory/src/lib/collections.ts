@@ -20,7 +20,10 @@ export interface CreateCollectionInput {
   description?: string;
 }
 
-export async function createCollection(sql: Sql, data: CreateCollectionInput): Promise<Collection> {
+export async function createCollection(
+  sql: Sql,
+  data: CreateCollectionInput,
+): Promise<Collection> {
   const [col] = await sql<Collection[]>`
     INSERT INTO memory.collections (workspace_id, user_id, name, description)
     VALUES (${data.workspaceId}, ${data.userId ?? null}, ${data.name}, ${data.description ?? null})
@@ -29,12 +32,21 @@ export async function createCollection(sql: Sql, data: CreateCollectionInput): P
   return col!;
 }
 
-export async function getCollection(sql: Sql, id: string): Promise<Collection | null> {
-  const [col] = await sql<Collection[]>`SELECT * FROM memory.collections WHERE id = ${id}`;
+export async function getCollection(
+  sql: Sql,
+  id: string,
+): Promise<Collection | null> {
+  const [col] = await sql<
+    Collection[]
+  >`SELECT * FROM memory.collections WHERE id = ${id}`;
   return col ?? null;
 }
 
-export async function listCollections(sql: Sql, workspaceId: string, userId?: string): Promise<Collection[]> {
+export async function listCollections(
+  sql: Sql,
+  workspaceId: string,
+  userId?: string,
+): Promise<Collection[]> {
   if (userId) {
     return sql<Collection[]>`
       SELECT * FROM memory.collections

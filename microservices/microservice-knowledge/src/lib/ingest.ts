@@ -3,23 +3,27 @@
  */
 
 import type { Sql } from "postgres";
-import { chunkText, estimateTokens, type ChunkingStrategy } from "./chunking.js";
-import { generateEmbedding } from "./embeddings.js";
-import { hashContent, type Document } from "./documents.js";
+import {
+  type ChunkingStrategy,
+  chunkText,
+  estimateTokens,
+} from "./chunking.js";
 import { getCollection } from "./collections.js";
+import { type Document, hashContent } from "./documents.js";
+import { generateEmbedding } from "./embeddings.js";
 
 export interface IngestInput {
   title: string;
   content: string;
   sourceType?: "text" | "url" | "file";
   sourceUrl?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
 }
 
 export async function ingestDocument(
   sql: Sql,
   collectionId: string,
-  input: IngestInput
+  input: IngestInput,
 ): Promise<Document> {
   const collection = await getCollection(sql, collectionId);
   if (!collection) throw new Error(`Collection not found: ${collectionId}`);
@@ -33,7 +37,9 @@ export async function ingestDocument(
     WHERE collection_id = ${collectionId} AND content_hash = ${contentHash}
   `;
   if (existing) {
-    throw new Error(`Duplicate document: content already exists as ${existing.id}`);
+    throw new Error(
+      `Duplicate document: content already exists as ${existing.id}`,
+    );
   }
 
   // Insert document as processing
@@ -80,7 +86,7 @@ export async function ingestDocument(
         await sql`
           INSERT INTO knowledge.chunks (document_id, collection_id, content, chunk_index, token_count, metadata, embedding)
           VALUES (
-            ${doc!.id},
+            ${doc?.id},
             ${collectionId},
             ${chunkContent},
             ${i},
@@ -93,7 +99,7 @@ export async function ingestDocument(
         await sql`
           INSERT INTO knowledge.chunks (document_id, collection_id, content, chunk_index, token_count, metadata)
           VALUES (
-            ${doc!.id},
+            ${doc?.id},
             ${collectionId},
             ${chunkContent},
             ${i},
@@ -108,7 +114,7 @@ export async function ingestDocument(
     const [updated] = await sql<Document[]>`
       UPDATE knowledge.documents
       SET status = 'ready', chunk_count = ${chunks.length}
-      WHERE id = ${doc!.id}
+      WHERE id = ${doc?.id}
       RETURNING *
     `;
 
@@ -127,7 +133,7 @@ export async function ingestDocument(
     await sql`
       UPDATE knowledge.documents
       SET status = 'error', error = ${errorMsg}
-      WHERE id = ${doc!.id}
+      WHERE id = ${doc?.id}
     `;
     throw err;
   }

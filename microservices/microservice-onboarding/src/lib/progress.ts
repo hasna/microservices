@@ -25,7 +25,7 @@ export async function startFlow(
   sql: Sql,
   userId: string,
   flowId: string,
-  workspaceId?: string
+  workspaceId?: string,
 ): Promise<Progress> {
   const [row] = await sql<Progress[]>`
     INSERT INTO onboarding.progress (user_id, flow_id, workspace_id)
@@ -41,7 +41,7 @@ export async function markStep(
   sql: Sql,
   userId: string,
   flowId: string,
-  stepId: string
+  stepId: string,
 ): Promise<Progress> {
   // Add stepId only if not already present (idempotent)
   const [row] = await sql<Progress[]>`
@@ -54,13 +54,20 @@ export async function markStep(
     RETURNING *
   `;
 
-  if (!row) throw new Error(`No progress record found for user ${userId} and flow ${flowId}`);
+  if (!row)
+    throw new Error(
+      `No progress record found for user ${userId} and flow ${flowId}`,
+    );
 
   // Check if all required steps are now complete
   const flow = await getFlow(sql, flowId);
   if (flow) {
-    const requiredSteps = (flow.steps as FlowStep[]).filter(s => s.required !== false);
-    const allDone = requiredSteps.every(s => row.completed_steps.includes(s.id));
+    const requiredSteps = (flow.steps as FlowStep[]).filter(
+      (s) => s.required !== false,
+    );
+    const allDone = requiredSteps.every((s) =>
+      row.completed_steps.includes(s.id),
+    );
     if (allDone && !row.completed_at) {
       const [updated] = await sql<Progress[]>`
         UPDATE onboarding.progress
@@ -78,7 +85,7 @@ export async function markStep(
 export async function getProgress(
   sql: Sql,
   userId: string,
-  flowId: string
+  flowId: string,
 ): Promise<ProgressSummary | null> {
   const [progress] = await sql<Progress[]>`
     SELECT * FROM onboarding.progress WHERE user_id = ${userId} AND flow_id = ${flowId}
@@ -91,17 +98,22 @@ export async function getProgress(
   const completedSteps = progress?.completed_steps ?? [];
 
   const pendingSteps = steps
-    .filter(s => !completedSteps.includes(s.id))
-    .map(s => ({ id: s.id, title: s.title, required: s.required !== false }));
+    .filter((s) => !completedSteps.includes(s.id))
+    .map((s) => ({ id: s.id, title: s.title, required: s.required !== false }));
 
-  const requiredSteps = steps.filter(s => s.required !== false);
-  const completedRequired = requiredSteps.filter(s => completedSteps.includes(s.id));
+  const requiredSteps = steps.filter((s) => s.required !== false);
+  const completedRequired = requiredSteps.filter((s) =>
+    completedSteps.includes(s.id),
+  );
 
-  const percentage = requiredSteps.length === 0
-    ? 100
-    : Math.round((completedRequired.length / requiredSteps.length) * 100);
+  const percentage =
+    requiredSteps.length === 0
+      ? 100
+      : Math.round((completedRequired.length / requiredSteps.length) * 100);
 
-  const isComplete = requiredSteps.length === 0 || requiredSteps.every(s => completedSteps.includes(s.id));
+  const isComplete =
+    requiredSteps.length === 0 ||
+    requiredSteps.every((s) => completedSteps.includes(s.id));
 
   return {
     progress: progress ?? null,
@@ -116,7 +128,7 @@ export async function getProgress(
 export async function isComplete(
   sql: Sql,
   userId: string,
-  flowId: string
+  flowId: string,
 ): Promise<boolean> {
   const summary = await getProgress(sql, userId, flowId);
   if (!summary) return false;
@@ -126,7 +138,7 @@ export async function isComplete(
 export async function resetProgress(
   sql: Sql,
   userId: string,
-  flowId: string
+  flowId: string,
 ): Promise<void> {
   await sql`
     UPDATE onboarding.progress
@@ -137,7 +149,7 @@ export async function resetProgress(
 
 export async function getUserFlows(
   sql: Sql,
-  userId: string
+  userId: string,
 ): Promise<{ flow: Flow; progress: Progress }[]> {
   const progressRows = await sql<Progress[]>`
     SELECT * FROM onboarding.progress WHERE user_id = ${userId} ORDER BY started_at ASC

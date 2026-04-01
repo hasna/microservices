@@ -2,7 +2,6 @@ import type { Sql } from "postgres";
 import { createNotification } from "./notifications.js";
 import { isChannelEnabled } from "./preferences.js";
 import { triggerWebhooks } from "./webhooks.js";
-import { createHmac } from "crypto";
 
 export interface SendNotificationData {
   userId: string;
@@ -11,10 +10,13 @@ export interface SendNotificationData {
   type: string;
   title?: string;
   body: string;
-  data?: Record<string, unknown>;
+  data?: any;
 }
 
-export async function sendNotification(sql: Sql, data: SendNotificationData): Promise<void> {
+export async function sendNotification(
+  sql: Sql,
+  data: SendNotificationData,
+): Promise<void> {
   // 1. Create notification record
   const notification = await createNotification(sql, {
     userId: data.userId,
@@ -27,9 +29,20 @@ export async function sendNotification(sql: Sql, data: SendNotificationData): Pr
   });
 
   // 2. Check preferences (skip if disabled)
-  const enabled = await isChannelEnabled(sql, data.userId, data.channel, data.type);
+  const enabled = await isChannelEnabled(
+    sql,
+    data.userId,
+    data.channel,
+    data.type,
+  );
   if (!enabled) {
-    await logDelivery(sql, notification.id, data.channel, "failed", "Channel disabled by user preference");
+    await logDelivery(
+      sql,
+      notification.id,
+      data.channel,
+      "failed",
+      "Channel disabled by user preference",
+    );
     return;
   }
 
@@ -59,26 +72,45 @@ export async function sendNotification(sql: Sql, data: SendNotificationData): Pr
   }
 
   // 4. Log delivery result
-  await logDelivery(sql, notification.id, data.channel, deliveryError ? "failed" : "sent", deliveryError);
+  await logDelivery(
+    sql,
+    notification.id,
+    data.channel,
+    deliveryError ? "failed" : "sent",
+    deliveryError,
+  );
 }
 
-async function logDelivery(sql: Sql, notificationId: string, channel: string, status: "pending" | "sent" | "failed", error: string | null = null): Promise<void> {
+async function logDelivery(
+  sql: Sql,
+  notificationId: string,
+  channel: string,
+  status: "pending" | "sent" | "failed",
+  error: string | null = null,
+): Promise<void> {
   await sql`
     INSERT INTO notify.delivery_log (notification_id, channel, status, error, sent_at)
     VALUES (${notificationId}, ${channel}, ${status}, ${error}, ${status === "sent" ? sql`NOW()` : null})`;
 }
 
-async function sendEmail(subject: string, body: string, userId: string): Promise<void> {
-  const apiKey = process.env["RESEND_API_KEY"];
+async function sendEmail(
+  subject: string,
+  body: string,
+  userId: string,
+): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     console.log(`[notify] email fallback — to: ${userId} subject: ${subject}`);
     return;
   }
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({
-      from: process.env["NOTIFY_FROM_EMAIL"] ?? "notify@example.com",
+      from: process.env.NOTIFY_FROM_EMAIL ?? "notify@example.com",
       to: [userId],
       subject,
       text: body,
@@ -91,22 +123,31 @@ async function sendEmail(subject: string, body: string, userId: string): Promise
 }
 
 async function sendSms(body: string, userId: string): Promise<void> {
-  const accountSid = process.env["TWILIO_ACCOUNT_SID"];
-  const authToken = process.env["TWILIO_AUTH_TOKEN"];
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
   if (!accountSid || !authToken) {
     console.log(`[notify] sms fallback — to: ${userId} body: ${body}`);
     return;
   }
-  const from = process.env["TWILIO_FROM_NUMBER"] ?? "";
-  const credentials = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
-  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
+  const from = process.env.TWILIO_FROM_NUMBER ?? "";
+  const credentials = Buffer.from(`${accountSid}:${authToken}`).toString(
+    "base64",
+  );
+  const res = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        From: from,
+        To: userId,
+        Body: body,
+      }).toString(),
     },
-    body: new URLSearchParams({ From: from, To: userId, Body: body }).toString(),
-  });
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Twilio API error ${res.status}: ${text}`);

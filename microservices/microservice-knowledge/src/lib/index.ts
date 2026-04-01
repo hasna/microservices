@@ -8,54 +8,47 @@
  *   await ingestDocument(sql, collectionId, { title: 'Doc', content: '...' })
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-
-// Collections
-export {
-  createCollection,
-  getCollection,
-  listCollections,
-  deleteCollection,
-  type Collection,
-  type CreateCollectionInput,
-} from "./collections.js";
-
-// Documents
-export {
-  getDocument,
-  listDocuments,
-  deleteDocument,
-  hashContent,
-  type Document,
-} from "./documents.js";
-
 // Chunking
 export {
-  chunkText,
-  estimateTokens,
   type ChunkingStrategy,
   type ChunkOptions,
+  chunkText,
+  estimateTokens,
 } from "./chunking.js";
-
-// Ingestion
+// Collections
 export {
-  ingestDocument,
-  type IngestInput,
-} from "./ingest.js";
-
-// Retrieval
+  type Collection,
+  type CreateCollectionInput,
+  createCollection,
+  deleteCollection,
+  getCollection,
+  listCollections,
+} from "./collections.js";
+// Documents
 export {
-  retrieve,
-  type RetrieveOptions,
-  type RetrievedChunk,
-} from "./retrieve.js";
-
-// Stats
-export {
-  getCollectionStats,
-  type CollectionStats,
-} from "./stats.js";
-
+  type Document,
+  deleteDocument,
+  getDocument,
+  hashContent,
+  listDocuments,
+} from "./documents.js";
 // Embeddings
 export { generateEmbedding, hasEmbeddingKey } from "./embeddings.js";
+// Ingestion
+export {
+  type IngestInput,
+  ingestDocument,
+} from "./ingest.js";
+// Retrieval
+export {
+  type RetrievedChunk,
+  type RetrieveOptions,
+  retrieve,
+} from "./retrieve.js";
+// Stats
+export {
+  type CollectionStats,
+  getCollectionStats,
+} from "./stats.js";

@@ -2,7 +2,10 @@ import type { Sql } from "postgres";
 import type { Agent } from "./registry.js";
 
 export async function findAgentByCapability(
-  sql: Sql, workspaceId: string, capability: string, opts?: { preferIdle?: boolean }
+  sql: Sql,
+  workspaceId: string,
+  capability: string,
+  opts?: { preferIdle?: boolean },
 ): Promise<Agent | null> {
   if (opts?.preferIdle) {
     // Prefer idle agents, then active, exclude at-capacity
@@ -33,8 +36,11 @@ export async function findAgentByCapability(
 }
 
 export async function routeTask(
-  sql: Sql, workspaceId: string, type: string, payload: Record<string, unknown>,
-  requiredCapability?: string
+  sql: Sql,
+  workspaceId: string,
+  type: string,
+  payload: any,
+  requiredCapability?: string,
 ): Promise<{ taskId: string; agentId: string | null }> {
   // Create the task first
   const [task] = await sql<[{ id: string }]>`
@@ -45,7 +51,11 @@ export async function routeTask(
   if (!requiredCapability) return { taskId: task.id, agentId: null };
 
   // Try to find a matching agent
-  const agent = await findAgentByCapability(sql, workspaceId, requiredCapability);
+  const agent = await findAgentByCapability(
+    sql,
+    workspaceId,
+    requiredCapability,
+  );
   if (!agent) return { taskId: task.id, agentId: null };
 
   // Assign task to agent

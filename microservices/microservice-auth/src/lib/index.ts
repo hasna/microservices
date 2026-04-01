@@ -8,75 +8,70 @@
  *   const user = await createUser(sql, { email: 'user@example.com', password: 'secret' })
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-
-// Users
+// API keys
 export {
-  createUser,
-  getUserById,
-  getUserByEmail,
-  listUsers,
-  updateUser,
-  deleteUser,
-  countUsers,
-  type User,
-} from "./users.js";
-
-// Sessions
-export {
-  createSession,
-  getSessionByToken,
-  listUserSessions,
-  revokeSession,
-  revokeAllUserSessions,
-  cleanExpiredSessions,
-  type Session,
-} from "./sessions.js";
-
-// Passwords
-export { hashPassword, verifyPassword } from "./passwords.js";
-
+  type ApiKey,
+  type ApiKeyWithSecret,
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  validateApiKey,
+} from "./api-keys.js";
+// High-level login flow
+export { login, refreshTokens, register } from "./auth.js";
 // JWT
 export {
-  signJwt,
-  verifyJwt,
   generateAccessToken,
   generateRefreshToken,
   type JwtPayload,
+  signJwt,
+  verifyJwt,
 } from "./jwt.js";
-
 // Magic links & tokens
 export {
-  createMagicLinkToken,
-  verifyMagicLinkToken,
   createEmailVerifyToken,
-  verifyEmailToken,
+  createMagicLinkToken,
   createPasswordResetToken,
+  verifyEmailToken,
+  verifyMagicLinkToken,
   verifyPasswordResetToken,
 } from "./magic-links.js";
-
-// API keys
+// Middleware / request validation helper
 export {
-  createApiKey,
-  validateApiKey,
-  listApiKeys,
-  revokeApiKey,
-  type ApiKey,
-  type ApiKeyWithSecret,
-} from "./api-keys.js";
-
+  type RequestIdentity,
+  requireScope,
+  validateRequest,
+} from "./middleware.js";
 // OAuth
 export {
-  upsertOAuthAccount,
   getOAuthAccount,
   listUserOAuthAccounts,
-  unlinkOAuthAccount,
   type OAuthAccount,
+  unlinkOAuthAccount,
+  upsertOAuthAccount,
 } from "./oauth.js";
-
-// High-level login flow
-export { login, register, refreshTokens } from "./auth.js";
-
-// Middleware / request validation helper
-export { validateRequest, requireScope, type RequestIdentity } from "./middleware.js";
+// Passwords
+export { hashPassword, verifyPassword } from "./passwords.js";
+// Sessions
+export {
+  cleanExpiredSessions,
+  createSession,
+  getSessionByToken,
+  listUserSessions,
+  revokeAllUserSessions,
+  revokeSession,
+  type Session,
+} from "./sessions.js";
+// Users
+export {
+  countUsers,
+  createUser,
+  deleteUser,
+  getUserByEmail,
+  getUserById,
+  listUsers,
+  type User,
+  updateUser,
+} from "./users.js";

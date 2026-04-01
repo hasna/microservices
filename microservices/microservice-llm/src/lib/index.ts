@@ -8,39 +8,36 @@
  *   const response = await chat(sql, { workspaceId: '...', messages: [...] })
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-
-// Providers
-export {
-  chatOpenAI,
-  chatAnthropic,
-  chatGroq,
-  getProvider,
-  getAvailableModels,
-  callProvider,
-  type Message,
-  type ChatResponse,
-  type ProviderName,
-  type ProviderConfig,
-} from "./providers.js";
-
 // Costs
 export {
   COST_PER_1K_TOKENS,
   calculateCost,
 } from "./costs.js";
-
 // Gateway
 export {
   chat,
   type GatewayRequest,
   type GatewayResponse,
 } from "./gateway.js";
+// Providers
+export {
+  type ChatResponse,
+  callProvider,
+  chatAnthropic,
+  chatGroq,
+  chatOpenAI,
+  getAvailableModels,
+  getProvider,
+  type Message,
+  type ProviderConfig,
+  type ProviderName,
+} from "./providers.js";
 
 // Usage
 export {
   getWorkspaceUsage,
-  type WorkspaceUsage,
   type ModelUsage,
+  type WorkspaceUsage,
 } from "./usage.js";

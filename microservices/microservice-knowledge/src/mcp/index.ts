@@ -3,198 +3,136 @@
  * MCP server for microservice-knowledge.
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
-import { createCollection, listCollections, deleteCollection } from "../lib/collections.js";
-import { listDocuments, deleteDocument } from "../lib/documents.js";
+import { createCollection, listCollections } from "../lib/collections.js";
+import { deleteDocument, listDocuments } from "../lib/documents.js";
 import { ingestDocument } from "../lib/ingest.js";
 import { retrieve } from "../lib/retrieve.js";
 import { getCollectionStats } from "../lib/stats.js";
 
-const server = new Server(
-  { name: "microservice-knowledge", version: "0.0.1" },
-  { capabilities: { tools: {} } }
+const server = new McpServer({
+  name: "microservice-knowledge",
+  version: "0.0.1",
+});
+
+const sql = getDb();
+
+// Helper to wrap response in standard MCP format
+const text = (data: unknown) => ({
+  content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+});
+
+server.tool(
+  "knowledge_create_collection",
+  "Create a new knowledge collection for storing and retrieving documents",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    name: z.string().describe("Collection name"),
+    description: z.string().optional().describe("Collection description"),
+    chunk_size: z.number().optional().default(1000).describe("Characters per chunk"),
+    chunk_overlap: z.number().optional().default(200).describe("Overlap between chunks"),
+    chunking_strategy: z.enum(["fixed", "paragraph", "sentence", "recursive"]).optional().default("recursive").describe("Chunking strategy"),
+    embedding_model: z.string().optional().default("text-embedding-3-small").describe("Embedding model"),
+  },
+  async ({ workspace_id, name, chunk_size, chunk_overlap, chunking_strategy, embedding_model, ...rest }) =>
+    text(
+      await createCollection(sql, {
+        workspaceId: workspace_id,
+        name,
+        chunkSize: chunk_size,
+        chunkOverlap: chunk_overlap,
+        chunkingStrategy: chunking_strategy,
+        embeddingModel: embedding_model,
+        ...rest,
+      }),
+    ),
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: "knowledge_create_collection",
-      description: "Create a new knowledge collection for storing and retrieving documents",
-      inputSchema: {
-        type: "object",
-        properties: {
-          workspace_id: { type: "string", description: "Workspace ID" },
-          name: { type: "string", description: "Collection name" },
-          description: { type: "string", description: "Collection description" },
-          chunk_size: { type: "number", description: "Characters per chunk (default 1000)" },
-          chunk_overlap: { type: "number", description: "Overlap between chunks (default 200)" },
-          chunking_strategy: { type: "string", enum: ["fixed", "paragraph", "sentence", "recursive"], description: "Chunking strategy (default recursive)" },
-          embedding_model: { type: "string", description: "Embedding model (default text-embedding-3-small)" },
-        },
-        required: ["workspace_id", "name"],
-      },
-    },
-    {
-      name: "knowledge_ingest",
-      description: "Ingest a document into a collection: chunk, embed, and index for retrieval",
-      inputSchema: {
-        type: "object",
-        properties: {
-          collection_id: { type: "string", description: "Collection ID" },
-          title: { type: "string", description: "Document title" },
-          content: { type: "string", description: "Document content" },
-          source_type: { type: "string", enum: ["text", "url", "file"], description: "Source type (default text)" },
-          source_url: { type: "string", description: "Source URL if applicable" },
-          metadata: { type: "object", description: "Additional metadata" },
-        },
-        required: ["collection_id", "title", "content"],
-      },
-    },
-    {
-      name: "knowledge_retrieve",
-      description: "Retrieve relevant chunks from a collection using semantic, text, or hybrid search",
-      inputSchema: {
-        type: "object",
-        properties: {
-          collection_id: { type: "string", description: "Collection ID" },
-          query: { type: "string", description: "Search query" },
-          mode: { type: "string", enum: ["semantic", "text", "hybrid"], description: "Search mode (default text)" },
-          limit: { type: "number", description: "Max results (default 10)" },
-          min_score: { type: "number", description: "Minimum relevance score" },
-        },
-        required: ["collection_id", "query"],
-      },
-    },
-    {
-      name: "knowledge_list_collections",
-      description: "List all knowledge collections in a workspace",
-      inputSchema: {
-        type: "object",
-        properties: {
-          workspace_id: { type: "string", description: "Workspace ID" },
-        },
-        required: ["workspace_id"],
-      },
-    },
-    {
-      name: "knowledge_list_documents",
-      description: "List all documents in a collection",
-      inputSchema: {
-        type: "object",
-        properties: {
-          collection_id: { type: "string", description: "Collection ID" },
-        },
-        required: ["collection_id"],
-      },
-    },
-    {
-      name: "knowledge_delete_document",
-      description: "Delete a document and its chunks from a collection",
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Document ID" },
-        },
-        required: ["id"],
-      },
-    },
-    {
-      name: "knowledge_get_stats",
-      description: "Get statistics for a collection (doc count, chunk count, avg chunks, total tokens)",
-      inputSchema: {
-        type: "object",
-        properties: {
-          collection_id: { type: "string", description: "Collection ID" },
-        },
-        required: ["collection_id"],
-      },
-    },
-    {
-      name: "knowledge_reindex",
-      description: "Re-chunk and re-embed all documents in a collection",
-      inputSchema: {
-        type: "object",
-        properties: {
-          collection_id: { type: "string", description: "Collection ID" },
-        },
-        required: ["collection_id"],
-      },
-    },
-  ],
-}));
+server.tool(
+  "knowledge_ingest",
+  "Ingest a document into a collection: chunk, embed, and index for retrieval",
+  {
+    collection_id: z.string().describe("Collection ID"),
+    title: z.string().describe("Document title"),
+    content: z.string().describe("Document content"),
+    source_type: z.enum(["text", "url", "file"]).optional().default("text").describe("Source type"),
+    source_url: z.string().optional().describe("Source URL if applicable"),
+    metadata: z.record(z.any()).optional().describe("Additional metadata"),
+  },
+  async ({ collection_id, title, content, source_type, source_url, metadata }) =>
+    text(
+      await ingestDocument(sql, collection_id, {
+        title,
+        content,
+        sourceType: source_type,
+        sourceUrl: source_url,
+        metadata,
+      }),
+    ),
+);
 
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const sql = getDb();
-  const { name, arguments: args } = req.params;
-  const a = args as Record<string, unknown>;
+server.tool(
+  "knowledge_retrieve",
+  "Retrieve relevant chunks from a collection using semantic, text, or hybrid search",
+  {
+    collection_id: z.string().describe("Collection ID"),
+    query: z.string().describe("Search query"),
+    mode: z.enum(["semantic", "text", "hybrid"]).optional().default("text").describe("Search mode"),
+    limit: z.number().optional().default(10).describe("Max results"),
+    min_score: z.number().optional().describe("Minimum relevance score"),
+  },
+  async ({ collection_id, query, ...opts }) =>
+    text(await retrieve(sql, collection_id, query, opts)),
+);
 
-  const text = (data: unknown) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-  });
+server.tool(
+  "knowledge_list_collections",
+  "List all knowledge collections in a workspace",
+  { workspace_id: z.string().describe("Workspace ID") },
+  async ({ workspace_id }) => text(await listCollections(sql, workspace_id)),
+);
 
-  if (name === "knowledge_create_collection") {
-    return text(await createCollection(sql, {
-      workspaceId: String(a.workspace_id),
-      name: String(a.name),
-      description: a.description ? String(a.description) : undefined,
-      chunkSize: a.chunk_size !== undefined ? Number(a.chunk_size) : undefined,
-      chunkOverlap: a.chunk_overlap !== undefined ? Number(a.chunk_overlap) : undefined,
-      chunkingStrategy: a.chunking_strategy as "fixed" | "paragraph" | "sentence" | "recursive" | undefined,
-      embeddingModel: a.embedding_model ? String(a.embedding_model) : undefined,
-    }));
-  }
+server.tool(
+  "knowledge_list_documents",
+  "List all documents in a collection",
+  { collection_id: z.string().describe("Collection ID") },
+  async ({ collection_id }) => text(await listDocuments(sql, collection_id)),
+);
 
-  if (name === "knowledge_ingest") {
-    return text(await ingestDocument(sql, String(a.collection_id), {
-      title: String(a.title),
-      content: String(a.content),
-      sourceType: a.source_type as "text" | "url" | "file" | undefined,
-      sourceUrl: a.source_url ? String(a.source_url) : undefined,
-      metadata: a.metadata as Record<string, unknown> | undefined,
-    }));
-  }
+server.tool(
+  "knowledge_delete_document",
+  "Delete a document and its chunks from a collection",
+  { id: z.string().describe("Document ID") },
+  async ({ id }) => text({ deleted: await deleteDocument(sql, id) }),
+);
 
-  if (name === "knowledge_retrieve") {
-    return text(await retrieve(sql, String(a.collection_id), String(a.query), {
-      mode: a.mode as "semantic" | "text" | "hybrid" | undefined,
-      limit: a.limit !== undefined ? Number(a.limit) : undefined,
-      minScore: a.min_score !== undefined ? Number(a.min_score) : undefined,
-    }));
-  }
+server.tool(
+  "knowledge_get_stats",
+  "Get statistics for a collection (doc count, chunk count, avg chunks, total tokens)",
+  { collection_id: z.string().describe("Collection ID") },
+  async ({ collection_id }) => text(await getCollectionStats(sql, collection_id)),
+);
 
-  if (name === "knowledge_list_collections") {
-    return text(await listCollections(sql, String(a.workspace_id)));
-  }
-
-  if (name === "knowledge_list_documents") {
-    return text(await listDocuments(sql, String(a.collection_id)));
-  }
-
-  if (name === "knowledge_delete_document") {
-    return text({ deleted: await deleteDocument(sql, String(a.id)) });
-  }
-
-  if (name === "knowledge_get_stats") {
-    return text(await getCollectionStats(sql, String(a.collection_id)));
-  }
-
-  if (name === "knowledge_reindex") {
-    const collectionId = String(a.collection_id);
+server.tool(
+  "knowledge_reindex",
+  "Re-chunk and re-embed all documents in a collection",
+  { collection_id: z.string().describe("Collection ID") },
+  async ({ collection_id }) => {
     const { getCollection } = await import("../lib/collections.js");
     const { chunkText, estimateTokens } = await import("../lib/chunking.js");
     const { generateEmbedding } = await import("../lib/embeddings.js");
 
-    const collection = await getCollection(sql, collectionId);
-    if (!collection) throw new Error(`Collection not found: ${collectionId}`);
+    const collection = await getCollection(sql, collection_id);
+    if (!collection) throw new Error(`Collection not found: ${collection_id}`);
 
-    await sql`DELETE FROM knowledge.chunks WHERE collection_id = ${collectionId}`;
-    await sql`UPDATE knowledge.collections SET chunk_count = 0 WHERE id = ${collectionId}`;
+    await sql`DELETE FROM knowledge.chunks WHERE collection_id = ${collection_id}`;
+    await sql`UPDATE knowledge.collections SET chunk_count = 0 WHERE id = ${collection_id}`;
 
-    const docs = await listDocuments(sql, collectionId);
+    const docs = await listDocuments(sql, collection_id);
     let totalChunks = 0;
 
     for (const doc of docs) {
@@ -213,17 +151,22 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           const chunkContent = chunks[i]!;
           const tokenCount = estimateTokens(chunkContent);
           const embedding = await generateEmbedding(chunkContent);
-          const chunkMeta = { ...(doc.metadata ?? {}), chunk_index: i, total_chunks: chunks.length, document_title: doc.title };
+          const chunkMeta = {
+            ...(doc.metadata ?? {}),
+            chunk_index: i,
+            total_chunks: chunks.length,
+            document_title: doc.title,
+          };
 
           if (hasPgvector && embedding) {
             await sql`
               INSERT INTO knowledge.chunks (document_id, collection_id, content, chunk_index, token_count, metadata, embedding)
-              VALUES (${doc.id}, ${collectionId}, ${chunkContent}, ${i}, ${tokenCount}, ${sql.json(chunkMeta)}, ${`[${embedding.join(",")}]`})
+              VALUES (${doc.id}, ${collection_id}, ${chunkContent}, ${i}, ${tokenCount}, ${sql.json(chunkMeta)}, ${`[${embedding.join(",")}]`})
             `;
           } else {
             await sql`
               INSERT INTO knowledge.chunks (document_id, collection_id, content, chunk_index, token_count, metadata)
-              VALUES (${doc.id}, ${collectionId}, ${chunkContent}, ${i}, ${tokenCount}, ${sql.json(chunkMeta)})
+              VALUES (${doc.id}, ${collection_id}, ${chunkContent}, ${i}, ${tokenCount}, ${sql.json(chunkMeta)})
             `;
           }
         }
@@ -236,14 +179,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
     }
 
-    await sql`UPDATE knowledge.collections SET chunk_count = ${totalChunks} WHERE id = ${collectionId}`;
+    await sql`UPDATE knowledge.collections SET chunk_count = ${totalChunks} WHERE id = ${collection_id}`;
     return text({ ok: true, documents: docs.length, chunks: totalChunks });
-  }
+  },
+);
 
-  throw new Error(`Unknown tool: ${name}`);
-});
-
-async function checkPgvector(sql: ReturnType<typeof getDb>): Promise<boolean> {
+async function checkPgvector(sql: any): Promise<boolean> {
   try {
     const [row] = await sql`
       SELECT column_name FROM information_schema.columns
@@ -256,7 +197,6 @@ async function checkPgvector(sql: ReturnType<typeof getDb>): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
-  const sql = getDb();
   await migrate(sql);
   const transport = new StdioServerTransport();
   await server.connect(transport);

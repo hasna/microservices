@@ -3,16 +3,16 @@
  */
 
 import type { Sql } from "postgres";
-import { scanPII, redactPII } from "./pii.js";
 import { detectPromptInjection } from "./injection.js";
-import { checkToxicity } from "./toxicity.js";
+import { redactPII, scanPII } from "./pii.js";
 import { evaluatePolicy } from "./policy.js";
+import { checkToxicity } from "./toxicity.js";
 import { logViolation } from "./violations.js";
 
 export interface GuardViolation {
   type: string;
   severity: string;
-  details: Record<string, unknown>;
+  details: any;
 }
 
 export interface GuardResult {
@@ -28,7 +28,7 @@ export interface GuardResult {
 export async function checkInput(
   sql: Sql,
   text: string,
-  workspaceId?: string
+  workspaceId?: string,
 ): Promise<GuardResult> {
   const violations: GuardViolation[] = [];
   let sanitized = text;
@@ -39,14 +39,20 @@ export async function checkInput(
     violations.push({
       type: "prompt_injection",
       severity: injection.confidence >= 0.7 ? "critical" : "high",
-      details: { patterns: injection.patterns, confidence: injection.confidence },
+      details: {
+        patterns: injection.patterns,
+        confidence: injection.confidence,
+      },
     });
     await logViolation(sql, {
       workspaceId,
       type: "prompt_injection",
       direction: "input",
       contentSnippet: text.slice(0, 200),
-      details: { patterns: injection.patterns, confidence: injection.confidence },
+      details: {
+        patterns: injection.patterns,
+        confidence: injection.confidence,
+      },
       severity: injection.confidence >= 0.7 ? "critical" : "high",
     });
   }
@@ -90,20 +96,33 @@ export async function checkInput(
 
   // 4. Policy evaluation
   if (workspaceId) {
-    const policyResult = await evaluatePolicy(sql, workspaceId, sanitized, "input");
+    const policyResult = await evaluatePolicy(
+      sql,
+      workspaceId,
+      sanitized,
+      "input",
+    );
     if (!policyResult.passed) {
       for (const v of policyResult.violations) {
         violations.push({
           type: "policy_violation",
           severity: v.action === "block" ? "high" : "low",
-          details: { rule_name: v.rule_name, rule_type: v.rule_type, ...v.details },
+          details: {
+            rule_name: v.rule_name,
+            rule_type: v.rule_type,
+            ...v.details,
+          },
         });
         await logViolation(sql, {
           workspaceId,
           type: "policy_violation",
           direction: "input",
           contentSnippet: text.slice(0, 200),
-          details: { rule_name: v.rule_name, rule_type: v.rule_type, ...v.details },
+          details: {
+            rule_name: v.rule_name,
+            rule_type: v.rule_type,
+            ...v.details,
+          },
           severity: v.action === "block" ? "high" : "low",
         });
       }
@@ -125,7 +144,7 @@ export async function checkInput(
 export async function checkOutput(
   sql: Sql,
   text: string,
-  workspaceId?: string
+  workspaceId?: string,
 ): Promise<GuardResult> {
   const violations: GuardViolation[] = [];
   let sanitized = text;
@@ -170,20 +189,33 @@ export async function checkOutput(
 
   // 3. Policy evaluation (output direction)
   if (workspaceId) {
-    const policyResult = await evaluatePolicy(sql, workspaceId, sanitized, "output");
+    const policyResult = await evaluatePolicy(
+      sql,
+      workspaceId,
+      sanitized,
+      "output",
+    );
     if (!policyResult.passed) {
       for (const v of policyResult.violations) {
         violations.push({
           type: "policy_violation",
           severity: v.action === "block" ? "high" : "low",
-          details: { rule_name: v.rule_name, rule_type: v.rule_type, ...v.details },
+          details: {
+            rule_name: v.rule_name,
+            rule_type: v.rule_type,
+            ...v.details,
+          },
         });
         await logViolation(sql, {
           workspaceId,
           type: "policy_violation",
           direction: "output",
           contentSnippet: text.slice(0, 200),
-          details: { rule_name: v.rule_name, rule_type: v.rule_type, ...v.details },
+          details: {
+            rule_name: v.rule_name,
+            rule_type: v.rule_type,
+            ...v.details,
+          },
           severity: v.action === "block" ? "high" : "low",
         });
       }

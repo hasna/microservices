@@ -5,30 +5,32 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
+import { getContextWindow } from "../lib/context.js";
 import {
+  archiveConversation,
   createConversation,
+  deleteConversation,
+  forkConversation,
   getConversation,
   listConversations,
-  updateConversation,
-  deleteConversation,
-  archiveConversation,
-  forkConversation,
 } from "../lib/conversations.js";
+import { exportConversation } from "../lib/export.js";
 import {
   addMessage,
   getMessages,
   pinMessage,
   searchMessages,
 } from "../lib/messages.js";
-import { getContextWindow } from "../lib/context.js";
-import { exportConversation } from "../lib/export.js";
 
 const server = new Server(
   { name: "microservice-sessions", version: "0.0.1" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {} } },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -81,7 +83,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           conversation_id: { type: "string" },
-          role: { type: "string", enum: ["system", "user", "assistant", "tool"] },
+          role: {
+            type: "string",
+            enum: ["system", "user", "assistant", "tool"],
+          },
           content: { type: "string" },
           name: { type: "string" },
           tool_calls: { type: "object" },
@@ -110,7 +115,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "sessions_get_context_window",
-      description: "Get messages that fit within a token budget for a conversation",
+      description:
+        "Get messages that fit within a token budget for a conversation",
       inputSchema: {
         type: "object",
         properties: {
@@ -154,7 +160,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "sessions_fork_conversation",
-      description: "Fork a conversation from a specific message, creating a new conversation with messages up to that point",
+      description:
+        "Fork a conversation from a specific message, creating a new conversation with messages up to that point",
       inputSchema: {
         type: "object",
         properties: {
@@ -191,30 +198,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const sql = getDb();
   const { name, arguments: args } = req.params;
-  const a = args as Record<string, unknown>;
+  const a = args as any;
 
   const text = (data: unknown) => ({
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
   });
 
   if (name === "sessions_create_conversation") {
-    return text(await createConversation(sql, {
-      workspace_id: String(a.workspace_id),
-      user_id: String(a.user_id),
-      title: a.title ? String(a.title) : undefined,
-      model: a.model ? String(a.model) : undefined,
-      system_prompt: a.system_prompt ? String(a.system_prompt) : undefined,
-      metadata: a.metadata as Record<string, unknown> | undefined,
-    }));
+    return text(
+      await createConversation(sql, {
+        workspace_id: String(a.workspace_id),
+        user_id: String(a.user_id),
+        title: a.title ? String(a.title) : undefined,
+        model: a.model ? String(a.model) : undefined,
+        system_prompt: a.system_prompt ? String(a.system_prompt) : undefined,
+        metadata: a.metadata as any | undefined,
+      }),
+    );
   }
 
   if (name === "sessions_list_conversations") {
-    return text(await listConversations(sql, String(a.workspace_id), String(a.user_id), {
-      archived: a.archived as boolean | undefined,
-      search: a.search ? String(a.search) : undefined,
-      limit: a.limit ? Number(a.limit) : undefined,
-      offset: a.offset ? Number(a.offset) : undefined,
-    }));
+    return text(
+      await listConversations(sql, String(a.workspace_id), String(a.user_id), {
+        archived: a.archived as boolean | undefined,
+        search: a.search ? String(a.search) : undefined,
+        limit: a.limit ? Number(a.limit) : undefined,
+        offset: a.offset ? Number(a.offset) : undefined,
+      }),
+    );
   }
 
   if (name === "sessions_get_conversation") {
@@ -222,36 +233,50 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
 
   if (name === "sessions_add_message") {
-    return text(await addMessage(sql, String(a.conversation_id), {
-      role: String(a.role) as "system" | "user" | "assistant" | "tool",
-      content: String(a.content),
-      name: a.name ? String(a.name) : undefined,
-      tool_calls: a.tool_calls,
-      tokens: a.tokens ? Number(a.tokens) : undefined,
-      latency_ms: a.latency_ms ? Number(a.latency_ms) : undefined,
-      model: a.model ? String(a.model) : undefined,
-      metadata: a.metadata as Record<string, unknown> | undefined,
-    }));
+    return text(
+      await addMessage(sql, String(a.conversation_id), {
+        role: String(a.role) as "system" | "user" | "assistant" | "tool",
+        content: String(a.content),
+        name: a.name ? String(a.name) : undefined,
+        tool_calls: a.tool_calls,
+        tokens: a.tokens ? Number(a.tokens) : undefined,
+        latency_ms: a.latency_ms ? Number(a.latency_ms) : undefined,
+        model: a.model ? String(a.model) : undefined,
+        metadata: a.metadata as any | undefined,
+      }),
+    );
   }
 
   if (name === "sessions_get_messages") {
-    return text(await getMessages(sql, String(a.conversation_id), {
-      limit: a.limit ? Number(a.limit) : undefined,
-      before: a.before ? String(a.before) : undefined,
-      after: a.after ? String(a.after) : undefined,
-      role: a.role ? String(a.role) : undefined,
-    }));
+    return text(
+      await getMessages(sql, String(a.conversation_id), {
+        limit: a.limit ? Number(a.limit) : undefined,
+        before: a.before ? String(a.before) : undefined,
+        after: a.after ? String(a.after) : undefined,
+        role: a.role ? String(a.role) : undefined,
+      }),
+    );
   }
 
   if (name === "sessions_get_context_window") {
-    return text(await getContextWindow(sql, String(a.conversation_id), Number(a.max_tokens)));
+    return text(
+      await getContextWindow(
+        sql,
+        String(a.conversation_id),
+        Number(a.max_tokens),
+      ),
+    );
   }
 
   if (name === "sessions_search_messages") {
-    return text(await searchMessages(sql, String(a.workspace_id), String(a.query), {
-      conversationId: a.conversation_id ? String(a.conversation_id) : undefined,
-      limit: a.limit ? Number(a.limit) : undefined,
-    }));
+    return text(
+      await searchMessages(sql, String(a.workspace_id), String(a.query), {
+        conversationId: a.conversation_id
+          ? String(a.conversation_id)
+          : undefined,
+        limit: a.limit ? Number(a.limit) : undefined,
+      }),
+    );
   }
 
   if (name === "sessions_delete_conversation") {
@@ -263,12 +288,22 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
 
   if (name === "sessions_fork_conversation") {
-    return text(await forkConversation(sql, String(a.conversation_id), String(a.from_message_id)));
+    return text(
+      await forkConversation(
+        sql,
+        String(a.conversation_id),
+        String(a.from_message_id),
+      ),
+    );
   }
 
   if (name === "sessions_export_conversation") {
-    const format = (a.format ? String(a.format) : "markdown") as "markdown" | "json";
-    return text(await exportConversation(sql, String(a.conversation_id), format));
+    const format = (a.format ? String(a.format) : "markdown") as
+      | "markdown"
+      | "json";
+    return text(
+      await exportConversation(sql, String(a.conversation_id), format),
+    );
   }
 
   if (name === "sessions_pin_message") {

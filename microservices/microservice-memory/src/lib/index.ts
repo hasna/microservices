@@ -8,31 +8,28 @@
  *   await storeMemory(sql, { workspaceId: 'ws-1', content: 'The user likes TypeScript' })
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-
-// Memories
-export {
-  storeMemory,
-  searchMemories,
-  getMemory,
-  listMemories,
-  deleteMemory,
-  updateMemoryImportance,
-  type Memory,
-  type StoreMemoryInput,
-  type SearchQuery,
-} from "./memories.js";
-
 // Collections
 export {
-  createCollection,
-  getCollection,
-  listCollections,
-  deleteCollection,
   type Collection,
   type CreateCollectionInput,
+  createCollection,
+  deleteCollection,
+  getCollection,
+  listCollections,
 } from "./collections.js";
-
 // Embeddings
 export { generateEmbedding, hasEmbeddingKey } from "./embeddings.js";
+// Memories
+export {
+  deleteMemory,
+  getMemory,
+  listMemories,
+  type Memory,
+  type SearchQuery,
+  type StoreMemoryInput,
+  searchMemories,
+  storeMemory,
+  updateMemoryImportance,
+} from "./memories.js";

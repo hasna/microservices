@@ -7,7 +7,10 @@ import { generateToken } from "./tokens.js";
 
 const MAGIC_LINK_TTL_SECONDS = 15 * 60; // 15 minutes
 
-export async function createMagicLinkToken(sql: Sql, userId: string): Promise<string> {
+export async function createMagicLinkToken(
+  sql: Sql,
+  userId: string,
+): Promise<string> {
   const token = generateToken();
   await sql`
     INSERT INTO auth.tokens (user_id, type, token, expires_at)
@@ -18,7 +21,7 @@ export async function createMagicLinkToken(sql: Sql, userId: string): Promise<st
 
 export async function verifyMagicLinkToken(
   sql: Sql,
-  token: string
+  token: string,
 ): Promise<{ userId: string } | null> {
   const [row] = await sql<[{ id: string; user_id: string }]>`
     SELECT id, user_id FROM auth.tokens
@@ -37,7 +40,10 @@ export async function verifyMagicLinkToken(
   return { userId: row.user_id };
 }
 
-export async function createEmailVerifyToken(sql: Sql, userId: string): Promise<string> {
+export async function createEmailVerifyToken(
+  sql: Sql,
+  userId: string,
+): Promise<string> {
   const token = generateToken();
   await sql`
     INSERT INTO auth.tokens (user_id, type, token, expires_at)
@@ -46,7 +52,10 @@ export async function createEmailVerifyToken(sql: Sql, userId: string): Promise<
   return token;
 }
 
-export async function verifyEmailToken(sql: Sql, token: string): Promise<boolean> {
+export async function verifyEmailToken(
+  sql: Sql,
+  token: string,
+): Promise<boolean> {
   const [row] = await sql<[{ id: string; user_id: string }]>`
     SELECT id, user_id FROM auth.tokens
     WHERE token = ${token} AND type = 'email_verify' AND expires_at > NOW() AND used_at IS NULL
@@ -57,7 +66,10 @@ export async function verifyEmailToken(sql: Sql, token: string): Promise<boolean
   return true;
 }
 
-export async function createPasswordResetToken(sql: Sql, userId: string): Promise<string> {
+export async function createPasswordResetToken(
+  sql: Sql,
+  userId: string,
+): Promise<string> {
   const token = generateToken();
   await sql`
     INSERT INTO auth.tokens (user_id, type, token, expires_at)
@@ -66,7 +78,10 @@ export async function createPasswordResetToken(sql: Sql, userId: string): Promis
   return token;
 }
 
-export async function verifyPasswordResetToken(sql: Sql, token: string): Promise<string | null> {
+export async function verifyPasswordResetToken(
+  sql: Sql,
+  token: string,
+): Promise<string | null> {
   const [row] = await sql<[{ id: string; user_id: string }]>`
     SELECT id, user_id FROM auth.tokens
     WHERE token = ${token} AND type = 'password_reset' AND expires_at > NOW() AND used_at IS NULL

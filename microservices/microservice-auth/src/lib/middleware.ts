@@ -13,9 +13,9 @@
  */
 
 import type { Sql } from "postgres";
-import { getSessionByToken } from "./sessions.js";
-import { verifyJwt } from "./jwt.js";
 import { validateApiKey } from "./api-keys.js";
+import { verifyJwt } from "./jwt.js";
+import { getSessionByToken } from "./sessions.js";
 
 export interface RequestIdentity {
   userId: string;
@@ -26,7 +26,7 @@ export interface RequestIdentity {
 
 export async function validateRequest(
   req: Request,
-  sql: Sql
+  sql: Sql,
 ): Promise<RequestIdentity | null> {
   const auth = req.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return null;
@@ -59,7 +59,10 @@ export async function validateRequest(
 /**
  * requireScope — check if an API key identity has a required scope.
  */
-export function requireScope(identity: RequestIdentity, scope: string): boolean {
+export function requireScope(
+  identity: RequestIdentity,
+  scope: string,
+): boolean {
   if (identity.type !== "api_key") return true; // sessions/JWTs have full access
   return identity.scopes?.includes(scope) ?? false;
 }

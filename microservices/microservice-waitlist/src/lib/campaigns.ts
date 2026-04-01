@@ -24,7 +24,10 @@ export interface UpdateCampaignInput {
   status?: "active" | "paused" | "closed";
 }
 
-export async function createCampaign(sql: Sql, data: CreateCampaignInput): Promise<Campaign> {
+export async function createCampaign(
+  sql: Sql,
+  data: CreateCampaignInput,
+): Promise<Campaign> {
   const [campaign] = await sql<Campaign[]>`
     INSERT INTO waitlist.campaigns (name, description, status)
     VALUES (
@@ -37,14 +40,20 @@ export async function createCampaign(sql: Sql, data: CreateCampaignInput): Promi
   return campaign;
 }
 
-export async function getCampaign(sql: Sql, id: string): Promise<Campaign | null> {
+export async function getCampaign(
+  sql: Sql,
+  id: string,
+): Promise<Campaign | null> {
   const [campaign] = await sql<Campaign[]>`
     SELECT * FROM waitlist.campaigns WHERE id = ${id}
   `;
   return campaign ?? null;
 }
 
-export async function listCampaigns(sql: Sql, status?: string): Promise<Campaign[]> {
+export async function listCampaigns(
+  sql: Sql,
+  status?: string,
+): Promise<Campaign[]> {
   if (status) {
     return sql<Campaign[]>`
       SELECT * FROM waitlist.campaigns WHERE status = ${status} ORDER BY created_at DESC
@@ -55,8 +64,12 @@ export async function listCampaigns(sql: Sql, status?: string): Promise<Campaign
   `;
 }
 
-export async function updateCampaign(sql: Sql, id: string, data: UpdateCampaignInput): Promise<Campaign | null> {
-  const updates: Record<string, unknown> = {};
+export async function updateCampaign(
+  sql: Sql,
+  id: string,
+  data: UpdateCampaignInput,
+): Promise<Campaign | null> {
+  const updates: any = {};
   if (data.name !== undefined) updates.name = data.name;
   if (data.description !== undefined) updates.description = data.description;
   if (data.status !== undefined) updates.status = data.status;
@@ -65,10 +78,12 @@ export async function updateCampaign(sql: Sql, id: string, data: UpdateCampaignI
     return getCampaign(sql, id);
   }
 
-  const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`).join(", ");
+  const setClauses = Object.keys(updates)
+    .map((k, i) => `${k} = $${i + 2}`)
+    .join(", ");
   const values = [id, ...Object.values(updates)];
   const query = `UPDATE waitlist.campaigns SET ${setClauses} WHERE id = $1 RETURNING *`;
 
-  const [campaign] = await sql.unsafe(query, values) as Campaign[];
+  const [campaign] = (await sql.unsafe(query, values as any[])) as Campaign[];
   return campaign ?? null;
 }

@@ -1,10 +1,19 @@
-import { z } from "zod";
 import type { Sql } from "postgres";
-import { createPrompt, getPromptById, listPrompts, deletePrompt } from "../lib/prompts_crud.js";
-import { updatePrompt, listVersions, rollback, diffVersions, getVersion } from "../lib/versions.js";
+import { z } from "zod";
+import {
+  createExperiment,
+  startExperiment,
+  stopExperiment,
+} from "../lib/experiments.js";
+import { removeOverride, setOverride } from "../lib/overrides.js";
+import {
+  createPrompt,
+  deletePrompt,
+  getPromptById,
+  listPrompts,
+} from "../lib/prompts_crud.js";
 import { resolvePrompt } from "../lib/resolve.js";
-import { setOverride, removeOverride, listOverrides } from "../lib/overrides.js";
-import { createExperiment, startExperiment, stopExperiment, listExperiments } from "../lib/experiments.js";
+import { listVersions, rollback, updatePrompt } from "../lib/versions.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,7 +53,9 @@ const OverrideSchema = z.object({
 const CreateExperimentSchema = z.object({
   prompt_id: z.string().min(1),
   name: z.string().min(1),
-  variants: z.array(z.object({ name: z.string(), version_id: z.string(), weight: z.number() })),
+  variants: z.array(
+    z.object({ name: z.string(), version_id: z.string(), weight: z.number() }),
+  ),
   traffic_pct: z.number().min(0).max(100).optional(),
 });
 
@@ -54,17 +65,33 @@ const ExperimentStatusSchema = z.object({
 
 export function makeRouter(sql: Sql) {
   return async (req: Request): Promise<Response> => {
-    const url = new URL(req.url); const p = url.pathname; const m = req.method;
-    if (m === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    const url = new URL(req.url);
+    const p = url.pathname;
+    const m = req.method;
+    if (m === "OPTIONS")
+      return new Response(null, { status: 204, headers: corsHeaders });
     try {
       // Health
       if (m === "GET" && p === "/health") {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-prompts", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-prompts",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-prompts", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-prompts",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -73,7 +100,19 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, CreatePromptSchema);
         if ("error" in parsed) return parsed.error;
         const d = parsed.data;
-        return json(await createPrompt(sql, { workspaceId: d.workspace_id, name: d.name, content: d.content, description: d.description, model: d.model, variables: d.variables, tags: d.tags, createdBy: d.created_by }), 201);
+        return json(
+          await createPrompt(sql, {
+            workspaceId: d.workspace_id,
+            name: d.name,
+            content: d.content,
+            description: d.description,
+            model: d.model,
+            variables: d.variables,
+            tags: d.tags,
+            createdBy: d.created_by,
+          }),
+          201,
+        );
       }
 
       // GET /prompts?workspace_id&tags&search
@@ -82,7 +121,9 @@ export function makeRouter(sql: Sql) {
         if (!wsId) return json({ error: "workspace_id required" }, 400);
         const tags = url.searchParams.get("tags")?.split(",").filter(Boolean);
         const search = url.searchParams.get("search") ?? undefined;
-        const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : undefined;
+        const limit = url.searchParams.get("limit")
+          ? parseInt(url.searchParams.get("limit")!, 10)
+          : undefined;
         const items = await listPrompts(sql, wsId, { tags, search, limit });
         return json({ data: items, count: items.length });
       }
@@ -91,10 +132,12 @@ export function makeRouter(sql: Sql) {
       if (m === "GET" && p === "/prompts/resolve") {
         const wsId = url.searchParams.get("workspace_id");
         const name = url.searchParams.get("name");
-        if (!wsId || !name) return json({ error: "workspace_id and name required" }, 400);
+        if (!wsId || !name)
+          return json({ error: "workspace_id and name required" }, 400);
         const variables: Record<string, string> = {};
         for (const [k, v] of url.searchParams.entries()) {
-          if (!["workspace_id", "name", "user_id", "agent_id"].includes(k)) variables[k] = v;
+          if (!["workspace_id", "name", "user_id", "agent_id"].includes(k))
+            variables[k] = v;
         }
         const result = await resolvePrompt(sql, wsId, name, {
           userId: url.searchParams.get("user_id") ?? undefined,
@@ -105,14 +148,24 @@ export function makeRouter(sql: Sql) {
       }
 
       // GET /prompts/:id
-      if (m === "GET" && p.match(/^\/prompts\/[^/]+$/) && !p.includes("resolve") && !p.includes("overrides") && !p.includes("experiments")) {
+      if (
+        m === "GET" &&
+        p.match(/^\/prompts\/[^/]+$/) &&
+        !p.includes("resolve") &&
+        !p.includes("overrides") &&
+        !p.includes("experiments")
+      ) {
         const id = p.split("/")[2];
         const prompt = await getPromptById(sql, id);
         return prompt ? json(prompt) : json({ error: "Not found" }, 404);
       }
 
       // DELETE /prompts/:id
-      if (m === "DELETE" && p.match(/^\/prompts\/[^/]+$/) && !p.includes("overrides")) {
+      if (
+        m === "DELETE" &&
+        p.match(/^\/prompts\/[^/]+$/) &&
+        !p.includes("overrides")
+      ) {
         return json({ deleted: await deletePrompt(sql, p.split("/")[2]) });
       }
 
@@ -122,7 +175,15 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, UpdateContentSchema);
         if ("error" in parsed) return parsed.error;
         const d = parsed.data;
-        return json(await updatePrompt(sql, id, { content: d.content, changeNote: d.change_note, createdBy: d.created_by, model: d.model }), 201);
+        return json(
+          await updatePrompt(sql, id, {
+            content: d.content,
+            changeNote: d.change_note,
+            createdBy: d.created_by,
+            model: d.model,
+          }),
+          201,
+        );
       }
 
       // GET /prompts/:id/versions
@@ -146,7 +207,16 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, OverrideSchema);
         if ("error" in parsed) return parsed.error;
         const d = parsed.data;
-        return json(await setOverride(sql, d.prompt_id, d.scope_type, d.scope_id, d.content), 201);
+        return json(
+          await setOverride(
+            sql,
+            d.prompt_id,
+            d.scope_type,
+            d.scope_id,
+            d.content,
+          ),
+          201,
+        );
       }
 
       // DELETE /prompts/overrides/:id
@@ -159,7 +229,15 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, CreateExperimentSchema);
         if ("error" in parsed) return parsed.error;
         const d = parsed.data;
-        return json(await createExperiment(sql, { promptId: d.prompt_id, name: d.name, variants: d.variants, trafficPct: d.traffic_pct }), 201);
+        return json(
+          await createExperiment(sql, {
+            promptId: d.prompt_id,
+            name: d.name,
+            variants: d.variants,
+            trafficPct: d.traffic_pct,
+          }),
+          201,
+        );
       }
 
       // PATCH /prompts/experiments/:id/status
@@ -173,7 +251,12 @@ export function makeRouter(sql: Sql) {
       }
 
       return json({ error: "Not found" }, 404);
-    } catch (e) { return json({ error: e instanceof Error ? e.message : "Server error" }, 500); }
+    } catch (e) {
+      return json(
+        { error: e instanceof Error ? e.message : "Server error" },
+        500,
+      );
+    }
   };
 }
 
@@ -184,20 +267,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

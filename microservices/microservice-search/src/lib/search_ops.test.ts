@@ -2,7 +2,7 @@
  * Unit tests for search_ops logic — no database required.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 // ---------------------------------------------------------------------------
 // Pure-logic helpers extracted / mirrored from search_ops.ts for unit testing

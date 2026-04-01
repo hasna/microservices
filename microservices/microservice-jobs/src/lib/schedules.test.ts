@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { shouldFire } from "./schedules.js";
 
 describe("shouldFire — cron matching", () => {
@@ -19,9 +19,15 @@ describe("shouldFire — cron matching", () => {
   });
 
   it("*/5 matches every 5 minutes", () => {
-    expect(shouldFire("*/5 * * * *", new Date("2024-01-15T10:00:00"))).toBe(true);
-    expect(shouldFire("*/5 * * * *", new Date("2024-01-15T10:05:00"))).toBe(true);
-    expect(shouldFire("*/5 * * * *", new Date("2024-01-15T10:03:00"))).toBe(false);
+    expect(shouldFire("*/5 * * * *", new Date("2024-01-15T10:00:00"))).toBe(
+      true,
+    );
+    expect(shouldFire("*/5 * * * *", new Date("2024-01-15T10:05:00"))).toBe(
+      true,
+    );
+    expect(shouldFire("*/5 * * * *", new Date("2024-01-15T10:03:00"))).toBe(
+      false,
+    );
   });
 
   it("matches day of week (Monday=1)", () => {
@@ -38,13 +44,15 @@ describe("shouldFire — cron matching", () => {
 
   it("0 0 * * * fires at midnight only", () => {
     expect(shouldFire("0 0 * * *", new Date("2024-01-15T00:00:00"))).toBe(true);
-    expect(shouldFire("0 0 * * *", new Date("2024-01-15T12:00:00"))).toBe(false);
+    expect(shouldFire("0 0 * * *", new Date("2024-01-15T12:00:00"))).toBe(
+      false,
+    );
   });
 });
 
 describe("backoff calculation", () => {
   it("exponential backoff grows correctly", () => {
-    const backoff = (attempt: number) => Math.min(Math.pow(2, attempt) * 5, 3600);
+    const backoff = (attempt: number) => Math.min(2 ** attempt * 5, 3600);
     expect(backoff(1)).toBe(10);
     expect(backoff(2)).toBe(20);
     expect(backoff(3)).toBe(40);

@@ -4,9 +4,14 @@
  */
 
 import type { Sql } from "postgres";
-import { getProvider, callProvider, getAvailableModels, type Message } from "./providers.js";
-import type { ChatResponse } from "./providers.js";
 import { calculateCost } from "./costs.js";
+import type { ChatResponse } from "./providers.js";
+import {
+  callProvider,
+  getAvailableModels,
+  getProvider,
+  type Message,
+} from "./providers.js";
 
 export interface GatewayRequest {
   workspaceId: string;
@@ -21,12 +26,15 @@ export interface GatewayResponse extends ChatResponse {
   cached: boolean;
 }
 
-export async function chat(sql: Sql, data: GatewayRequest): Promise<GatewayResponse> {
+export async function chat(
+  sql: Sql,
+  data: GatewayRequest,
+): Promise<GatewayResponse> {
   const model = data.model ?? pickDefaultModel();
   const providerName = getProvider(model, {
-    openai: process.env["OPENAI_API_KEY"],
-    anthropic: process.env["ANTHROPIC_API_KEY"],
-    groq: process.env["GROQ_API_KEY"],
+    openai: process.env.OPENAI_API_KEY,
+    anthropic: process.env.ANTHROPIC_API_KEY,
+    groq: process.env.GROQ_API_KEY,
   });
 
   const start = Date.now();
@@ -47,7 +55,11 @@ export async function chat(sql: Sql, data: GatewayRequest): Promise<GatewayRespo
   }
 
   const latencyMs = Date.now() - start;
-  const costUsd = calculateCost(model, response.usage.prompt_tokens, response.usage.completion_tokens);
+  const costUsd = calculateCost(
+    model,
+    response.usage.prompt_tokens,
+    response.usage.completion_tokens,
+  );
 
   const [row] = await sql<[{ id: string }]>`
     INSERT INTO llm.requests (workspace_id, model, provider, prompt_tokens, completion_tokens, total_tokens, cost_usd, latency_ms, cached)
@@ -67,7 +79,7 @@ export async function chat(sql: Sql, data: GatewayRequest): Promise<GatewayRespo
 
   return {
     ...response,
-    request_id: row!.id,
+    request_id: row?.id,
     cost_usd: costUsd,
     cached: false,
   };
@@ -75,6 +87,9 @@ export async function chat(sql: Sql, data: GatewayRequest): Promise<GatewayRespo
 
 function pickDefaultModel(): string {
   const models = getAvailableModels();
-  if (models.length === 0) throw new Error("No LLM providers configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GROQ_API_KEY.");
+  if (models.length === 0)
+    throw new Error(
+      "No LLM providers configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GROQ_API_KEY.",
+    );
   return models[0]!;
 }

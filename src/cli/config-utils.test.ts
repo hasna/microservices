@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   ensureParentDirectory,
   parseTimeoutMs,
@@ -26,13 +26,13 @@ describe("config utils", () => {
 
   test("parseTimeoutMs rejects invalid values", () => {
     expect(() => parseTimeoutMs("0")).toThrow(
-      "Timeout must be a positive integer in milliseconds."
+      "Timeout must be a positive integer in milliseconds.",
     );
     expect(() => parseTimeoutMs("nan")).toThrow(
-      "Timeout must be a positive integer in milliseconds."
+      "Timeout must be a positive integer in milliseconds.",
     );
     expect(() => parseTimeoutMs("1.5")).toThrow(
-      "Timeout must be a positive integer in milliseconds."
+      "Timeout must be a positive integer in milliseconds.",
     );
   });
 
@@ -49,7 +49,7 @@ describe("config utils", () => {
   test("upsertCodexMcpConfig appends config only once", () => {
     const first = upsertCodexMcpConfig(undefined, "microservices-mcp");
     expect(first.alreadyRegistered).toBe(false);
-    expect(first.content).toContain('[mcp_servers.microservices]');
+    expect(first.content).toContain("[mcp_servers.microservices]");
 
     const second = upsertCodexMcpConfig(first.content, "microservices-mcp");
     expect(second.alreadyRegistered).toBe(true);
@@ -72,6 +72,8 @@ describe("config utils", () => {
       mcpServers: Record<string, { command: string }>;
     };
 
-    expect(parsed.mcpServers.microservices.command).toBe("/tmp/microservices-mcp");
+    expect(parsed.mcpServers.microservices.command).toBe(
+      "/tmp/microservices-mcp",
+    );
   });
 });

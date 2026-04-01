@@ -6,18 +6,26 @@ Each microservice is an **independent npm package** with its own PostgreSQL sche
 
 [![npm](https://img.shields.io/npm/v/@hasna/microservices)](https://www.npmjs.com/package/@hasna/microservices)
 
-## The 8 Microservices
+## The 21 Microservices
 
 | Package | Binary | Schema | What it does |
 |---------|--------|--------|--------------|
 | `@hasna/microservice-auth` | `microservice-auth` | `auth.*` | Users, sessions, JWT, magic links, OAuth, 2FA, API keys |
 | `@hasna/microservice-teams` | `microservice-teams` | `teams.*` | Workspaces, members, RBAC (owner/admin/member/viewer), invites |
 | `@hasna/microservice-billing` | `microservice-billing` | `billing.*` | Stripe subscriptions, plans, invoices, usage-based billing |
+| `@hasna/microservice-llm` | `microservice-llm` | `llm.*` | Multi-provider LLM gateway (OpenAI, Anthropic, DeepSeek) with cost tracking |
+| `@hasna/microservice-agents` | `microservice-agents` | `agents.*` | Agent registry, orchestration, capabilities routing, multi-agent messaging |
+| `@hasna/microservice-memory` | `microservice-memory` | `memory.*` | Long-term agent memory, collections, metadata, vector search |
+| `@hasna/microservice-knowledge` | `microservice-knowledge` | `knowledge.*` | RAG, document ingestion, chunking, pgvector embeddings |
+| `@hasna/microservice-guardrails` | `microservice-guardrails` | `guardrails.*` | AI safety, prompt injection detection, PII scanning, moderation |
+| `@hasna/microservice-prompts` | `microservice-prompts` | `prompts.*` | Versioned prompt management, templates, A/B testing, rollback |
 | `@hasna/microservice-notify` | `microservice-notify` | `notify.*` | Email, SMS, in-app, outbound webhooks, templates |
 | `@hasna/microservice-files` | `microservice-files` | `files.*` | Uploads, S3 storage, presigned URLs, image transforms |
 | `@hasna/microservice-audit` | `microservice-audit` | `audit.*` | Immutable event log, compliance trail, retention policies |
+| `@hasna/microservice-traces` | `microservice-traces` | `traces.*` | Agent observability, spans, latency, token tracking |
 | `@hasna/microservice-flags` | `microservice-flags` | `flags.*` | Feature flags, gradual rollouts, A/B experiments |
-| `@hasna/microservice-jobs` | `microservice-jobs` | `jobs.*` | Background jobs, priority queues (SKIP LOCKED), cron, retries |
+| `@hasna/microservice-jobs` | `microservice-jobs` | `jobs.*` | Background jobs, priority queues, cron, retries |
+| ...and 6 more! | | | `sessions`, `usage`, `waitlist`, `onboarding`, `webhooks`, `search` |
 
 ## Install
 
@@ -33,14 +41,17 @@ microservices install auth teams billing
 ## Quick Start
 
 ```bash
+# 0. Start a local PostgreSQL instance (with pgvector)
+docker-compose up -d
+
 # 1. Install a service
 bun install -g @hasna/microservice-auth
 
-# 2. Run migrations against your PostgreSQL
-microservice-auth migrate --db postgres://localhost/myapp
+# 2. Initialize and migrate your PostgreSQL
+microservices init-all --db postgres://postgres:password@localhost:5432/microservices
 
-# 3. Start the HTTP API (standalone mode)
-microservice-auth serve --port 3001
+# 3. Start the HTTP APIs
+microservices serve-all
 
 # 4. Or start the MCP server (for AI agents)
 microservice-auth mcp
@@ -53,7 +64,7 @@ microservice-auth mcp
 ```ts
 import { migrate, register, login } from '@hasna/microservice-auth'
 
-const sql = getDb('postgres://localhost/myapp')
+const sql = getDb('postgres://postgres:password@localhost:5432/microservices')
 await migrate(sql)
 
 const { user, access_token, session } = await register(sql, {
@@ -110,7 +121,7 @@ await enqueue(sql, { type: 'onboarding.setup', payload: { userId: user.id } })
 ```bash
 microservices list                    # List all available microservices
 microservices install auth teams      # Install specific services
-microservices install --all           # Install all 8
+microservices install --all           # Install all 21
 microservices status                  # Check what's installed
 microservices info auth               # Detailed info + required env
 microservices migrate-all             # Run migrations on all installed

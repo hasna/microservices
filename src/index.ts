@@ -5,47 +5,44 @@
  * HTTP API, MCP server, and CLI binary. This meta-package provides the registry,
  * installer, and runner for managing them all.
  *
- * Available microservices:
+ * Available microservices (21 total):
  *   @hasna/microservice-auth     — users, sessions, JWT, OAuth, 2FA, API keys
  *   @hasna/microservice-teams    — workspaces, members, RBAC, invites
  *   @hasna/microservice-billing  — Stripe subscriptions, plans, invoices
- *   @hasna/microservice-notify   — email, SMS, in-app, webhooks
- *   @hasna/microservice-files    — uploads, S3, presigned URLs, transforms
- *   @hasna/microservice-audit    — immutable event log, compliance trail
- *   @hasna/microservice-flags    — feature flags, rollouts, A/B experiments
- *   @hasna/microservice-jobs     — background jobs, queues, cron, retries
+ *   @hasna/microservice-llm      — gateway, multi-provider routing, cost tracking
+ *   @hasna/microservice-agents   — orchestrator, capabilities, routing
+ *   @hasna/microservice-memory   — persistent agent memory, vector search
+ *   ...and 15 more (notify, files, audit, flags, jobs, search, traces, etc).
  *
  * Quick start:
  *   npx @hasna/microservices install auth teams billing
- *   microservice-auth init --db postgres://localhost/myapp
- *   microservice-auth migrate
- *   microservice-auth serve
+ *   microservices init-all --db postgres://postgres:password@localhost:5432/microservices
+ *   microservices serve-all
  */
 
 export {
-  MICROSERVICES,
+  getInstalledMicroservices,
+  getMicroserviceStatus,
+  getMicroserviceVersion,
+  type InstallOptions,
+  type InstallResult,
+  installMicroservice,
+  installMicroservices,
+  microserviceExists,
+  removeMicroservice,
+} from "./lib/installer.js";
+export {
   CATEGORIES,
+  type Category,
   getMicroservice,
   getMicroservicesByCategory,
-  searchMicroservices,
+  MICROSERVICES,
   type MicroserviceMeta,
-  type Category,
+  searchMicroservices,
 } from "./lib/registry.js";
 
 export {
-  installMicroservice,
-  installMicroservices,
-  getInstalledMicroservices,
-  removeMicroservice,
-  microserviceExists,
-  getMicroserviceVersion,
-  getMicroserviceStatus,
-  type InstallResult,
-  type InstallOptions,
-} from "./lib/installer.js";
-
-export {
-  runMicroserviceCommand,
   getMicroserviceOperations,
   type RunResult,
+  runMicroserviceCommand,
 } from "./lib/runner.js";

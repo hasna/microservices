@@ -8,7 +8,11 @@ export interface AuditStats {
   severity_breakdown: { severity: string; count: number }[];
 }
 
-export async function getAuditStats(sql: Sql, workspaceId: string, days = 30): Promise<AuditStats> {
+export async function getAuditStats(
+  sql: Sql,
+  workspaceId: string,
+  days = 30,
+): Promise<AuditStats> {
   const since = new Date(Date.now() - days * 86400000).toISOString();
 
   const [{ total }] = await sql<[{ total: string }]>`
@@ -36,10 +40,22 @@ export async function getAuditStats(sql: Sql, workspaceId: string, days = 30): P
     GROUP BY severity ORDER BY count DESC`;
 
   return {
-    total_events: parseInt(total),
-    top_actions: top_actions.map(r => ({ action: r.action, count: parseInt(r.count) })),
-    top_actors: top_actors.map(r => ({ actor_id: r.actor_id, count: parseInt(r.count) })),
-    events_per_day: events_per_day.map(r => ({ date: r.date, count: parseInt(r.count) })),
-    severity_breakdown: severity_breakdown.map(r => ({ severity: r.severity, count: parseInt(r.count) })),
+    total_events: parseInt(total, 10),
+    top_actions: top_actions.map((r) => ({
+      action: r.action,
+      count: parseInt(r.count, 10),
+    })),
+    top_actors: top_actors.map((r) => ({
+      actor_id: r.actor_id,
+      count: parseInt(r.count, 10),
+    })),
+    events_per_day: events_per_day.map((r) => ({
+      date: r.date,
+      count: parseInt(r.count, 10),
+    })),
+    severity_breakdown: severity_breakdown.map((r) => ({
+      severity: r.severity,
+      count: parseInt(r.count, 10),
+    })),
   };
 }

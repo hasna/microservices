@@ -11,7 +11,7 @@ export interface Conversation {
   title: string | null;
   model: string | null;
   system_prompt: string | null;
-  metadata: Record<string, unknown>;
+  metadata: any;
   is_archived: boolean;
   is_pinned: boolean;
   total_tokens: number;
@@ -28,8 +28,8 @@ export async function createConversation(
     title?: string;
     model?: string;
     system_prompt?: string;
-    metadata?: Record<string, unknown>;
-  }
+    metadata?: any;
+  },
 ): Promise<Conversation> {
   const [conv] = await sql<Conversation[]>`
     INSERT INTO sessions.conversations (workspace_id, user_id, title, model, system_prompt, metadata)
@@ -46,7 +46,10 @@ export async function createConversation(
   return conv;
 }
 
-export async function getConversation(sql: Sql, id: string): Promise<Conversation | null> {
+export async function getConversation(
+  sql: Sql,
+  id: string,
+): Promise<Conversation | null> {
   const [conv] = await sql<Conversation[]>`
     SELECT * FROM sessions.conversations WHERE id = ${id}
   `;
@@ -57,7 +60,12 @@ export async function listConversations(
   sql: Sql,
   workspaceId: string,
   userId: string,
-  opts: { archived?: boolean; limit?: number; offset?: number; search?: string } = {}
+  opts: {
+    archived?: boolean;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  } = {},
 ): Promise<Conversation[]> {
   const limit = opts.limit ?? 50;
   const offset = opts.offset ?? 0;
@@ -114,10 +122,10 @@ export async function updateConversation(
     system_prompt?: string;
     is_archived?: boolean;
     is_pinned?: boolean;
-    metadata?: Record<string, unknown>;
-  }
+    metadata?: any;
+  },
 ): Promise<Conversation | null> {
-  const sets: string[] = [];
+  const _sets: string[] = [];
   const conv = await getConversation(sql, id);
   if (!conv) return null;
 
@@ -137,21 +145,27 @@ export async function updateConversation(
   return updated ?? null;
 }
 
-export async function deleteConversation(sql: Sql, id: string): Promise<boolean> {
+export async function deleteConversation(
+  sql: Sql,
+  id: string,
+): Promise<boolean> {
   const result = await sql`
     DELETE FROM sessions.conversations WHERE id = ${id}
   `;
   return result.count > 0;
 }
 
-export async function archiveConversation(sql: Sql, id: string): Promise<Conversation | null> {
+export async function archiveConversation(
+  sql: Sql,
+  id: string,
+): Promise<Conversation | null> {
   return updateConversation(sql, id, { is_archived: true });
 }
 
 export async function forkConversation(
   sql: Sql,
   conversationId: string,
-  fromMessageId: string
+  fromMessageId: string,
 ): Promise<Conversation | null> {
   const original = await getConversation(sql, conversationId);
   if (!original) return null;
@@ -168,7 +182,7 @@ export async function forkConversation(
     VALUES (
       ${original.workspace_id},
       ${original.user_id},
-      ${original.title ? `Fork of ${original.title}` : 'Forked conversation'},
+      ${original.title ? `Fork of ${original.title}` : "Forked conversation"},
       ${original.model},
       ${original.system_prompt},
       ${JSON.stringify(original.metadata)}

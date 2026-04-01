@@ -2,20 +2,17 @@
  * Memory HTTP routes.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
+import { z } from "zod";
+import { createCollection, listCollections } from "../lib/collections.js";
 import {
-  storeMemory,
-  searchMemories,
+  deleteMemory,
   getMemory,
   listMemories,
-  deleteMemory,
+  searchMemories,
+  storeMemory,
   updateMemoryImportance,
 } from "../lib/memories.js";
-import {
-  createCollection,
-  listCollections,
-} from "../lib/collections.js";
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,21 +27,38 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-export function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+export function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }
 
@@ -96,9 +110,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-memory", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-memory",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-memory", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-memory",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -106,7 +133,16 @@ export function makeRouter(sql: Sql) {
       if (method === "POST" && path === "/memory/store") {
         const parsed = await parseBody(req, StoreSchema);
         if ("error" in parsed) return parsed.error;
-        const { workspace_id, user_id, collection_id, content, summary, importance, metadata, expires_at } = parsed.data;
+        const {
+          workspace_id,
+          user_id,
+          collection_id,
+          content,
+          summary,
+          importance,
+          metadata,
+          expires_at,
+        } = parsed.data;
         const mem = await storeMemory(sql, {
           workspaceId: workspace_id,
           userId: user_id,
@@ -114,7 +150,7 @@ export function makeRouter(sql: Sql) {
           content,
           summary,
           importance,
-          metadata: metadata as Record<string, unknown> | undefined,
+          metadata: metadata as any | undefined,
           expiresAt: expires_at ? new Date(expires_at) : undefined,
         });
         return json(mem, 201);
@@ -124,7 +160,8 @@ export function makeRouter(sql: Sql) {
       if (method === "POST" && path === "/memory/search") {
         const parsed = await parseBody(req, SearchSchema);
         if ("error" in parsed) return parsed.error;
-        const { workspace_id, user_id, text, mode, limit, collection_id } = parsed.data;
+        const { workspace_id, user_id, text, mode, limit, collection_id } =
+          parsed.data;
         const results = await searchMemories(sql, {
           workspaceId: workspace_id,
           userId: user_id,
@@ -139,9 +176,12 @@ export function makeRouter(sql: Sql) {
       // GET /memory/list
       if (method === "GET" && path === "/memory/list") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("VALIDATION_ERROR", "workspace_id is required");
+        if (!workspaceId)
+          return apiError("VALIDATION_ERROR", "workspace_id is required");
         const userId = url.searchParams.get("user_id") ?? undefined;
-        const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : undefined;
+        const limit = url.searchParams.get("limit")
+          ? parseInt(url.searchParams.get("limit")!, 10)
+          : undefined;
         const mems = await listMemories(sql, workspaceId, userId, limit);
         return json({ data: mems, count: mems.length });
       }
@@ -149,7 +189,8 @@ export function makeRouter(sql: Sql) {
       // GET /memory/collections
       if (method === "GET" && path === "/memory/collections") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("VALIDATION_ERROR", "workspace_id is required");
+        if (!workspaceId)
+          return apiError("VALIDATION_ERROR", "workspace_id is required");
         const userId = url.searchParams.get("user_id") ?? undefined;
         const cols = await listCollections(sql, workspaceId, userId);
         return json({ data: cols, count: cols.length });
@@ -160,15 +201,26 @@ export function makeRouter(sql: Sql) {
         const parsed = await parseBody(req, CollectionCreateSchema);
         if ("error" in parsed) return parsed.error;
         const { workspace_id, user_id, name, description } = parsed.data;
-        const col = await createCollection(sql, { workspaceId: workspace_id, userId: user_id, name, description });
+        const col = await createCollection(sql, {
+          workspaceId: workspace_id,
+          userId: user_id,
+          name,
+          description,
+        });
         return json(col, 201);
       }
 
       // GET /memory/:id
-      if (method === "GET" && path.match(/^\/memory\/[^/]+$/) && !path.startsWith("/memory/list") && !path.startsWith("/memory/collections")) {
+      if (
+        method === "GET" &&
+        path.match(/^\/memory\/[^/]+$/) &&
+        !path.startsWith("/memory/list") &&
+        !path.startsWith("/memory/collections")
+      ) {
         const id = path.split("/").pop()!;
         const mem = await getMemory(sql, id);
-        if (!mem) return apiError("NOT_FOUND", "Memory not found", undefined, 404);
+        if (!mem)
+          return apiError("NOT_FOUND", "Memory not found", undefined, 404);
         return json(mem);
       }
 

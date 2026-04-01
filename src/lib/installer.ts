@@ -6,8 +6,12 @@
  * Run     = `microservice-<name> <command>`
  */
 
-import { execSync, execFileSync } from "node:child_process";
-import { getMicroservice, MICROSERVICES, type MicroserviceMeta } from "./registry.js";
+import { execFileSync, execSync } from "node:child_process";
+import {
+  getMicroservice,
+  MICROSERVICES,
+  type MicroserviceMeta,
+} from "./registry.js";
 
 export interface InstallResult {
   microservice: string;
@@ -42,7 +46,9 @@ export function getMicroserviceVersion(name: string): string | null {
   const meta = getMicroservice(name);
   if (!meta) return null;
   try {
-    const out = execFileSync(meta.binary, ["--version"], { encoding: "utf8" }).trim();
+    const out = execFileSync(meta.binary, ["--version"], {
+      encoding: "utf8",
+    }).trim();
     return out || null;
   } catch {
     return null;
@@ -54,11 +60,15 @@ export function getMicroserviceVersion(name: string): string | null {
  */
 export function installMicroservice(
   name: string,
-  options: InstallOptions = {}
+  options: InstallOptions = {},
 ): InstallResult {
   const meta = getMicroservice(name);
   if (!meta) {
-    return { microservice: name, success: false, error: `Unknown microservice '${name}'` };
+    return {
+      microservice: name,
+      success: false,
+      error: `Unknown microservice '${name}'`,
+    };
   }
 
   if (microserviceExists(name) && !options.force) {
@@ -84,7 +94,7 @@ export function installMicroservice(
  */
 export function installMicroservices(
   names: string[],
-  options: InstallOptions = {}
+  options: InstallOptions = {},
 ): InstallResult[] {
   return names.map((name) => installMicroservice(name, options));
 }
@@ -93,7 +103,9 @@ export function installMicroservices(
  * Get list of installed microservices (those whose binary is in PATH)
  */
 export function getInstalledMicroservices(): string[] {
-  return MICROSERVICES.filter((m) => microserviceExists(m.name)).map((m) => m.name);
+  return MICROSERVICES.filter((m) => microserviceExists(m.name)).map(
+    (m) => m.name,
+  );
 }
 
 /**
@@ -128,7 +140,6 @@ export function getMicroserviceStatus(name: string): {
 }
 
 // Legacy compatibility exports
-export type { InstallOptions };
 export interface LegacyInstallResult extends InstallResult {
   path?: string;
 }

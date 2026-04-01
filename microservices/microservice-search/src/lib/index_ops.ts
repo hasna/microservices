@@ -10,10 +10,13 @@ export interface IndexDocumentInput {
   docId: string;
   content: string;
   workspaceId?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
 }
 
-export async function indexDocument(sql: Sql, data: IndexDocumentInput): Promise<void> {
+export async function indexDocument(
+  sql: Sql,
+  data: IndexDocumentInput,
+): Promise<void> {
   const { collection, docId, content, workspaceId, metadata } = data;
 
   // Generate embedding if OpenAI key is available
@@ -58,7 +61,11 @@ export async function indexDocument(sql: Sql, data: IndexDocumentInput): Promise
   }
 }
 
-export async function deleteDocument(sql: Sql, collection: string, docId: string): Promise<boolean> {
+export async function deleteDocument(
+  sql: Sql,
+  collection: string,
+  docId: string,
+): Promise<boolean> {
   const result = await sql`
     DELETE FROM search.documents
     WHERE collection = ${collection} AND doc_id = ${docId}
@@ -70,7 +77,7 @@ export async function deleteDocument(sql: Sql, collection: string, docId: string
 export async function deleteCollection(
   sql: Sql,
   collection: string,
-  workspaceId?: string
+  workspaceId?: string,
 ): Promise<number> {
   if (workspaceId) {
     const result = await sql`
@@ -90,7 +97,7 @@ export async function deleteCollection(
 
 export async function listCollections(
   sql: Sql,
-  workspaceId?: string
+  workspaceId?: string,
 ): Promise<{ collection: string; count: number }[]> {
   if (workspaceId) {
     return sql<{ collection: string; count: number }[]>`

@@ -12,13 +12,20 @@ export interface WaitlistStats {
   top_referrers: { email: string; referral_count: number }[];
 }
 
-export async function getWaitlistStats(sql: Sql, campaignId: string): Promise<WaitlistStats> {
-  const [{ total, waiting, invited, joined }] = await sql<[{
-    total: number;
-    waiting: number;
-    invited: number;
-    joined: number;
-  }]>`
+export async function getWaitlistStats(
+  sql: Sql,
+  campaignId: string,
+): Promise<WaitlistStats> {
+  const [{ total, waiting, invited, joined }] = await sql<
+    [
+      {
+        total: number;
+        waiting: number;
+        invited: number;
+        joined: number;
+      },
+    ]
+  >`
     SELECT
       COUNT(*)::int as total,
       COUNT(*) FILTER (WHERE status = 'waiting')::int as waiting,

@@ -1,5 +1,5 @@
 /**
- * HTTP route handlers for microservice-NAME.
+ * HTTP route handlers for microservice-__name__.
  *
  * Pattern: match method + pathname, call core lib, return JSON.
  */
@@ -9,17 +9,17 @@ import { getDb } from "../db/client.js";
 export async function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const { method, pathname } = { method: req.method, pathname: url.pathname };
-  const sql = getDb();
+  const _sql = getDb();
 
   try {
     // Health check
     if (method === "GET" && pathname === "/health") {
-      return json({ ok: true, service: "microservice-NAME" });
+      return json({ ok: true, service: "microservice-__name__" });
     }
 
     // ADD YOUR ROUTES HERE
-    // if (method === "GET" && pathname === "/name/records") { ... }
-    // if (method === "POST" && pathname === "/name/records") { ... }
+    // if (method === "GET" && pathname === "/__name__/records") { ... }
+    // if (method === "POST" && pathname === "/__name__/records") { ... }
 
     return json({ error: "Not found" }, 404);
   } catch (err) {

@@ -9,27 +9,25 @@
  *   const ok = await checkQuota(sql, workspaceId, 'api.calls', 'month')
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-
-// Tracking
-export {
-  track,
-  getPeriodStart,
-  type TrackInput,
-} from "./track.js";
-
 // Querying
 export {
-  getUsageSummary,
   checkQuota,
   getQuota,
-  setQuota,
-  listMetrics,
+  getUsageSummary,
   isValidPeriod,
-  VALID_PERIODS,
-  type UsageSummary,
+  listMetrics,
+  type Period,
   type Quota,
   type QuotaCheck,
-  type Period,
+  setQuota,
+  type UsageSummary,
+  VALID_PERIODS,
 } from "./query.js";
+// Tracking
+export {
+  getPeriodStart,
+  type TrackInput,
+  track,
+} from "./track.js";

@@ -2,9 +2,15 @@
  * Audit HTTP routes.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
-import { logEvent, queryEvents, countEvents, getEvent, exportEvents } from "../lib/events.js";
+import { z } from "zod";
+import {
+  countEvents,
+  exportEvents,
+  getEvent,
+  logEvent,
+  queryEvents,
+} from "../lib/events.js";
 import { setRetentionPolicy } from "../lib/retention.js";
 import { getAuditStats } from "../lib/stats.js";
 
@@ -24,7 +30,9 @@ const LogEventSchema = z.object({
   ip: z.string().optional(),
   user_agent: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
-  severity: z.enum(["debug", "info", "warning", "error", "critical"]).optional(),
+  severity: z
+    .enum(["debug", "info", "warning", "error", "critical"])
+    .optional(),
 });
 
 const RetentionSchema = z.object({
@@ -38,7 +46,8 @@ export function makeRouter(sql: Sql) {
     const path = url.pathname;
     const method = req.method;
 
-    if (method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    if (method === "OPTIONS")
+      return new Response(null, { status: 204, headers: corsHeaders });
 
     try {
       // GET /health
@@ -46,9 +55,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-audit", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-audit",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-audit", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-audit",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -64,8 +86,13 @@ export function makeRouter(sql: Sql) {
           resourceType: body.resource_type,
           resourceId: body.resource_id,
           workspaceId: body.workspace_id,
-          ip: body.ip ?? req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? undefined,
-          userAgent: body.user_agent ?? req.headers.get("user-agent") ?? undefined,
+          ip:
+            body.ip ??
+            req.headers.get("x-forwarded-for") ??
+            req.headers.get("x-real-ip") ??
+            undefined,
+          userAgent:
+            body.user_agent ?? req.headers.get("user-agent") ?? undefined,
           metadata: body.metadata,
           severity: body.severity,
         });
@@ -92,13 +119,16 @@ export function makeRouter(sql: Sql) {
       if (method === "GET" && path.match(/^\/audit\/events\/[^/]+$/)) {
         const id = path.split("/").pop()!;
         const event = await getEvent(sql, id);
-        if (!event) return apiError("NOT_FOUND", "Event not found", undefined, 404);
+        if (!event)
+          return apiError("NOT_FOUND", "Event not found", undefined, 404);
         return json(event);
       }
 
       // GET /audit/export — export events as JSON or CSV
       if (method === "GET" && path === "/audit/export") {
-        const format = (url.searchParams.get("format") ?? "json") as "json" | "csv";
+        const format = (url.searchParams.get("format") ?? "json") as
+          | "json"
+          | "csv";
         if (format !== "json" && format !== "csv") {
           return apiError("INVALID_PARAM", "format must be json or csv");
         }
@@ -125,8 +155,11 @@ export function makeRouter(sql: Sql) {
       // GET /audit/stats — stats for a workspace
       if (method === "GET" && path === "/audit/stats") {
         const workspaceId = url.searchParams.get("workspace_id");
-        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id is required");
-        const days = url.searchParams.get("days") ? parseInt(url.searchParams.get("days")!, 10) : 30;
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id is required");
+        const days = url.searchParams.get("days")
+          ? parseInt(url.searchParams.get("days")!, 10)
+          : 30;
         const stats = await getAuditStats(sql, workspaceId, days);
         return json(stats);
       }
@@ -146,11 +179,19 @@ function parseFilters(params: URLSearchParams) {
     action: params.get("action") ?? undefined,
     resourceType: params.get("resource_type") ?? undefined,
     resourceId: params.get("resource_id") ?? undefined,
-    severity: params.get("severity") as "debug" | "info" | "warning" | "error" | "critical" | undefined,
+    severity: params.get("severity") as
+      | "debug"
+      | "info"
+      | "warning"
+      | "error"
+      | "critical"
+      | undefined,
     from: params.get("from") ? new Date(params.get("from")!) : undefined,
     to: params.get("to") ? new Date(params.get("to")!) : undefined,
     limit: params.get("limit") ? parseInt(params.get("limit")!, 10) : undefined,
-    offset: params.get("offset") ? parseInt(params.get("offset")!, 10) : undefined,
+    offset: params.get("offset")
+      ? parseInt(params.get("offset")!, 10)
+      : undefined,
   };
 }
 
@@ -161,20 +202,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

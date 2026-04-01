@@ -2,9 +2,9 @@
  * Unit tests for audit event logic — no database required.
  */
 
-import { describe, test, expect } from "bun:test";
-import { computeChecksum, VALID_SEVERITY_LEVELS } from "./events.js";
+import { describe, expect, test } from "bun:test";
 import type { AuditEvent } from "./events.js";
+import { computeChecksum, VALID_SEVERITY_LEVELS } from "./events.js";
 
 // ---- Checksum tests --------------------------------------------------------
 
@@ -73,7 +73,10 @@ describe("computeChecksum", () => {
       created_at: "2024-01-01T00:00:00.000Z",
     };
     const c1 = computeChecksum(base);
-    const c2 = computeChecksum({ ...base, created_at: "2024-01-02T00:00:00.000Z" });
+    const c2 = computeChecksum({
+      ...base,
+      created_at: "2024-01-02T00:00:00.000Z",
+    });
     expect(c1).not.toBe(c2);
   });
 
@@ -95,7 +98,13 @@ describe("computeChecksum", () => {
 
 describe("VALID_SEVERITY_LEVELS", () => {
   test("contains exactly: debug, info, warning, error, critical", () => {
-    expect(VALID_SEVERITY_LEVELS).toEqual(["debug", "info", "warning", "error", "critical"]);
+    expect(VALID_SEVERITY_LEVELS).toEqual([
+      "debug",
+      "info",
+      "warning",
+      "error",
+      "critical",
+    ]);
   });
 
   test("all severity levels are strings", () => {
@@ -110,8 +119,11 @@ describe("VALID_SEVERITY_LEVELS", () => {
 describe("exportEvents CSV format", () => {
   test("CSV header has exactly: id,actor_id,action,resource_type,resource_id,workspace_id,severity,created_at", () => {
     // Build the CSV manually using the same logic as exportEvents
-    const header = "id,actor_id,action,resource_type,resource_id,workspace_id,severity,created_at";
-    expect(header).toBe("id,actor_id,action,resource_type,resource_id,workspace_id,severity,created_at");
+    const header =
+      "id,actor_id,action,resource_type,resource_id,workspace_id,severity,created_at";
+    expect(header).toBe(
+      "id,actor_id,action,resource_type,resource_id,workspace_id,severity,created_at",
+    );
   });
 
   test("CSV row is comma-separated with correct field order", () => {
@@ -134,11 +146,13 @@ describe("exportEvents CSV format", () => {
       event.resource_id ?? "",
       event.workspace_id ?? "",
       event.severity,
-      event.created_at instanceof Date ? event.created_at.toISOString() : String(event.created_at),
+      event.created_at instanceof Date
+        ? event.created_at.toISOString()
+        : String(event.created_at),
     ].join(",");
 
     expect(row).toBe(
-      "aaaaaaaa-0000-0000-0000-000000000001,user-1,user.login,user,user-1,ws-1,info,2024-01-01T00:00:00.000Z"
+      "aaaaaaaa-0000-0000-0000-000000000001,user-1,user.login,user,user-1,ws-1,info,2024-01-01T00:00:00.000Z",
     );
   });
 

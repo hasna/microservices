@@ -29,8 +29,7 @@ export function readPackageVersion(packageJsonPath: string): string {
 }
 
 export function getPackageVersion(startDir?: string): string {
-  const resolvedStartDir =
-    startDir ?? dirname(fileURLToPath(import.meta.url));
+  const resolvedStartDir = startDir ?? dirname(fileURLToPath(import.meta.url));
   const packageJsonPath = findNearestPackageJson(resolvedStartDir);
   if (!packageJsonPath) {
     return DEFAULT_VERSION;

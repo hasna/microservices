@@ -2,8 +2,8 @@
  * Unit tests for waitlist entry logic — no database required.
  */
 
-import { describe, test, expect } from "bun:test";
-import { calculatePriorityScore, isValidEmail, inviteBatch } from "./entries.js";
+import { describe, expect, test } from "bun:test";
+import { calculatePriorityScore, isValidEmail } from "./entries.js";
 
 // ---- Priority score tests ---------------------------------------------------
 
@@ -43,7 +43,7 @@ describe("calculatePriorityScore", () => {
   test("earlier signup does not penalize if same referral count (days_since_epoch is additive)", () => {
     // Both have 2 referrals but different dates
     const earlier = new Date(2020, 0, 1); // fewer days_since_epoch
-    const later = new Date(2025, 0, 1);  // more days_since_epoch
+    const later = new Date(2025, 0, 1); // more days_since_epoch
     const scoreEarlier = calculatePriorityScore(2, earlier);
     const scoreLater = calculatePriorityScore(2, later);
     // Later signup has higher days_since_epoch, thus higher score
@@ -118,7 +118,9 @@ describe("inviteBatch input validation", () => {
         throw new Error("count must be a positive integer");
       }
     };
-    expect(() => validateCount(1.5)).toThrow("count must be a positive integer");
+    expect(() => validateCount(1.5)).toThrow(
+      "count must be a positive integer",
+    );
   });
 
   test("count 1 passes validation", () => {

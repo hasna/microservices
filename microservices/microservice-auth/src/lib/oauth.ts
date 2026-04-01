@@ -21,7 +21,7 @@ export async function upsertOAuthAccount(
     accessToken?: string;
     refreshToken?: string;
     expiresAt?: Date;
-  }
+  },
 ): Promise<OAuthAccount> {
   const [row] = await sql<OAuthAccount[]>`
     INSERT INTO auth.oauth_accounts (user_id, provider, provider_id, access_token, refresh_token, expires_at)
@@ -39,7 +39,7 @@ export async function upsertOAuthAccount(
 export async function getOAuthAccount(
   sql: Sql,
   provider: string,
-  providerId: string
+  providerId: string,
 ): Promise<OAuthAccount | null> {
   const [row] = await sql<OAuthAccount[]>`
     SELECT id, user_id, provider, provider_id, created_at
@@ -48,7 +48,10 @@ export async function getOAuthAccount(
   return row ?? null;
 }
 
-export async function listUserOAuthAccounts(sql: Sql, userId: string): Promise<OAuthAccount[]> {
+export async function listUserOAuthAccounts(
+  sql: Sql,
+  userId: string,
+): Promise<OAuthAccount[]> {
   return sql<OAuthAccount[]>`
     SELECT id, user_id, provider, provider_id, created_at
     FROM auth.oauth_accounts WHERE user_id = ${userId}
@@ -59,7 +62,7 @@ export async function listUserOAuthAccounts(sql: Sql, userId: string): Promise<O
 export async function unlinkOAuthAccount(
   sql: Sql,
   userId: string,
-  provider: string
+  provider: string,
 ): Promise<boolean> {
   const result = await sql`
     DELETE FROM auth.oauth_accounts WHERE user_id = ${userId} AND provider = ${provider}

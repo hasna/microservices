@@ -12,19 +12,27 @@ export interface Document {
   source_url: string | null;
   content: string;
   content_hash: string | null;
-  metadata: Record<string, unknown>;
+  metadata: any;
   chunk_count: number;
   status: "pending" | "processing" | "ready" | "error";
   error: string | null;
   created_at: Date;
 }
 
-export async function getDocument(sql: Sql, id: string): Promise<Document | null> {
-  const [doc] = await sql<Document[]>`SELECT * FROM knowledge.documents WHERE id = ${id}`;
+export async function getDocument(
+  sql: Sql,
+  id: string,
+): Promise<Document | null> {
+  const [doc] = await sql<
+    Document[]
+  >`SELECT * FROM knowledge.documents WHERE id = ${id}`;
   return doc ?? null;
 }
 
-export async function listDocuments(sql: Sql, collectionId: string): Promise<Document[]> {
+export async function listDocuments(
+  sql: Sql,
+  collectionId: string,
+): Promise<Document[]> {
   return sql<Document[]>`
     SELECT * FROM knowledge.documents
     WHERE collection_id = ${collectionId}
@@ -34,7 +42,9 @@ export async function listDocuments(sql: Sql, collectionId: string): Promise<Doc
 
 export async function deleteDocument(sql: Sql, id: string): Promise<boolean> {
   // Get collection_id before deletion to update counts
-  const [doc] = await sql<Document[]>`SELECT collection_id, chunk_count FROM knowledge.documents WHERE id = ${id}`;
+  const [doc] = await sql<
+    Document[]
+  >`SELECT collection_id, chunk_count FROM knowledge.documents WHERE id = ${id}`;
   if (!doc) return false;
 
   const result = await sql`DELETE FROM knowledge.documents WHERE id = ${id}`;

@@ -1,10 +1,10 @@
 /**
- * PostgreSQL client for microservice-NAME.
+ * PostgreSQL client for microservice-__name__.
  *
  * Usage:
  *   import { getDb } from './client.js'
  *   const sql = getDb()
- *   const rows = await sql`SELECT * FROM name.records`
+ *   const rows = await sql`SELECT * FROM __name__.records`
  *
  * Config via env:
  *   DATABASE_URL=postgres://user:pass@host:5432/dbname
@@ -17,7 +17,7 @@ let _client: ReturnType<typeof postgres> | null = null;
 export function getDb(connectionString?: string): ReturnType<typeof postgres> {
   if (_client) return _client;
 
-  const url = connectionString ?? process.env["DATABASE_URL"];
+  const url = connectionString ?? process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL environment variable is required");
 
   _client = postgres(url, {

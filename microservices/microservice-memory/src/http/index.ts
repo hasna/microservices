@@ -8,5 +8,7 @@ export async function startServer(port: number = 3012): Promise<void> {
   const router = makeRouter(sql);
 
   const server = Bun.serve({ port, fetch: router });
-  console.log(`microservice-memory listening on http://localhost:${server.port}`);
+  console.log(
+    `microservice-memory listening on http://localhost:${server.port}`,
+  );
 }

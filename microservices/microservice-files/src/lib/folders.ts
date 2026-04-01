@@ -19,7 +19,9 @@ export function buildPath(name: string, parentPath?: string): string {
   if (!parentPath || parentPath === "/") {
     return `/${name}`;
   }
-  const normalized = parentPath.endsWith("/") ? parentPath.slice(0, -1) : parentPath;
+  const normalized = parentPath.endsWith("/")
+    ? parentPath.slice(0, -1)
+    : parentPath;
   return `${normalized}/${name}`;
 }
 
@@ -30,7 +32,7 @@ export async function createFolder(
     name: string;
     parent_id?: string;
     created_by?: string;
-  }
+  },
 ): Promise<Folder> {
   let parentPath: string | undefined;
 
@@ -68,7 +70,7 @@ export async function getFolder(sql: Sql, id: string): Promise<Folder | null> {
 export async function listFolders(
   sql: Sql,
   workspaceId: string,
-  parentId?: string | null
+  parentId?: string | null,
 ): Promise<Folder[]> {
   if (parentId !== undefined) {
     if (parentId === null) {

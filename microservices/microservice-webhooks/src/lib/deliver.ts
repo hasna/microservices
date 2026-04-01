@@ -1,4 +1,4 @@
-import { createHmac } from "crypto";
+import { createHmac } from "node:crypto";
 import type { Sql } from "postgres";
 import { disableEndpoint } from "./endpoints.js";
 
@@ -6,7 +6,7 @@ export interface Delivery {
   id: string;
   endpoint_id: string;
   event: string;
-  payload: Record<string, unknown>;
+  payload: any;
   status: string;
   attempts: number;
   max_attempts: number;
@@ -23,7 +23,7 @@ export function computeSignature(secret: string, body: string): string {
 
 /** Compute exponential backoff in seconds: attempt 1→30s, 2→60s, 3→120s, capped at 3600s */
 export function backoffSeconds(attempt: number): number {
-  return Math.min(30 * Math.pow(2, attempt - 1), 3600);
+  return Math.min(30 * 2 ** (attempt - 1), 3600);
 }
 
 /** Check if an endpoint's events list matches a given event.
@@ -41,13 +41,13 @@ export async function triggerWebhook(
   sql: Sql,
   workspaceId: string,
   event: string,
-  payload: Record<string, unknown>
+  payload: any,
 ): Promise<void> {
   const endpoints = await sql<{ id: string; events: string[] }[]>`
     SELECT id, events FROM webhooks.endpoints
     WHERE workspace_id = ${workspaceId} AND active = true`;
 
-  const matching = endpoints.filter(ep => matchesEvent(ep.events, event));
+  const matching = endpoints.filter((ep) => matchesEvent(ep.events, event));
   if (matching.length === 0) return;
 
   for (const ep of matching) {
@@ -63,12 +63,17 @@ export async function triggerWebhook(
  * On failure: increment attempts, schedule exponential backoff retry,
  *   increment endpoint.failure_count, disable endpoint if >= 10 failures.
  */
-export async function processDelivery(sql: Sql, deliveryId: string): Promise<void> {
+export async function processDelivery(
+  sql: Sql,
+  deliveryId: string,
+): Promise<void> {
   const [delivery] = await sql<Delivery[]>`
     SELECT * FROM webhooks.deliveries WHERE id = ${deliveryId}`;
   if (!delivery) throw new Error(`Delivery not found: ${deliveryId}`);
 
-  const [endpoint] = await sql<{ id: string; url: string; secret: string | null; failure_count: number }[]>`
+  const [endpoint] = await sql<
+    { id: string; url: string; secret: string | null; failure_count: number }[]
+  >`
     SELECT id, url, secret, failure_count FROM webhooks.endpoints WHERE id = ${delivery.endpoint_id}`;
   if (!endpoint) throw new Error(`Endpoint not found: ${delivery.endpoint_id}`);
 
@@ -88,7 +93,12 @@ export async function processDelivery(sql: Sql, deliveryId: string): Promise<voi
   let success = false;
 
   try {
-    const res = await fetch(endpoint.url, { method: "POST", headers, body, signal: AbortSignal.timeout(30_000) });
+    const res = await fetch(endpoint.url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(30_000),
+    });
     statusCode = res.status;
     responseBody = await res.text().catch(() => null);
     success = res.status >= 200 && res.status < 300;
@@ -139,7 +149,10 @@ export async function processDelivery(sql: Sql, deliveryId: string): Promise<voi
  * Find deliveries with status='pending' AND next_attempt_at <= NOW(),
  * claim each with SKIP LOCKED, process it, return count processed.
  */
-export async function processPendingDeliveries(sql: Sql, limit = 50): Promise<number> {
+export async function processPendingDeliveries(
+  sql: Sql,
+  limit = 50,
+): Promise<number> {
   const pending = await sql<{ id: string }[]>`
     SELECT id FROM webhooks.deliveries
     WHERE status = 'pending' AND next_attempt_at <= NOW()
@@ -160,19 +173,25 @@ export async function processPendingDeliveries(sql: Sql, limit = 50): Promise<nu
 /**
  * Reset a delivery to pending so it will be retried.
  */
-export async function replayDelivery(sql: Sql, deliveryId: string): Promise<void> {
+export async function replayDelivery(
+  sql: Sql,
+  deliveryId: string,
+): Promise<void> {
   await sql`
     UPDATE webhooks.deliveries
     SET status = 'pending', attempts = 0, next_attempt_at = NOW()
     WHERE id = ${deliveryId}`;
 }
 
-export async function listDeliveries(sql: Sql, opts: {
-  workspaceId?: string;
-  endpointId?: string;
-  status?: string;
-  limit?: number;
-} = {}): Promise<Delivery[]> {
+export async function listDeliveries(
+  sql: Sql,
+  opts: {
+    workspaceId?: string;
+    endpointId?: string;
+    status?: string;
+    limit?: number;
+  } = {},
+): Promise<Delivery[]> {
   return sql<Delivery[]>`
     SELECT d.* FROM webhooks.deliveries d
     JOIN webhooks.endpoints e ON e.id = d.endpoint_id

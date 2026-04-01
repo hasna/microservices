@@ -16,7 +16,7 @@ export interface Trace {
   total_cost_usd: number;
   total_duration_ms: number | null;
   span_count: number;
-  metadata: Record<string, unknown>;
+  metadata: any;
   started_at: Date;
   ended_at: Date | null;
 }
@@ -36,12 +36,19 @@ export interface Span {
   tokens_out: number | null;
   cost_usd: number | null;
   duration_ms: number | null;
-  metadata: Record<string, unknown>;
+  metadata: any;
   started_at: Date;
   ended_at: Date | null;
 }
 
-export const VALID_SPAN_TYPES = ["llm", "tool", "retrieval", "guardrail", "embedding", "custom"] as const;
+export const VALID_SPAN_TYPES = [
+  "llm",
+  "tool",
+  "retrieval",
+  "guardrail",
+  "embedding",
+  "custom",
+] as const;
 export type SpanType = (typeof VALID_SPAN_TYPES)[number];
 
 export const VALID_STATUSES = ["running", "completed", "error"] as const;
@@ -51,7 +58,7 @@ export interface StartTraceInput {
   workspaceId: string;
   name: string;
   input?: unknown;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
 }
 
 export interface EndTraceInput {
@@ -67,7 +74,7 @@ export interface StartSpanInput {
   type: SpanType;
   input?: unknown;
   model?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
 }
 
 export interface EndSpanInput {
@@ -79,7 +86,10 @@ export interface EndSpanInput {
   cost_usd?: number;
 }
 
-export async function startTrace(sql: Sql, input: StartTraceInput): Promise<Trace> {
+export async function startTrace(
+  sql: Sql,
+  input: StartTraceInput,
+): Promise<Trace> {
   const [trace] = await sql<Trace[]>`
     INSERT INTO traces.traces (workspace_id, name, input, metadata)
     VALUES (${input.workspaceId}, ${input.name}, ${JSON.stringify(input.input ?? null)}, ${JSON.stringify(input.metadata ?? {})})
@@ -88,9 +98,15 @@ export async function startTrace(sql: Sql, input: StartTraceInput): Promise<Trac
   return trace;
 }
 
-export async function endTrace(sql: Sql, traceId: string, input: EndTraceInput): Promise<Trace> {
+export async function endTrace(
+  sql: Sql,
+  traceId: string,
+  input: EndTraceInput,
+): Promise<Trace> {
   // Compute totals from child spans
-  const [totals] = await sql<[{ total_tokens: string; total_cost: string; count: string }]>`
+  const [totals] = await sql<
+    [{ total_tokens: string; total_cost: string; count: string }]
+  >`
     SELECT
       COALESCE(SUM(COALESCE(tokens_in, 0) + COALESCE(tokens_out, 0)), 0) as total_tokens,
       COALESCE(SUM(COALESCE(cost_usd, 0)), 0) as total_cost,
@@ -100,21 +116,24 @@ export async function endTrace(sql: Sql, traceId: string, input: EndTraceInput):
   `;
 
   // Get the trace to compute duration
-  const [existing] = await sql<Trace[]>`SELECT * FROM traces.traces WHERE id = ${traceId}`;
+  const [existing] = await sql<
+    Trace[]
+  >`SELECT * FROM traces.traces WHERE id = ${traceId}`;
   if (!existing) throw new Error(`Trace ${traceId} not found`);
 
   const now = new Date();
-  const totalDurationMs = now.getTime() - new Date(existing.started_at).getTime();
+  const totalDurationMs =
+    now.getTime() - new Date(existing.started_at).getTime();
 
   const [trace] = await sql<Trace[]>`
     UPDATE traces.traces SET
       status = ${input.status},
       output = ${JSON.stringify(input.output ?? null)},
       error = ${input.error ?? null},
-      total_tokens = ${parseInt(totals.total_tokens)},
+      total_tokens = ${parseInt(totals.total_tokens, 10)},
       total_cost_usd = ${parseFloat(totals.total_cost)},
       total_duration_ms = ${totalDurationMs},
-      span_count = ${parseInt(totals.count)},
+      span_count = ${parseInt(totals.count, 10)},
       ended_at = ${now}
     WHERE id = ${traceId}
     RETURNING *
@@ -122,7 +141,10 @@ export async function endTrace(sql: Sql, traceId: string, input: EndTraceInput):
   return trace;
 }
 
-export async function startSpan(sql: Sql, input: StartSpanInput): Promise<Span> {
+export async function startSpan(
+  sql: Sql,
+  input: StartSpanInput,
+): Promise<Span> {
   const [span] = await sql<Span[]>`
     INSERT INTO traces.spans (trace_id, parent_span_id, name, type, input, model, metadata)
     VALUES (
@@ -139,9 +161,15 @@ export async function startSpan(sql: Sql, input: StartSpanInput): Promise<Span> 
   return span;
 }
 
-export async function endSpan(sql: Sql, spanId: string, input: EndSpanInput): Promise<Span> {
+export async function endSpan(
+  sql: Sql,
+  spanId: string,
+  input: EndSpanInput,
+): Promise<Span> {
   // Get the span to compute duration
-  const [existing] = await sql<Span[]>`SELECT * FROM traces.spans WHERE id = ${spanId}`;
+  const [existing] = await sql<
+    Span[]
+  >`SELECT * FROM traces.spans WHERE id = ${spanId}`;
   if (!existing) throw new Error(`Span ${spanId} not found`);
 
   const now = new Date();

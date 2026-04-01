@@ -2,9 +2,9 @@
  * Job worker — polls queue and executes handlers.
  */
 import type { Sql } from "postgres";
-import { dequeue, completeJob, failJob } from "./queue.js";
+import { completeJob, dequeue, failJob } from "./queue.js";
 
-export type JobHandler = (payload: Record<string, unknown>) => Promise<unknown>;
+export type JobHandler = (payload: any) => Promise<unknown>;
 
 export interface WorkerOptions {
   queue?: string;
@@ -20,7 +20,7 @@ export class Worker {
 
   constructor(
     private sql: Sql,
-    private opts: WorkerOptions = {}
+    private opts: WorkerOptions = {},
   ) {}
 
   register(type: string, handler: JobHandler): this {
@@ -35,7 +35,9 @@ export class Worker {
     const workerId = this.opts.workerId ?? crypto.randomUUID();
     const queue = this.opts.queue ?? "default";
 
-    console.log(`Worker ${workerId} started — queue: ${queue}, concurrency: ${concurrency}`);
+    console.log(
+      `Worker ${workerId} started — queue: ${queue}, concurrency: ${concurrency}`,
+    );
 
     while (this.running) {
       if (this.active < concurrency) {
@@ -52,21 +54,36 @@ export class Worker {
     }
   }
 
-  stop(): void { this.running = false; }
+  stop(): void {
+    this.running = false;
+  }
 
-  private async processJob(job: { id: string; type: string; payload: Record<string, unknown> }, workerId: string): Promise<void> {
+  private async processJob(
+    job: { id: string; type: string; payload: any },
+    _workerId: string,
+  ): Promise<void> {
     const handler = this.handlers.get(job.type);
     if (!handler) {
-      await failJob(this.sql, job.id, `No handler registered for type '${job.type}'`);
+      await failJob(
+        this.sql,
+        job.id,
+        `No handler registered for type '${job.type}'`,
+      );
       return;
     }
     try {
       const result = await handler(job.payload);
       await completeJob(this.sql, job.id, result);
     } catch (err) {
-      await failJob(this.sql, job.id, err instanceof Error ? err.message : String(err));
+      await failJob(
+        this.sql,
+        job.id,
+        err instanceof Error ? err.message : String(err),
+      );
     }
   }
 }
 
-function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}

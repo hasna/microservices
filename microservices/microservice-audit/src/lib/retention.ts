@@ -14,7 +14,7 @@ export interface RetentionPolicy {
 
 export async function getRetentionPolicy(
   sql: Sql,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<RetentionPolicy | null> {
   const [policy] = await sql<RetentionPolicy[]>`
     SELECT * FROM audit.retention_policies WHERE workspace_id = ${workspaceId}
@@ -25,7 +25,7 @@ export async function getRetentionPolicy(
 export async function setRetentionPolicy(
   sql: Sql,
   workspaceId: string,
-  retainDays: number
+  retainDays: number,
 ): Promise<RetentionPolicy> {
   const [policy] = await sql<RetentionPolicy[]>`
     INSERT INTO audit.retention_policies (workspace_id, retain_days)
@@ -41,7 +41,10 @@ export async function setRetentionPolicy(
  * Delete events older than retain_days for the given workspace.
  * Returns the number of events deleted.
  */
-export async function applyRetention(sql: Sql, workspaceId: string): Promise<number> {
+export async function applyRetention(
+  sql: Sql,
+  workspaceId: string,
+): Promise<number> {
   const policy = await getRetentionPolicy(sql, workspaceId);
   if (!policy) return 0;
 

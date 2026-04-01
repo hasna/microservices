@@ -2,25 +2,24 @@
  * Sessions HTTP routes.
  */
 
-import { z } from "zod";
 import type { Sql } from "postgres";
+import { z } from "zod";
+import { getContextWindow } from "../lib/context.js";
 import {
   createConversation,
+  deleteConversation,
+  forkConversation,
   getConversation,
   listConversations,
   updateConversation,
-  deleteConversation,
-  archiveConversation,
-  forkConversation,
 } from "../lib/conversations.js";
+import { exportConversation } from "../lib/export.js";
 import {
   addMessage,
   getMessages,
   pinMessage,
   searchMessages,
 } from "../lib/messages.js";
-import { getContextWindow } from "../lib/context.js";
-import { exportConversation } from "../lib/export.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -81,9 +80,22 @@ export function makeRouter(sql: Sql) {
         try {
           const start = Date.now();
           await sql`SELECT 1`;
-          return json({ ok: true, service: "microservice-sessions", db: true, latency_ms: Date.now() - start });
+          return json({
+            ok: true,
+            service: "microservice-sessions",
+            db: true,
+            latency_ms: Date.now() - start,
+          });
         } catch (e) {
-          return json({ ok: false, service: "microservice-sessions", db: false, error: e instanceof Error ? e.message : "db error" }, 503);
+          return json(
+            {
+              ok: false,
+              service: "microservice-sessions",
+              db: false,
+              error: e instanceof Error ? e.message : "db error",
+            },
+            503,
+          );
         }
       }
 
@@ -99,11 +111,19 @@ export function makeRouter(sql: Sql) {
       if (method === "GET" && path === "/sessions/conversations") {
         const workspaceId = url.searchParams.get("workspace_id");
         const userId = url.searchParams.get("user_id");
-        if (!workspaceId || !userId) return apiError("VALIDATION_ERROR", "workspace_id and user_id are required");
+        if (!workspaceId || !userId)
+          return apiError(
+            "VALIDATION_ERROR",
+            "workspace_id and user_id are required",
+          );
         const archived = url.searchParams.get("archived");
         const search = url.searchParams.get("search") ?? undefined;
-        const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : undefined;
-        const offset = url.searchParams.get("offset") ? parseInt(url.searchParams.get("offset")!, 10) : undefined;
+        const limit = url.searchParams.get("limit")
+          ? parseInt(url.searchParams.get("limit")!, 10)
+          : undefined;
+        const offset = url.searchParams.get("offset")
+          ? parseInt(url.searchParams.get("offset")!, 10)
+          : undefined;
         const convs = await listConversations(sql, workspaceId, userId, {
           archived: archived !== null ? archived === "true" : undefined,
           search,
@@ -114,40 +134,74 @@ export function makeRouter(sql: Sql) {
       }
 
       // GET /sessions/conversations/:id
-      if (method === "GET" && path.match(/^\/sessions\/conversations\/[^/]+$/) && !path.includes("/messages") && !path.includes("/context") && !path.includes("/export") && !path.includes("/fork")) {
+      if (
+        method === "GET" &&
+        path.match(/^\/sessions\/conversations\/[^/]+$/) &&
+        !path.includes("/messages") &&
+        !path.includes("/context") &&
+        !path.includes("/export") &&
+        !path.includes("/fork")
+      ) {
         const id = path.split("/").pop()!;
         const conv = await getConversation(sql, id);
-        return conv ? json(conv) : apiError("NOT_FOUND", "Conversation not found", undefined, 404);
+        return conv
+          ? json(conv)
+          : apiError("NOT_FOUND", "Conversation not found", undefined, 404);
       }
 
       // PATCH /sessions/conversations/:id
-      if (method === "PATCH" && path.match(/^\/sessions\/conversations\/[^/]+$/)) {
+      if (
+        method === "PATCH" &&
+        path.match(/^\/sessions\/conversations\/[^/]+$/)
+      ) {
         const id = path.split("/").pop()!;
         const parsed = await parseBody(req, UpdateConversationSchema);
         if ("error" in parsed) return parsed.error;
         const conv = await updateConversation(sql, id, parsed.data);
-        return conv ? json(conv) : apiError("NOT_FOUND", "Conversation not found", undefined, 404);
+        return conv
+          ? json(conv)
+          : apiError("NOT_FOUND", "Conversation not found", undefined, 404);
       }
 
       // DELETE /sessions/conversations/:id
-      if (method === "DELETE" && path.match(/^\/sessions\/conversations\/[^/]+$/)) {
+      if (
+        method === "DELETE" &&
+        path.match(/^\/sessions\/conversations\/[^/]+$/)
+      ) {
         const id = path.split("/").pop()!;
         const ok = await deleteConversation(sql, id);
         return json({ ok });
       }
 
       // POST /sessions/conversations/:id/fork?from_message_id=X
-      if (method === "POST" && path.match(/^\/sessions\/conversations\/[^/]+\/fork$/)) {
+      if (
+        method === "POST" &&
+        path.match(/^\/sessions\/conversations\/[^/]+\/fork$/)
+      ) {
         const parts = path.split("/");
         const id = parts[3];
         const fromMessageId = url.searchParams.get("from_message_id");
-        if (!fromMessageId) return apiError("VALIDATION_ERROR", "from_message_id query parameter is required");
+        if (!fromMessageId)
+          return apiError(
+            "VALIDATION_ERROR",
+            "from_message_id query parameter is required",
+          );
         const forked = await forkConversation(sql, id, fromMessageId);
-        return forked ? json(forked, 201) : apiError("NOT_FOUND", "Conversation or message not found", undefined, 404);
+        return forked
+          ? json(forked, 201)
+          : apiError(
+              "NOT_FOUND",
+              "Conversation or message not found",
+              undefined,
+              404,
+            );
       }
 
       // POST /sessions/conversations/:id/messages
-      if (method === "POST" && path.match(/^\/sessions\/conversations\/[^/]+\/messages$/)) {
+      if (
+        method === "POST" &&
+        path.match(/^\/sessions\/conversations\/[^/]+\/messages$/)
+      ) {
         const parts = path.split("/");
         const convId = parts[3];
         const parsed = await parseBody(req, AddMessageSchema);
@@ -157,36 +211,61 @@ export function makeRouter(sql: Sql) {
       }
 
       // GET /sessions/conversations/:id/messages?limit&before&role
-      if (method === "GET" && path.match(/^\/sessions\/conversations\/[^/]+\/messages$/)) {
+      if (
+        method === "GET" &&
+        path.match(/^\/sessions\/conversations\/[^/]+\/messages$/)
+      ) {
         const parts = path.split("/");
         const convId = parts[3];
-        const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : undefined;
+        const limit = url.searchParams.get("limit")
+          ? parseInt(url.searchParams.get("limit")!, 10)
+          : undefined;
         const before = url.searchParams.get("before") ?? undefined;
         const after = url.searchParams.get("after") ?? undefined;
         const role = url.searchParams.get("role") ?? undefined;
-        const msgs = await getMessages(sql, convId, { limit, before, after, role });
+        const msgs = await getMessages(sql, convId, {
+          limit,
+          before,
+          after,
+          role,
+        });
         return json({ data: msgs, count: msgs.length });
       }
 
       // GET /sessions/conversations/:id/context?max_tokens=4096
-      if (method === "GET" && path.match(/^\/sessions\/conversations\/[^/]+\/context$/)) {
+      if (
+        method === "GET" &&
+        path.match(/^\/sessions\/conversations\/[^/]+\/context$/)
+      ) {
         const parts = path.split("/");
         const convId = parts[3];
-        const maxTokens = parseInt(url.searchParams.get("max_tokens") ?? "4096", 10);
+        const maxTokens = parseInt(
+          url.searchParams.get("max_tokens") ?? "4096",
+          10,
+        );
         const ctx = await getContextWindow(sql, convId, maxTokens);
         return json(ctx);
       }
 
       // GET /sessions/conversations/:id/export?format=markdown
-      if (method === "GET" && path.match(/^\/sessions\/conversations\/[^/]+\/export$/)) {
+      if (
+        method === "GET" &&
+        path.match(/^\/sessions\/conversations\/[^/]+\/export$/)
+      ) {
         const parts = path.split("/");
         const convId = parts[3];
-        const format = (url.searchParams.get("format") ?? "markdown") as "markdown" | "json";
+        const format = (url.searchParams.get("format") ?? "markdown") as
+          | "markdown"
+          | "json";
         if (format !== "markdown" && format !== "json") {
-          return apiError("VALIDATION_ERROR", "format must be 'markdown' or 'json'");
+          return apiError(
+            "VALIDATION_ERROR",
+            "format must be 'markdown' or 'json'",
+          );
         }
         const output = await exportConversation(sql, convId, format);
-        const contentType = format === "json" ? "application/json" : "text/markdown";
+        const contentType =
+          format === "json" ? "application/json" : "text/markdown";
         return new Response(output, {
           status: 200,
           headers: { "Content-Type": contentType, ...corsHeaders },
@@ -197,19 +276,29 @@ export function makeRouter(sql: Sql) {
       if (method === "POST" && path === "/sessions/messages/search") {
         const parsed = await parseBody(req, SearchMessagesSchema);
         if ("error" in parsed) return parsed.error;
-        const msgs = await searchMessages(sql, parsed.data.workspace_id, parsed.data.query, {
-          conversationId: parsed.data.conversation_id,
-          limit: parsed.data.limit,
-        });
+        const msgs = await searchMessages(
+          sql,
+          parsed.data.workspace_id,
+          parsed.data.query,
+          {
+            conversationId: parsed.data.conversation_id,
+            limit: parsed.data.limit,
+          },
+        );
         return json({ data: msgs, count: msgs.length });
       }
 
       // PATCH /sessions/messages/:id/pin
-      if (method === "PATCH" && path.match(/^\/sessions\/messages\/[^/]+\/pin$/)) {
+      if (
+        method === "PATCH" &&
+        path.match(/^\/sessions\/messages\/[^/]+\/pin$/)
+      ) {
         const parts = path.split("/");
         const id = parts[3];
         const msg = await pinMessage(sql, id);
-        return msg ? json(msg) : apiError("NOT_FOUND", "Message not found", undefined, 404);
+        return msg
+          ? json(msg)
+          : apiError("NOT_FOUND", "Message not found", undefined, 404);
       }
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);
@@ -227,20 +316,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function apiError(code: string, message: string, fields?: Record<string, string>, status = 400): Response {
-  return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+function apiError(
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+  status = 400,
+): Response {
+  return json(
+    { error: { code, message, ...(fields ? { fields } : {}) } },
+    status,
+  );
 }
 
-async function parseBody<T>(req: Request, schema: z.ZodSchema<T>): Promise<{ data: T } | { error: Response }> {
+async function parseBody<T>(
+  req: Request,
+  schema: z.ZodSchema<T>,
+): Promise<{ data: T } | { error: Response }> {
   try {
     const raw = await req.json();
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const fields = Object.fromEntries(result.error.errors.map(e => [e.path.join(".") || "body", e.message]));
-      return { error: apiError("VALIDATION_ERROR", "Invalid request body", fields) };
+      const fields = Object.fromEntries(
+        result.error.errors.map((e) => [e.path.join(".") || "body", e.message]),
+      );
+      return {
+        error: apiError("VALIDATION_ERROR", "Invalid request body", fields),
+      };
     }
     return { data: result.data };
   } catch {
-    return { error: apiError("INVALID_JSON", "Request body must be valid JSON") };
+    return {
+      error: apiError("INVALID_JSON", "Request body must be valid JSON"),
+    };
   }
 }

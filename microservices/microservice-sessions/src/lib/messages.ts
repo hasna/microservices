@@ -14,7 +14,7 @@ export interface Message {
   tokens: number;
   latency_ms: number | null;
   model: string | null;
-  metadata: Record<string, unknown>;
+  metadata: any;
   is_pinned: boolean;
   created_at: string;
 }
@@ -30,8 +30,8 @@ export async function addMessage(
     tokens?: number;
     latency_ms?: number;
     model?: string;
-    metadata?: Record<string, unknown>;
-  }
+    metadata?: any;
+  },
 ): Promise<Message> {
   const tokens = data.tokens ?? 0;
 
@@ -66,7 +66,7 @@ export async function addMessage(
 export async function getMessages(
   sql: Sql,
   conversationId: string,
-  opts: { limit?: number; before?: string; after?: string; role?: string } = {}
+  opts: { limit?: number; before?: string; after?: string; role?: string } = {},
 ): Promise<Message[]> {
   const limit = opts.limit ?? 100;
 
@@ -128,7 +128,10 @@ export async function getMessages(
   `;
 }
 
-export async function getMessage(sql: Sql, id: string): Promise<Message | null> {
+export async function getMessage(
+  sql: Sql,
+  id: string,
+): Promise<Message | null> {
   const [msg] = await sql<Message[]>`
     SELECT * FROM sessions.messages WHERE id = ${id}
   `;
@@ -157,7 +160,10 @@ export async function deleteMessage(sql: Sql, id: string): Promise<boolean> {
   return false;
 }
 
-export async function pinMessage(sql: Sql, id: string): Promise<Message | null> {
+export async function pinMessage(
+  sql: Sql,
+  id: string,
+): Promise<Message | null> {
   const [msg] = await sql<Message[]>`
     UPDATE sessions.messages SET is_pinned = NOT is_pinned WHERE id = ${id} RETURNING *
   `;
@@ -168,7 +174,7 @@ export async function searchMessages(
   sql: Sql,
   workspaceId: string,
   query: string,
-  opts: { conversationId?: string; limit?: number } = {}
+  opts: { conversationId?: string; limit?: number } = {},
 ): Promise<Message[]> {
   const limit = opts.limit ?? 20;
 

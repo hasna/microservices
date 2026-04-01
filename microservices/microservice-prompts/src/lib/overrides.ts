@@ -14,7 +14,7 @@ export async function setOverride(
   promptId: string,
   scopeType: "workspace" | "user" | "agent",
   scopeId: string,
-  content: string
+  content: string,
 ): Promise<Override> {
   const [row] = await sql`
     INSERT INTO prompts.overrides (prompt_id, scope_type, scope_id, content)
@@ -29,7 +29,10 @@ export async function removeOverride(sql: Sql, id: string): Promise<boolean> {
   return result.count > 0;
 }
 
-export async function listOverrides(sql: Sql, promptId: string): Promise<Override[]> {
+export async function listOverrides(
+  sql: Sql,
+  promptId: string,
+): Promise<Override[]> {
   return (await sql`
     SELECT * FROM prompts.overrides WHERE prompt_id = ${promptId} ORDER BY scope_type, created_at DESC`) as unknown as Override[];
 }
@@ -38,7 +41,7 @@ export async function getOverrideForScope(
   sql: Sql,
   promptId: string,
   scopeType: "workspace" | "user" | "agent",
-  scopeId: string
+  scopeId: string,
 ): Promise<Override | null> {
   const [row] = await sql`
     SELECT * FROM prompts.overrides WHERE prompt_id = ${promptId} AND scope_type = ${scopeType} AND scope_id = ${scopeId}`;

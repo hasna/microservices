@@ -16,7 +16,7 @@ const ROLE_LABELS: Record<string, string> = {
 export async function exportConversation(
   sql: Sql,
   conversationId: string,
-  format: "markdown" | "json"
+  format: "markdown" | "json",
 ): Promise<string> {
   const conv = await getConversation(sql, conversationId);
   if (!conv) throw new Error(`Conversation ${conversationId} not found`);

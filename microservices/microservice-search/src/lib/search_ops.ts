@@ -9,7 +9,7 @@ export interface SearchResult {
   doc_id: string;
   collection: string;
   content: string;
-  metadata: Record<string, unknown>;
+  metadata: any;
   score: number;
   highlight?: string;
 }
@@ -22,7 +22,10 @@ export interface SearchQuery {
   limit?: number;
 }
 
-export async function search(sql: Sql, query: SearchQuery): Promise<SearchResult[]> {
+export async function search(
+  sql: Sql,
+  query: SearchQuery,
+): Promise<SearchResult[]> {
   const { text, collection, workspaceId, mode = "text", limit = 10 } = query;
 
   if (!text || text.trim() === "") return [];
@@ -48,7 +51,14 @@ export async function search(sql: Sql, query: SearchQuery): Promise<SearchResult
       // Fall back to text search when no embedding available
       return textSearch(sql, text, collection, workspaceId, safeLimit);
     }
-    return hybridSearch(sql, text, embedding, collection, workspaceId, safeLimit);
+    return hybridSearch(
+      sql,
+      text,
+      embedding,
+      collection,
+      workspaceId,
+      safeLimit,
+    );
   }
 
   return textSearch(sql, text, collection, workspaceId, safeLimit);
@@ -59,13 +69,13 @@ async function textSearch(
   text: string,
   collection: string | undefined,
   workspaceId: string | undefined,
-  limit: number
+  limit: number,
 ): Promise<SearchResult[]> {
   type Row = {
     doc_id: string;
     collection: string;
     content: string;
-    metadata: Record<string, unknown>;
+    metadata: any;
     score: number;
     highlight: string;
   };
@@ -150,7 +160,7 @@ async function semanticSearch(
   embedding: number[],
   collection: string | undefined,
   workspaceId: string | undefined,
-  limit: number
+  limit: number,
 ): Promise<SearchResult[]> {
   const embStr = JSON.stringify(embedding);
 
@@ -158,7 +168,7 @@ async function semanticSearch(
     doc_id: string;
     collection: string;
     content: string;
-    metadata: Record<string, unknown>;
+    metadata: any;
     score: number;
   };
 
@@ -231,7 +241,7 @@ async function hybridSearch(
   embedding: number[],
   collection: string | undefined,
   workspaceId: string | undefined,
-  limit: number
+  limit: number,
 ): Promise<SearchResult[]> {
   // Run both in parallel
   const [textResults, semanticResults] = await Promise.all([
@@ -240,7 +250,10 @@ async function hybridSearch(
   ]);
 
   // Merge results by doc_id, average the scores
-  const scoreMap = new Map<string, SearchResult & { textScore: number; semScore: number }>();
+  const scoreMap = new Map<
+    string,
+    SearchResult & { textScore: number; semScore: number }
+  >();
 
   for (const r of textResults) {
     scoreMap.set(r.doc_id, { ...r, textScore: r.score, semScore: 0 });
@@ -274,7 +287,7 @@ async function hybridSearch(
 export async function countDocuments(
   sql: Sql,
   collection: string,
-  workspaceId?: string
+  workspaceId?: string,
 ): Promise<number> {
   if (workspaceId) {
     const [{ count }] = await sql<[{ count: string }]>`

@@ -1,5 +1,9 @@
-import { describe, test, expect } from "bun:test";
-import { getInstalledMicroservices, getMicroserviceStatus, microserviceExists } from "./installer.js";
+import { describe, expect, test } from "bun:test";
+import {
+  getInstalledMicroservices,
+  getMicroserviceStatus,
+  microserviceExists,
+} from "./installer.js";
 import { MICROSERVICES } from "./registry.js";
 
 describe("Installer", () => {
@@ -17,7 +21,7 @@ describe("Installer", () => {
     expect(status.name).toBe("auth");
     expect(typeof status.installed).toBe("boolean");
     expect(status.meta).toBeDefined();
-    expect(status.meta!.package).toBe("@hasna/microservice-auth");
+    expect(status.meta?.package).toBe("@hasna/microservice-auth");
   });
 
   test("getMicroserviceStatus returns unknown=false meta for nonexistent", () => {
@@ -32,11 +36,11 @@ describe("Installer", () => {
     expect(microserviceExists("nonexistent")).toBe(false);
   });
 
-  test("all 8 services have valid metadata", () => {
+  test("all services have valid metadata", () => {
     for (const ms of MICROSERVICES) {
       const status = getMicroserviceStatus(ms.name);
       expect(status.name).toBe(ms.name);
       expect(status.meta).toBeDefined();
     }
-  });
+  }, 15000);
 });

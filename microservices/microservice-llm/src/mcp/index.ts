@@ -3,105 +3,73 @@
  * MCP server for microservice-llm.
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
 import { chat } from "../lib/gateway.js";
-import { getWorkspaceUsage } from "../lib/usage.js";
 import { getAvailableModels } from "../lib/providers.js";
+import { getWorkspaceUsage } from "../lib/usage.js";
 
-const server = new Server(
-  { name: "microservice-llm", version: "0.0.1" },
-  { capabilities: { tools: {} } }
-);
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: "llm_chat",
-      description: "Send messages to an LLM provider and get a response",
-      inputSchema: {
-        type: "object",
-        properties: {
-          workspace_id: { type: "string", description: "Workspace UUID for usage tracking" },
-          messages: {
-            type: "array",
-            description: "Conversation messages",
-            items: {
-              type: "object",
-              properties: {
-                role: { type: "string", enum: ["system", "user", "assistant"] },
-                content: { type: "string" },
-              },
-              required: ["role", "content"],
-            },
-          },
-          model: { type: "string", description: "Model to use (optional, defaults to first available)" },
-        },
-        required: ["workspace_id", "messages"],
-      },
-    },
-    {
-      name: "llm_list_models",
-      description: "List available LLM models based on configured API keys",
-      inputSchema: {
-        type: "object",
-        properties: {},
-        required: [],
-      },
-    },
-    {
-      name: "llm_get_usage",
-      description: "Get LLM usage statistics for a workspace",
-      inputSchema: {
-        type: "object",
-        properties: {
-          workspace_id: { type: "string", description: "Workspace UUID" },
-          since: { type: "string", description: "ISO date string to filter from (optional)" },
-        },
-        required: ["workspace_id"],
-      },
-    },
-  ],
-}));
-
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const sql = getDb();
-  const { name, arguments: args } = req.params;
-  const a = args as Record<string, unknown>;
-
-  const text = (data: unknown) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-  });
-
-  if (name === "llm_chat") {
-    const messages = a.messages as Array<{ role: "system" | "user" | "assistant"; content: string }>;
-    const result = await chat(sql, {
-      workspaceId: String(a.workspace_id),
-      messages,
-      model: a.model ? String(a.model) : undefined,
-    });
-    return text(result);
-  }
-
-  if (name === "llm_list_models") {
-    const models = getAvailableModels();
-    return text({ models, count: models.length });
-  }
-
-  if (name === "llm_get_usage") {
-    const since = a.since ? new Date(String(a.since)) : undefined;
-    const usage = await getWorkspaceUsage(sql, String(a.workspace_id), since);
-    return text(usage);
-  }
-
-  throw new Error(`Unknown tool: ${name}`);
+const server = new McpServer({
+  name: "microservice-llm",
+  version: "0.0.1",
 });
 
+const sql = getDb();
+
+// Helper to wrap response in standard MCP format
+const text = (data: unknown) => ({
+  content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+});
+
+server.tool(
+  "llm_chat",
+  "Send messages to an LLM provider and get a response",
+  {
+    workspace_id: z.string().describe("Workspace UUID for usage tracking"),
+    messages: z.array(z.object({
+      role: z.enum(["system", "user", "assistant"]),
+      content: z.string(),
+    })).describe("Conversation messages"),
+    model: z.string().optional().describe("Model to use (optional, defaults to first available)"),
+  },
+  async ({ workspace_id, messages, model }) => {
+    const result = await chat(sql, {
+      workspaceId: workspace_id,
+      messages: messages as any,
+      model,
+    });
+    return text(result);
+  },
+);
+
+server.tool(
+  "llm_list_models",
+  "List available LLM models based on configured API keys",
+  {},
+  async () => {
+    const models = getAvailableModels();
+    return text({ models, count: models.length });
+  },
+);
+
+server.tool(
+  "llm_get_usage",
+  "Get LLM usage statistics for a workspace",
+  {
+    workspace_id: z.string().describe("Workspace UUID"),
+    since: z.string().optional().describe("ISO date string to filter from (optional)"),
+  },
+  async ({ workspace_id, since }) => {
+    const sinceDate = since ? new Date(since) : undefined;
+    const usage = await getWorkspaceUsage(sql, workspace_id, sinceDate);
+    return text(usage);
+  },
+);
+
 async function main(): Promise<void> {
-  const sql = getDb();
   await migrate(sql);
   const transport = new StdioServerTransport();
   await server.connect(transport);

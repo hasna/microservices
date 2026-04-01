@@ -19,5 +19,7 @@ export async function startServer(port: number = 3015): Promise<void> {
   const router = makeRouter(sql);
 
   const server = Bun.serve({ port, fetch: router });
-  console.log(`microservice-waitlist listening on http://localhost:${server.port}`);
+  console.log(
+    `microservice-waitlist listening on http://localhost:${server.port}`,
+  );
 }

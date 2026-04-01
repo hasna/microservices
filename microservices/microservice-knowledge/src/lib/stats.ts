@@ -12,8 +12,13 @@ export interface CollectionStats {
   total_tokens: number;
 }
 
-export async function getCollectionStats(sql: Sql, collectionId: string): Promise<CollectionStats> {
-  const [counts] = await sql<Array<{ document_count: number; chunk_count: number }>>`
+export async function getCollectionStats(
+  sql: Sql,
+  collectionId: string,
+): Promise<CollectionStats> {
+  const [counts] = await sql<
+    Array<{ document_count: number; chunk_count: number }>
+  >`
     SELECT document_count, chunk_count
     FROM knowledge.collections
     WHERE id = ${collectionId}
@@ -34,7 +39,8 @@ export async function getCollectionStats(sql: Sql, collectionId: string): Promis
     collection_id: collectionId,
     document_count: docCount,
     chunk_count: chunkCount,
-    avg_chunks_per_doc: docCount > 0 ? Math.round((chunkCount / docCount) * 100) / 100 : 0,
+    avg_chunks_per_doc:
+      docCount > 0 ? Math.round((chunkCount / docCount) * 100) / 100 : 0,
     total_tokens: Number(tokenRow?.total_tokens ?? 0),
   };
 }

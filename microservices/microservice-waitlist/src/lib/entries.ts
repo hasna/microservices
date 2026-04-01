@@ -15,7 +15,7 @@ export interface Entry {
   priority_score: number;
   status: "waiting" | "invited" | "joined" | "removed";
   position: number | null;
-  metadata: Record<string, unknown>;
+  metadata: any;
   invited_at: Date | null;
   created_at: Date;
 }
@@ -25,7 +25,7 @@ export interface JoinWaitlistInput {
   email: string;
   name?: string;
   referralCode?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -38,12 +38,18 @@ export function isValidEmail(email: string): boolean {
  * Calculate priority score: base=1 + (referral_count*10) + (days_since_epoch * 0.001)
  * Higher score = higher priority. Earlier signup + more referrals = higher score.
  */
-export function calculatePriorityScore(referralCount: number, createdAt: Date): number {
+export function calculatePriorityScore(
+  referralCount: number,
+  createdAt: Date,
+): number {
   const daysSinceEpoch = createdAt.getTime() / (1000 * 60 * 60 * 24);
   return 1 + referralCount * 10 + daysSinceEpoch * 0.001;
 }
 
-export async function joinWaitlist(sql: Sql, data: JoinWaitlistInput): Promise<Entry> {
+export async function joinWaitlist(
+  sql: Sql,
+  data: JoinWaitlistInput,
+): Promise<Entry> {
   if (!isValidEmail(data.email)) {
     throw new Error(`Invalid email address: ${data.email}`);
   }
@@ -87,7 +93,10 @@ export async function joinWaitlist(sql: Sql, data: JoinWaitlistInput): Promise<E
       RETURNING *
     `;
     if (referrer) {
-      const newScore = calculatePriorityScore(referrer.referral_count, referrer.created_at);
+      const newScore = calculatePriorityScore(
+        referrer.referral_count,
+        referrer.created_at,
+      );
       await sql`
         UPDATE waitlist.entries
         SET priority_score = ${newScore}
@@ -106,7 +115,11 @@ export async function getEntry(sql: Sql, id: string): Promise<Entry | null> {
   return entry ?? null;
 }
 
-export async function getEntryByEmail(sql: Sql, campaignId: string, email: string): Promise<Entry | null> {
+export async function getEntryByEmail(
+  sql: Sql,
+  campaignId: string,
+  email: string,
+): Promise<Entry | null> {
   const [entry] = await sql<Entry[]>`
     SELECT * FROM waitlist.entries
     WHERE campaign_id = ${campaignId} AND email = ${email}
@@ -114,7 +127,10 @@ export async function getEntryByEmail(sql: Sql, campaignId: string, email: strin
   return entry ?? null;
 }
 
-export async function getPosition(sql: Sql, entryId: string): Promise<{ position: number; total: number; ahead: number }> {
+export async function getPosition(
+  sql: Sql,
+  entryId: string,
+): Promise<{ position: number; total: number; ahead: number }> {
   const [entry] = await sql<Entry[]>`
     SELECT * FROM waitlist.entries WHERE id = ${entryId}
   `;
@@ -136,13 +152,21 @@ export async function getPosition(sql: Sql, entryId: string): Promise<{ position
   return { position, total, ahead };
 }
 
-export async function updateScore(sql: Sql, entryId: string, score: number): Promise<void> {
+export async function updateScore(
+  sql: Sql,
+  entryId: string,
+  score: number,
+): Promise<void> {
   await sql`
     UPDATE waitlist.entries SET priority_score = ${score} WHERE id = ${entryId}
   `;
 }
 
-export async function inviteBatch(sql: Sql, campaignId: string, count: number): Promise<Entry[]> {
+export async function inviteBatch(
+  sql: Sql,
+  campaignId: string,
+  count: number,
+): Promise<Entry[]> {
   if (!Number.isInteger(count) || count <= 0) {
     throw new Error("count must be a positive integer");
   }
@@ -178,7 +202,7 @@ export async function listEntries(
   sql: Sql,
   campaignId: string,
   status?: string,
-  limit?: number
+  limit?: number,
 ): Promise<Entry[]> {
   const maxLimit = limit ?? 50;
 

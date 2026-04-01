@@ -1,7 +1,34 @@
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-export { registerAgent, deregisterAgent, getAgent, getAgentByName, listAgents, updateAgent, heartbeat, type Agent } from "./registry.js";
-export { markStaleAgents, getAgentHealth, type HealthReport } from "./health.js";
+export {
+  getAgentHealth,
+  type HealthReport,
+  markStaleAgents,
+} from "./health.js";
+export {
+  type Message,
+  markDelivered,
+  markRead,
+  receiveMessages,
+  sendMessage,
+} from "./messaging.js";
+export {
+  type Agent,
+  deregisterAgent,
+  getAgent,
+  getAgentByName,
+  heartbeat,
+  listAgents,
+  registerAgent,
+  updateAgent,
+} from "./registry.js";
 export { findAgentByCapability, routeTask } from "./routing.js";
-export { sendMessage, receiveMessages, markDelivered, markRead, type Message } from "./messaging.js";
-export { createTask, getTask, listTasks, claimTask, completeTask, failTask, type Task } from "./tasks.js";
+export {
+  claimTask,
+  completeTask,
+  createTask,
+  failTask,
+  getTask,
+  listTasks,
+  type Task,
+} from "./tasks.js";

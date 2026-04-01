@@ -7,8 +7,8 @@
  */
 
 import { execFile } from "node:child_process";
-import { getMicroservice } from "./registry.js";
 import { microserviceExists } from "./installer.js";
+import { getMicroservice } from "./registry.js";
 
 export interface RunResult {
   success: boolean;
@@ -23,11 +23,16 @@ export interface RunResult {
 export async function runMicroserviceCommand(
   name: string,
   args: string[],
-  timeout: number = 30000
+  timeout: number = 30000,
 ): Promise<RunResult> {
   const meta = getMicroservice(name);
   if (!meta) {
-    return { success: false, stdout: "", stderr: `Unknown microservice '${name}'`, exitCode: 1 };
+    return {
+      success: false,
+      stdout: "",
+      stderr: `Unknown microservice '${name}'`,
+      exitCode: 1,
+    };
   }
 
   if (!microserviceExists(name)) {
@@ -46,18 +51,26 @@ export async function runMicroserviceCommand(
       { timeout, maxBuffer: 10 * 1024 * 1024 },
       (error, stdout, stderr) => {
         if (error && "killed" in error && error.killed) {
-          resolve({ success: false, stdout: "", stderr: "Command timed out", exitCode: 1 });
+          resolve({
+            success: false,
+            stdout: "",
+            stderr: "Command timed out",
+            exitCode: 1,
+          });
           return;
         }
-        const exitCode =
-          error?.code ? (typeof error.code === "number" ? error.code : 1) : 0;
+        const exitCode = error?.code
+          ? typeof error.code === "number"
+            ? error.code
+            : 1
+          : 0;
         resolve({
           success: exitCode === 0,
           stdout: (stdout || "").trim(),
           stderr: (stderr || "").trim(),
           exitCode,
         });
-      }
+      },
     );
   });
 }

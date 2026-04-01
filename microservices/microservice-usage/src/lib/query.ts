@@ -28,7 +28,7 @@ export interface QuotaCheck {
 }
 
 export const VALID_PERIODS = ["hour", "day", "month", "total"] as const;
-export type Period = typeof VALID_PERIODS[number];
+export type Period = (typeof VALID_PERIODS)[number];
 
 export function isValidPeriod(period: string): period is Period {
   return (VALID_PERIODS as readonly string[]).includes(period);
@@ -42,10 +42,10 @@ export async function getUsageSummary(
   sql: Sql,
   workspaceId: string,
   metric?: string,
-  since?: Date
+  since?: Date,
 ): Promise<UsageSummary[]> {
   const conditions: string[] = [`workspace_id = $1`];
-  const values: unknown[] = [workspaceId];
+  const values: any[] = [workspaceId];
   let i = 2;
 
   if (metric) {
@@ -84,7 +84,7 @@ export async function checkQuota(
   sql: Sql,
   workspaceId: string,
   metric: string,
-  period: string = "month"
+  period: string = "month",
 ): Promise<QuotaCheck> {
   // Get quota config
   const quota = await getQuota(sql, workspaceId, metric);
@@ -157,7 +157,7 @@ export async function checkQuota(
 export async function getQuota(
   sql: Sql,
   workspaceId: string,
-  metric: string
+  metric: string,
 ): Promise<Quota | null> {
   const [quota] = await sql<Quota[]>`
     SELECT workspace_id, metric, limit_value::float AS limit_value, period, hard_limit
@@ -178,7 +178,7 @@ export async function setQuota(
   metric: string,
   limitValue: number,
   period: string = "month",
-  hardLimit: boolean = false
+  hardLimit: boolean = false,
 ): Promise<void> {
   await sql`
     INSERT INTO usage.quotas (workspace_id, metric, limit_value, period, hard_limit)
@@ -195,7 +195,7 @@ export async function setQuota(
  */
 export async function listMetrics(
   sql: Sql,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<string[]> {
   const rows = await sql<{ metric: string }[]>`
     SELECT DISTINCT metric FROM usage.events

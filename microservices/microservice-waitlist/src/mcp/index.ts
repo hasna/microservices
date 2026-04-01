@@ -8,37 +8,47 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
+import { createCampaign } from "../lib/campaigns.js";
 import {
-  joinWaitlist,
   getPosition,
   inviteBatch,
+  joinWaitlist,
   listEntries,
   updateScore,
 } from "../lib/entries.js";
-import { createCampaign, listCampaigns } from "../lib/campaigns.js";
 import { getWaitlistStats } from "../lib/stats.js";
 
 const server = new Server(
   { name: "microservice-waitlist", version: "0.0.1" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {} } },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "waitlist_join",
-      description: "Join a waitlist campaign. Creates an entry and optionally credits a referrer.",
+      description:
+        "Join a waitlist campaign. Creates an entry and optionally credits a referrer.",
       inputSchema: {
         type: "object",
         properties: {
           campaign_id: { type: "string", description: "Campaign UUID" },
           email: { type: "string", description: "Entrant's email address" },
           name: { type: "string", description: "Entrant's name (optional)" },
-          referral_code: { type: "string", description: "Referral code from another entry (optional)" },
-          metadata: { type: "object", description: "Additional metadata (optional)" },
+          referral_code: {
+            type: "string",
+            description: "Referral code from another entry (optional)",
+          },
+          metadata: {
+            type: "object",
+            description: "Additional metadata (optional)",
+          },
         },
         required: ["campaign_id", "email"],
       },
@@ -84,21 +94,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           name: { type: "string", description: "Unique campaign name" },
-          description: { type: "string", description: "Campaign description (optional)" },
-          status: { type: "string", enum: ["active", "paused", "closed"], description: "Campaign status (default: active)" },
+          description: {
+            type: "string",
+            description: "Campaign description (optional)",
+          },
+          status: {
+            type: "string",
+            enum: ["active", "paused", "closed"],
+            description: "Campaign status (default: active)",
+          },
         },
         required: ["name"],
       },
     },
     {
       name: "waitlist_list_entries",
-      description: "List entries for a campaign, optionally filtered by status.",
+      description:
+        "List entries for a campaign, optionally filtered by status.",
       inputSchema: {
         type: "object",
         properties: {
           campaign_id: { type: "string", description: "Campaign UUID" },
-          status: { type: "string", enum: ["waiting", "invited", "joined", "removed"], description: "Filter by status (optional)" },
-          limit: { type: "number", description: "Max entries to return (default 50)" },
+          status: {
+            type: "string",
+            enum: ["waiting", "invited", "joined", "removed"],
+            description: "Filter by status (optional)",
+          },
+          limit: {
+            type: "number",
+            description: "Max entries to return (default 50)",
+          },
         },
         required: ["campaign_id"],
       },
@@ -121,20 +146,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const sql = getDb();
   const { name, arguments: args } = req.params;
-  const a = args as Record<string, unknown>;
+  const a = args as any;
 
   const text = (data: unknown) => ({
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
   });
 
   if (name === "waitlist_join") {
-    return text(await joinWaitlist(sql, {
-      campaignId: String(a.campaign_id),
-      email: String(a.email),
-      name: a.name ? String(a.name) : undefined,
-      referralCode: a.referral_code ? String(a.referral_code) : undefined,
-      metadata: a.metadata as Record<string, unknown> | undefined,
-    }));
+    return text(
+      await joinWaitlist(sql, {
+        campaignId: String(a.campaign_id),
+        email: String(a.email),
+        name: a.name ? String(a.name) : undefined,
+        referralCode: a.referral_code ? String(a.referral_code) : undefined,
+        metadata: a.metadata as any | undefined,
+      }),
+    );
   }
 
   if (name === "waitlist_get_position") {
@@ -150,20 +177,24 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
 
   if (name === "waitlist_create_campaign") {
-    return text(await createCampaign(sql, {
-      name: String(a.name),
-      description: a.description ? String(a.description) : undefined,
-      status: a.status as "active" | "paused" | "closed" | undefined,
-    }));
+    return text(
+      await createCampaign(sql, {
+        name: String(a.name),
+        description: a.description ? String(a.description) : undefined,
+        status: a.status as "active" | "paused" | "closed" | undefined,
+      }),
+    );
   }
 
   if (name === "waitlist_list_entries") {
-    return text(await listEntries(
-      sql,
-      String(a.campaign_id),
-      a.status ? String(a.status) : undefined,
-      a.limit ? Number(a.limit) : undefined
-    ));
+    return text(
+      await listEntries(
+        sql,
+        String(a.campaign_id),
+        a.status ? String(a.status) : undefined,
+        a.limit ? Number(a.limit) : undefined,
+      ),
+    );
   }
 
   if (name === "waitlist_update_score") {

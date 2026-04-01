@@ -5,15 +5,22 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
-import { indexDocument, deleteDocument, listCollections } from "../lib/index_ops.js";
-import { search, countDocuments } from "../lib/search_ops.js";
+import {
+  deleteDocument,
+  indexDocument,
+  listCollections,
+} from "../lib/index_ops.js";
+import { countDocuments, search } from "../lib/search_ops.js";
 
 const server = new Server(
   { name: "microservice-search", version: "0.0.1" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {} } },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -24,26 +31,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          collection: { type: "string", description: "Collection/namespace for the document" },
-          doc_id: { type: "string", description: "Unique document ID within the collection" },
-          content: { type: "string", description: "Document text content to index" },
-          workspace_id: { type: "string", description: "Optional workspace UUID for multi-tenant isolation" },
-          metadata: { type: "object", description: "Optional arbitrary metadata" },
+          collection: {
+            type: "string",
+            description: "Collection/namespace for the document",
+          },
+          doc_id: {
+            type: "string",
+            description: "Unique document ID within the collection",
+          },
+          content: {
+            type: "string",
+            description: "Document text content to index",
+          },
+          workspace_id: {
+            type: "string",
+            description: "Optional workspace UUID for multi-tenant isolation",
+          },
+          metadata: {
+            type: "object",
+            description: "Optional arbitrary metadata",
+          },
         },
         required: ["collection", "doc_id", "content"],
       },
     },
     {
       name: "search_query",
-      description: "Search indexed documents using full-text, semantic, or hybrid mode",
+      description:
+        "Search indexed documents using full-text, semantic, or hybrid mode",
       inputSchema: {
         type: "object",
         properties: {
           text: { type: "string", description: "Search query text" },
-          collection: { type: "string", description: "Limit search to this collection" },
-          workspace_id: { type: "string", description: "Limit search to this workspace" },
-          mode: { type: "string", enum: ["text", "semantic", "hybrid"], description: "Search mode (default: text)" },
-          limit: { type: "number", description: "Maximum results to return (default: 10)" },
+          collection: {
+            type: "string",
+            description: "Limit search to this collection",
+          },
+          workspace_id: {
+            type: "string",
+            description: "Limit search to this workspace",
+          },
+          mode: {
+            type: "string",
+            enum: ["text", "semantic", "hybrid"],
+            description: "Search mode (default: text)",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum results to return (default: 10)",
+          },
         },
         required: ["text"],
       },
@@ -66,7 +102,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          workspace_id: { type: "string", description: "Filter by workspace UUID" },
+          workspace_id: {
+            type: "string",
+            description: "Filter by workspace UUID",
+          },
         },
         required: [],
       },
@@ -89,7 +128,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const sql = getDb();
   const { name, arguments: args } = req.params;
-  const a = args as Record<string, unknown>;
+  const a = args as any;
 
   const text = (data: unknown) => ({
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -101,7 +140,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       docId: String(a.doc_id),
       content: String(a.content),
       workspaceId: a.workspace_id ? String(a.workspace_id) : undefined,
-      metadata: a.metadata as Record<string, unknown> | undefined,
+      metadata: a.metadata as any | undefined,
     });
     return text({ ok: true });
   }
@@ -118,14 +157,18 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
 
   if (name === "search_delete_document") {
-    const deleted = await deleteDocument(sql, String(a.collection), String(a.doc_id));
+    const deleted = await deleteDocument(
+      sql,
+      String(a.collection),
+      String(a.doc_id),
+    );
     return text({ ok: deleted, deleted });
   }
 
   if (name === "search_list_collections") {
     const collections = await listCollections(
       sql,
-      a.workspace_id ? String(a.workspace_id) : undefined
+      a.workspace_id ? String(a.workspace_id) : undefined,
     );
     return text({ collections, count: collections.length });
   }
@@ -134,7 +177,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const count = await countDocuments(
       sql,
       String(a.collection),
-      a.workspace_id ? String(a.workspace_id) : undefined
+      a.workspace_id ? String(a.workspace_id) : undefined,
     );
     return text({ collection: a.collection, count });
   }

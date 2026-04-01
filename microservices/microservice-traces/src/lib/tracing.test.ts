@@ -2,16 +2,23 @@
  * Unit tests for tracing logic — no database required.
  */
 
-import { describe, test, expect } from "bun:test";
-import { VALID_SPAN_TYPES, VALID_STATUSES } from "./tracing.js";
-import { buildSpanTree, type SpanWithChildren } from "./query.js";
+import { describe, expect, test } from "bun:test";
+import { buildSpanTree } from "./query.js";
 import type { Span } from "./tracing.js";
+import { VALID_SPAN_TYPES, VALID_STATUSES } from "./tracing.js";
 
 // ---- Span type validation ---------------------------------------------------
 
 describe("VALID_SPAN_TYPES", () => {
   test("span types are valid enum values", () => {
-    expect(VALID_SPAN_TYPES).toEqual(["llm", "tool", "retrieval", "guardrail", "embedding", "custom"]);
+    expect(VALID_SPAN_TYPES).toEqual([
+      "llm",
+      "tool",
+      "retrieval",
+      "guardrail",
+      "embedding",
+      "custom",
+    ]);
   });
 
   test("all span types are strings", () => {
@@ -82,7 +89,11 @@ describe("buildSpanTree", () => {
       makeSpan({ id: "root-1", parent_span_id: null, name: "root" }),
       makeSpan({ id: "child-1", parent_span_id: "root-1", name: "child-a" }),
       makeSpan({ id: "child-2", parent_span_id: "root-1", name: "child-b" }),
-      makeSpan({ id: "grandchild-1", parent_span_id: "child-1", name: "grandchild" }),
+      makeSpan({
+        id: "grandchild-1",
+        parent_span_id: "child-1",
+        name: "grandchild",
+      }),
     ];
 
     const tree = buildSpanTree(spans);
@@ -145,7 +156,10 @@ describe("trace total_tokens aggregation", () => {
 
   test("empty trace has 0 spans, 0 tokens, 0 cost", () => {
     const spans: Partial<Span>[] = [];
-    const totalTokens = spans.reduce((sum, s) => sum + (s.tokens_in ?? 0) + (s.tokens_out ?? 0), 0);
+    const totalTokens = spans.reduce(
+      (sum, s) => sum + (s.tokens_in ?? 0) + (s.tokens_out ?? 0),
+      0,
+    );
     const totalCost = spans.reduce((sum, s) => sum + (s.cost_usd ?? 0), 0);
     expect(spans.length).toBe(0);
     expect(totalTokens).toBe(0);

@@ -1,12 +1,12 @@
 /**
- * microservice-NAME HTTP server (standalone mode).
+ * microservice-__name__ HTTP server (standalone mode).
  *
  * Starts a Bun HTTP server exposing the REST API.
- * Called via: microservice-NAME serve [--port 3000]
+ * Called via: microservice-__name__ serve [--port 3000]
  *
  * Env:
  *   DATABASE_URL  — required
- *   NAME_PORT     — optional, default 3000
+ *   __NAME___PORT     — optional, default 3000
  */
 
 import { getDb } from "../db/client.js";
@@ -22,5 +22,7 @@ export async function startServer(port: number = 3000): Promise<void> {
     fetch: router,
   });
 
-  console.log(`microservice-NAME listening on http://localhost:${server.port}`);
+  console.log(
+    `microservice-__name__ listening on http://localhost:${server.port}`,
+  );
 }

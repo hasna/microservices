@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 export function parseTimeoutMs(
   raw: string | undefined,
-  fallback: number = 30000
+  fallback: number = 30000,
 ): number {
   if (raw === undefined || raw.trim() === "") {
     return fallback;
@@ -23,11 +23,14 @@ export function ensureParentDirectory(filePath: string): void {
 
 export function upsertClaudeMcpConfig(
   content: string | undefined,
-  command: string
+  command: string,
 ): string {
   const parsed = content ? JSON.parse(content) : {};
   const config = parsed as {
-    mcpServers?: Record<string, { type: string; command: string; args: string[]; env: object }>;
+    mcpServers?: Record<
+      string,
+      { type: string; command: string; args: string[]; env: object }
+    >;
   };
 
   if (!config.mcpServers) {
@@ -46,7 +49,7 @@ export function upsertClaudeMcpConfig(
 
 export function upsertCodexMcpConfig(
   content: string | undefined,
-  command: string
+  command: string,
 ): { content: string; alreadyRegistered: boolean } {
   const existing = content ?? "";
   if (existing.includes("[mcp_servers.microservices]")) {
@@ -63,7 +66,7 @@ export function upsertCodexMcpConfig(
 
 export function upsertGeminiMcpConfig(
   content: string | undefined,
-  command: string
+  command: string,
 ): string {
   const parsed = content ? JSON.parse(content) : {};
   const config = parsed as {

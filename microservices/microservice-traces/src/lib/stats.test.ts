@@ -2,8 +2,8 @@
  * Unit tests for stats logic — no database required.
  */
 
-import { describe, test, expect } from "bun:test";
-import { computePercentile, computeErrorRate } from "./stats.js";
+import { describe, expect, test } from "bun:test";
+import { computeErrorRate, computePercentile } from "./stats.js";
 
 // ---- Percentile computation -------------------------------------------------
 

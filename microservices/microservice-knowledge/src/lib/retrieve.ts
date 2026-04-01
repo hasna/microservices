@@ -8,7 +8,7 @@ import { generateEmbedding } from "./embeddings.js";
 export interface RetrieveOptions {
   limit?: number;
   minScore?: number;
-  metadataFilter?: Record<string, unknown>;
+  metadataFilter?: any;
   mode?: "semantic" | "text" | "hybrid";
 }
 
@@ -18,7 +18,7 @@ export interface RetrievedChunk {
     content: string;
     chunk_index: number;
     token_count: number | null;
-    metadata: Record<string, unknown>;
+    metadata: any;
   };
   score: number;
   document: {
@@ -33,7 +33,7 @@ export async function retrieve(
   sql: Sql,
   collectionId: string,
   query: string,
-  opts: RetrieveOptions = {}
+  opts: RetrieveOptions = {},
 ): Promise<RetrievedChunk[]> {
   const limit = opts.limit ?? 10;
   const mode = opts.mode ?? "text";
@@ -43,7 +43,13 @@ export async function retrieve(
     const embedding = await generateEmbedding(query);
     if (embedding) {
       if (mode === "semantic") {
-        return semanticSearch(sql, collectionId, embedding, limit, opts.minScore);
+        return semanticSearch(
+          sql,
+          collectionId,
+          embedding,
+          limit,
+          opts.minScore,
+        );
       } else {
         // Hybrid: combine semantic + text, deduplicate
         const [semanticResults, textResults] = await Promise.all([
@@ -72,21 +78,23 @@ async function semanticSearch(
   collectionId: string,
   embedding: number[],
   limit: number,
-  minScore?: number
+  minScore?: number,
 ): Promise<RetrievedChunk[]> {
   const embeddingStr = `[${embedding.join(",")}]`;
-  const rows = await sql<Array<{
-    chunk_id: string;
-    chunk_content: string;
-    chunk_index: number;
-    token_count: number | null;
-    chunk_metadata: Record<string, unknown>;
-    score: number;
-    doc_id: string;
-    doc_title: string;
-    doc_source_url: string | null;
-    doc_source_type: string;
-  }>>`
+  const rows = await sql<
+    Array<{
+      chunk_id: string;
+      chunk_content: string;
+      chunk_index: number;
+      token_count: number | null;
+      chunk_metadata: any;
+      score: number;
+      doc_id: string;
+      doc_title: string;
+      doc_source_url: string | null;
+      doc_source_type: string;
+    }>
+  >`
     SELECT
       c.id AS chunk_id,
       c.content AS chunk_content,
@@ -131,20 +139,22 @@ async function textSearch(
   sql: Sql,
   collectionId: string,
   query: string,
-  limit: number
+  limit: number,
 ): Promise<RetrievedChunk[]> {
-  const rows = await sql<Array<{
-    chunk_id: string;
-    chunk_content: string;
-    chunk_index: number;
-    token_count: number | null;
-    chunk_metadata: Record<string, unknown>;
-    score: number;
-    doc_id: string;
-    doc_title: string;
-    doc_source_url: string | null;
-    doc_source_type: string;
-  }>>`
+  const rows = await sql<
+    Array<{
+      chunk_id: string;
+      chunk_content: string;
+      chunk_index: number;
+      token_count: number | null;
+      chunk_metadata: any;
+      score: number;
+      doc_id: string;
+      doc_title: string;
+      doc_source_url: string | null;
+      doc_source_type: string;
+    }>
+  >`
     SELECT
       c.id AS chunk_id,
       c.content AS chunk_content,

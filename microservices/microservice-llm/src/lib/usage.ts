@@ -24,11 +24,13 @@ export interface WorkspaceUsage {
 export async function getWorkspaceUsage(
   sql: Sql,
   workspaceId: string,
-  since?: Date
+  since?: Date,
 ): Promise<WorkspaceUsage> {
   const sinceDate = since ?? new Date(0);
 
-  const [totals] = await sql<[{ total_requests: string; total_tokens: string; total_cost_usd: string }]>`
+  const [totals] = await sql<
+    [{ total_requests: string; total_tokens: string; total_cost_usd: string }]
+  >`
     SELECT
       COUNT(*) AS total_requests,
       COALESCE(SUM(total_tokens), 0) AS total_tokens,
@@ -57,9 +59,9 @@ export async function getWorkspaceUsage(
   `;
 
   return {
-    total_requests: parseInt(totals!.total_requests, 10),
-    total_tokens: parseInt(totals!.total_tokens, 10),
-    total_cost_usd: parseFloat(totals!.total_cost_usd),
+    total_requests: parseInt(totals?.total_requests, 10),
+    total_tokens: parseInt(totals?.total_tokens, 10),
+    total_cost_usd: parseFloat(totals?.total_cost_usd),
     by_model: byModel.map((r) => ({
       model: r.model,
       provider: r.provider,

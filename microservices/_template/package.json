@@ -1,10 +1,10 @@
 {
-  "name": "@hasna/microservice-NAME",
+  "name": "@hasna/microservice-__name__",
   "version": "0.0.1",
   "description": "DESCRIPTION — part of @hasna/microservices",
   "type": "module",
   "bin": {
-    "microservice-NAME": "./bin/cli.js"
+    "microservice-__name__": "./bin/cli.js"
   },
   "exports": {
     ".": {
@@ -29,7 +29,13 @@
     "test": "bun test",
     "prepublishOnly": "bun run build"
   },
-  "keywords": ["microservice", "saas", "postgresql", "mcp", "cli"],
+  "keywords": [
+    "microservice",
+    "saas",
+    "postgresql",
+    "mcp",
+    "cli"
+  ],
   "author": "Hasna",
   "license": "Apache-2.0",
   "devDependencies": {

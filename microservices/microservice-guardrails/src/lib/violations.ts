@@ -10,7 +10,7 @@ export interface Violation {
   type: string;
   direction: string;
   content_snippet: string | null;
-  details: Record<string, unknown>;
+  details: any;
   severity: string;
   created_at: Date;
 }
@@ -22,11 +22,13 @@ export async function logViolation(
     type: string;
     direction: "input" | "output";
     contentSnippet?: string;
-    details?: Record<string, unknown>;
+    details?: any;
     severity?: string;
-  }
+  },
 ): Promise<Violation> {
-  const snippet = opts.contentSnippet ? opts.contentSnippet.slice(0, 200) : null;
+  const snippet = opts.contentSnippet
+    ? opts.contentSnippet.slice(0, 200)
+    : null;
   const [row] = await sql`
     INSERT INTO guardrails.violations (workspace_id, type, direction, content_snippet, details, severity)
     VALUES (${opts.workspaceId ?? null}, ${opts.type}, ${opts.direction}, ${snippet}, ${JSON.stringify(opts.details ?? {})}, ${opts.severity ?? "medium"})
@@ -42,7 +44,7 @@ export async function listViolations(
     type?: string;
     severity?: string;
     limit?: number;
-  }
+  },
 ): Promise<Violation[]> {
   const limit = filters.limit ?? 50;
 

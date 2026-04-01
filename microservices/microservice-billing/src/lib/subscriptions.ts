@@ -1,6 +1,11 @@
 import type { Sql } from "postgres";
 
-export type SubscriptionStatus = "active" | "past_due" | "canceled" | "trialing" | "incomplete";
+export type SubscriptionStatus =
+  | "active"
+  | "past_due"
+  | "canceled"
+  | "trialing"
+  | "incomplete";
 
 export interface Subscription {
   id: string;
@@ -14,7 +19,7 @@ export interface Subscription {
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   canceled_at: string | null;
-  metadata: Record<string, unknown>;
+  metadata: any;
   created_at: string;
   updated_at: string;
 }
@@ -30,20 +35,33 @@ export interface UpsertSubscriptionData {
   current_period_end?: string;
   cancel_at_period_end?: boolean;
   canceled_at?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
 }
 
-export async function getSubscription(sql: Sql, id: string): Promise<Subscription | null> {
-  const [sub] = await sql<Subscription[]>`SELECT * FROM billing.subscriptions WHERE id = ${id}`;
+export async function getSubscription(
+  sql: Sql,
+  id: string,
+): Promise<Subscription | null> {
+  const [sub] = await sql<
+    Subscription[]
+  >`SELECT * FROM billing.subscriptions WHERE id = ${id}`;
   return sub ?? null;
 }
 
-export async function getSubscriptionByStripeId(sql: Sql, stripeSubscriptionId: string): Promise<Subscription | null> {
-  const [sub] = await sql<Subscription[]>`SELECT * FROM billing.subscriptions WHERE stripe_subscription_id = ${stripeSubscriptionId}`;
+export async function getSubscriptionByStripeId(
+  sql: Sql,
+  stripeSubscriptionId: string,
+): Promise<Subscription | null> {
+  const [sub] = await sql<
+    Subscription[]
+  >`SELECT * FROM billing.subscriptions WHERE stripe_subscription_id = ${stripeSubscriptionId}`;
   return sub ?? null;
 }
 
-export async function getWorkspaceSubscription(sql: Sql, workspaceId: string): Promise<Subscription | null> {
+export async function getWorkspaceSubscription(
+  sql: Sql,
+  workspaceId: string,
+): Promise<Subscription | null> {
   const [sub] = await sql<Subscription[]>`
     SELECT * FROM billing.subscriptions
     WHERE workspace_id = ${workspaceId} AND status IN ('active','trialing','past_due')
@@ -51,7 +69,10 @@ export async function getWorkspaceSubscription(sql: Sql, workspaceId: string): P
   return sub ?? null;
 }
 
-export async function upsertSubscription(sql: Sql, data: UpsertSubscriptionData): Promise<Subscription> {
+export async function upsertSubscription(
+  sql: Sql,
+  data: UpsertSubscriptionData,
+): Promise<Subscription> {
   if (data.stripe_subscription_id) {
     const [sub] = await sql<Subscription[]>`
       INSERT INTO billing.subscriptions
@@ -94,14 +115,22 @@ export async function upsertSubscription(sql: Sql, data: UpsertSubscriptionData)
   return sub;
 }
 
-export async function updateSubscriptionStatus(sql: Sql, id: string, status: SubscriptionStatus): Promise<Subscription | null> {
+export async function updateSubscriptionStatus(
+  sql: Sql,
+  id: string,
+  status: SubscriptionStatus,
+): Promise<Subscription | null> {
   const [sub] = await sql<Subscription[]>`
     UPDATE billing.subscriptions SET status = ${status}, updated_at = NOW()
     WHERE id = ${id} RETURNING *`;
   return sub ?? null;
 }
 
-export async function cancelSubscription(sql: Sql, id: string, atPeriodEnd = true): Promise<Subscription | null> {
+export async function cancelSubscription(
+  sql: Sql,
+  id: string,
+  atPeriodEnd = true,
+): Promise<Subscription | null> {
   if (atPeriodEnd) {
     const [sub] = await sql<Subscription[]>`
       UPDATE billing.subscriptions SET cancel_at_period_end = true, updated_at = NOW()
@@ -115,18 +144,31 @@ export async function cancelSubscription(sql: Sql, id: string, atPeriodEnd = tru
   return sub ?? null;
 }
 
-export async function listSubscriptions(sql: Sql, opts?: { workspaceId?: string; userId?: string; status?: SubscriptionStatus }): Promise<Subscription[]> {
+export async function listSubscriptions(
+  sql: Sql,
+  opts?: { workspaceId?: string; userId?: string; status?: SubscriptionStatus },
+): Promise<Subscription[]> {
   if (opts?.workspaceId && opts?.status) {
-    return sql<Subscription[]>`SELECT * FROM billing.subscriptions WHERE workspace_id = ${opts.workspaceId} AND status = ${opts.status} ORDER BY created_at DESC`;
+    return sql<
+      Subscription[]
+    >`SELECT * FROM billing.subscriptions WHERE workspace_id = ${opts.workspaceId} AND status = ${opts.status} ORDER BY created_at DESC`;
   }
   if (opts?.workspaceId) {
-    return sql<Subscription[]>`SELECT * FROM billing.subscriptions WHERE workspace_id = ${opts.workspaceId} ORDER BY created_at DESC`;
+    return sql<
+      Subscription[]
+    >`SELECT * FROM billing.subscriptions WHERE workspace_id = ${opts.workspaceId} ORDER BY created_at DESC`;
   }
   if (opts?.userId) {
-    return sql<Subscription[]>`SELECT * FROM billing.subscriptions WHERE user_id = ${opts.userId} ORDER BY created_at DESC`;
+    return sql<
+      Subscription[]
+    >`SELECT * FROM billing.subscriptions WHERE user_id = ${opts.userId} ORDER BY created_at DESC`;
   }
   if (opts?.status) {
-    return sql<Subscription[]>`SELECT * FROM billing.subscriptions WHERE status = ${opts.status} ORDER BY created_at DESC`;
+    return sql<
+      Subscription[]
+    >`SELECT * FROM billing.subscriptions WHERE status = ${opts.status} ORDER BY created_at DESC`;
   }
-  return sql<Subscription[]>`SELECT * FROM billing.subscriptions ORDER BY created_at DESC`;
+  return sql<
+    Subscription[]
+  >`SELECT * FROM billing.subscriptions ORDER BY created_at DESC`;
 }

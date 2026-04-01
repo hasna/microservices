@@ -11,47 +11,44 @@
  *   await endTrace(sql, trace.id, { status: 'completed' })
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-
-// Tracing
-export {
-  startTrace,
-  endTrace,
-  startSpan,
-  endSpan,
-  VALID_SPAN_TYPES,
-  VALID_STATUSES,
-  type Trace,
-  type Span,
-  type SpanType,
-  type TraceStatus,
-  type StartTraceInput,
-  type EndTraceInput,
-  type StartSpanInput,
-  type EndSpanInput,
-} from "./tracing.js";
-
 // Query
 export {
+  buildSpanTree,
+  getSpan,
   getTrace,
   getTraceTree,
-  buildSpanTree,
-  listTraces,
-  getSpan,
+  type ListSpansOpts,
+  type ListTracesOpts,
   listSpans,
-  type TraceWithSpans,
+  listTraces,
   type SpanWithChildren,
   type TraceTree,
-  type ListTracesOpts,
-  type ListSpansOpts,
+  type TraceWithSpans,
 } from "./query.js";
-
 // Stats
 export {
-  getTraceStats,
-  computePercentile,
   computeErrorRate,
-  type TraceStats,
+  computePercentile,
+  getTraceStats,
   type SpanTypeStat,
+  type TraceStats,
 } from "./stats.js";
+// Tracing
+export {
+  type EndSpanInput,
+  type EndTraceInput,
+  endSpan,
+  endTrace,
+  type Span,
+  type SpanType,
+  type StartSpanInput,
+  type StartTraceInput,
+  startSpan,
+  startTrace,
+  type Trace,
+  type TraceStatus,
+  VALID_SPAN_TYPES,
+  VALID_STATUSES,
+} from "./tracing.js";

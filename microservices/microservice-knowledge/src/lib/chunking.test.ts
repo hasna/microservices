@@ -3,7 +3,7 @@
  * No database, no OpenAI API — pure logic tests.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { chunkText, estimateTokens } from "./chunking.js";
 import { hashContent } from "./documents.js";
 
@@ -14,17 +14,25 @@ import { hashContent } from "./documents.js";
 describe("fixed chunking", () => {
   it("splits 1000 chars with overlap correctly", () => {
     const text = "a".repeat(1000);
-    const chunks = chunkText(text, { strategy: "fixed", chunkSize: 400, chunkOverlap: 100 });
+    const chunks = chunkText(text, {
+      strategy: "fixed",
+      chunkSize: 400,
+      chunkOverlap: 100,
+    });
     expect(chunks.length).toBeGreaterThan(1);
     // First chunk should be 400 chars
-    expect(chunks[0]!.length).toBe(400);
+    expect(chunks[0]?.length).toBe(400);
     // Second chunk should start 300 chars into text (400 - 100 overlap)
     expect(chunks[1]!).toBe(text.slice(300, 700));
   });
 
   it("returns single chunk when text is shorter than chunkSize", () => {
     const text = "Hello world";
-    const chunks = chunkText(text, { strategy: "fixed", chunkSize: 1000, chunkOverlap: 200 });
+    const chunks = chunkText(text, {
+      strategy: "fixed",
+      chunkSize: 1000,
+      chunkOverlap: 200,
+    });
     expect(chunks).toEqual(["Hello world"]);
   });
 });
@@ -36,14 +44,22 @@ describe("fixed chunking", () => {
 describe("paragraph chunking", () => {
   it("splits on double newlines", () => {
     const text = "Paragraph one.\n\nParagraph two.\n\nParagraph three.";
-    const chunks = chunkText(text, { strategy: "paragraph", chunkSize: 20, chunkOverlap: 0 });
+    const chunks = chunkText(text, {
+      strategy: "paragraph",
+      chunkSize: 20,
+      chunkOverlap: 0,
+    });
     expect(chunks.length).toBeGreaterThanOrEqual(2);
     expect(chunks[0]).toContain("Paragraph one.");
   });
 
   it("merges small paragraphs to reach chunkSize", () => {
     const text = "A.\n\nB.\n\nC.\n\nD.";
-    const chunks = chunkText(text, { strategy: "paragraph", chunkSize: 100, chunkOverlap: 0 });
+    const chunks = chunkText(text, {
+      strategy: "paragraph",
+      chunkSize: 100,
+      chunkOverlap: 0,
+    });
     // All paragraphs are small, should merge into one
     expect(chunks.length).toBe(1);
     expect(chunks[0]).toContain("A.");
@@ -57,15 +73,24 @@ describe("paragraph chunking", () => {
 
 describe("sentence chunking", () => {
   it("splits on period+space", () => {
-    const text = "First sentence. Second sentence. Third sentence. Fourth sentence.";
-    const chunks = chunkText(text, { strategy: "sentence", chunkSize: 30, chunkOverlap: 0 });
+    const text =
+      "First sentence. Second sentence. Third sentence. Fourth sentence.";
+    const chunks = chunkText(text, {
+      strategy: "sentence",
+      chunkSize: 30,
+      chunkOverlap: 0,
+    });
     expect(chunks.length).toBeGreaterThanOrEqual(2);
     expect(chunks[0]).toContain("First sentence.");
   });
 
   it("splits on exclamation and question marks", () => {
     const text = "Hello! How are you? I am fine. Thanks for asking!";
-    const chunks = chunkText(text, { strategy: "sentence", chunkSize: 20, chunkOverlap: 0 });
+    const chunks = chunkText(text, {
+      strategy: "sentence",
+      chunkSize: 20,
+      chunkOverlap: 0,
+    });
     expect(chunks.length).toBeGreaterThanOrEqual(2);
   });
 });
@@ -77,18 +102,32 @@ describe("sentence chunking", () => {
 describe("recursive chunking", () => {
   it("falls back through strategies", () => {
     // Text with paragraphs -> should use paragraph strategy first
-    const textWithParagraphs = "Para one is here.\n\nPara two is here.\n\nPara three is here.";
-    const chunks1 = chunkText(textWithParagraphs, { strategy: "recursive", chunkSize: 30, chunkOverlap: 0 });
+    const textWithParagraphs =
+      "Para one is here.\n\nPara two is here.\n\nPara three is here.";
+    const chunks1 = chunkText(textWithParagraphs, {
+      strategy: "recursive",
+      chunkSize: 30,
+      chunkOverlap: 0,
+    });
     expect(chunks1.length).toBeGreaterThanOrEqual(2);
 
     // Text without paragraphs but with sentences -> should use sentence strategy
-    const textWithSentences = "First sentence. Second sentence. Third sentence.";
-    const chunks2 = chunkText(textWithSentences, { strategy: "recursive", chunkSize: 25, chunkOverlap: 0 });
+    const textWithSentences =
+      "First sentence. Second sentence. Third sentence.";
+    const chunks2 = chunkText(textWithSentences, {
+      strategy: "recursive",
+      chunkSize: 25,
+      chunkOverlap: 0,
+    });
     expect(chunks2.length).toBeGreaterThanOrEqual(2);
 
     // Plain text -> should fall back to fixed
     const plainText = "a".repeat(500);
-    const chunks3 = chunkText(plainText, { strategy: "recursive", chunkSize: 200, chunkOverlap: 0 });
+    const chunks3 = chunkText(plainText, {
+      strategy: "recursive",
+      chunkSize: 200,
+      chunkOverlap: 0,
+    });
     expect(chunks3.length).toBeGreaterThanOrEqual(2);
   });
 });
@@ -100,8 +139,17 @@ describe("recursive chunking", () => {
 describe("small text handling", () => {
   it("returns single chunk when text is smaller than chunkSize", () => {
     const text = "Short text.";
-    for (const strategy of ["fixed", "paragraph", "sentence", "recursive"] as const) {
-      const chunks = chunkText(text, { strategy, chunkSize: 1000, chunkOverlap: 200 });
+    for (const strategy of [
+      "fixed",
+      "paragraph",
+      "sentence",
+      "recursive",
+    ] as const) {
+      const chunks = chunkText(text, {
+        strategy,
+        chunkSize: 1000,
+        chunkOverlap: 200,
+      });
       expect(chunks.length).toBe(1);
       expect(chunks[0]).toBe("Short text.");
     }
@@ -115,11 +163,15 @@ describe("small text handling", () => {
 describe("overlap", () => {
   it("fixed chunks share the right amount of text", () => {
     const text = "abcdefghijklmnopqrst"; // 20 chars
-    const chunks = chunkText(text, { strategy: "fixed", chunkSize: 10, chunkOverlap: 3 });
+    const chunks = chunkText(text, {
+      strategy: "fixed",
+      chunkSize: 10,
+      chunkOverlap: 3,
+    });
     expect(chunks.length).toBeGreaterThan(1);
     // The end of chunk 0 should overlap with the beginning of chunk 1
-    const chunk0End = chunks[0]!.slice(-3);
-    const chunk1Start = chunks[1]!.slice(0, 3);
+    const chunk0End = chunks[0]?.slice(-3);
+    const chunk1Start = chunks[1]?.slice(0, 3);
     expect(chunk0End).toBe(chunk1Start);
   });
 });
@@ -130,8 +182,17 @@ describe("overlap", () => {
 
 describe("empty text", () => {
   it("returns empty array for empty string", () => {
-    for (const strategy of ["fixed", "paragraph", "sentence", "recursive"] as const) {
-      const chunks = chunkText("", { strategy, chunkSize: 1000, chunkOverlap: 200 });
+    for (const strategy of [
+      "fixed",
+      "paragraph",
+      "sentence",
+      "recursive",
+    ] as const) {
+      const chunks = chunkText("", {
+        strategy,
+        chunkSize: 1000,
+        chunkOverlap: 200,
+      });
       expect(chunks).toEqual([]);
     }
   });
@@ -143,13 +204,23 @@ describe("empty text", () => {
 
 describe("invalid chunkSize", () => {
   it("throws when chunkSize is 0", () => {
-    expect(() => chunkText("Some text", { strategy: "fixed", chunkSize: 0, chunkOverlap: 0 }))
-      .toThrow("chunkSize must be greater than 0");
+    expect(() =>
+      chunkText("Some text", {
+        strategy: "fixed",
+        chunkSize: 0,
+        chunkOverlap: 0,
+      }),
+    ).toThrow("chunkSize must be greater than 0");
   });
 
   it("throws when chunkSize is negative", () => {
-    expect(() => chunkText("Some text", { strategy: "fixed", chunkSize: -10, chunkOverlap: 0 }))
-      .toThrow("chunkSize must be greater than 0");
+    expect(() =>
+      chunkText("Some text", {
+        strategy: "fixed",
+        chunkSize: -10,
+        chunkOverlap: 0,
+      }),
+    ).toThrow("chunkSize must be greater than 0");
   });
 });
 

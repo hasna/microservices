@@ -10,7 +10,7 @@ export interface TrackInput {
   metric: string;
   quantity: number;
   unit?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: any;
 }
 
 /**

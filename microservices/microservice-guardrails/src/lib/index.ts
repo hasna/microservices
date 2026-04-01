@@ -5,41 +5,15 @@
  *   import { checkInput, checkOutput, scanPII, detectPromptInjection } from '@hasna/microservice-guardrails'
  */
 
+export { closeDb, getDb } from "../db/client.js";
 export { migrate } from "../db/migrations.js";
-export { getDb, closeDb } from "../db/client.js";
-
-// PII
+// Allowlist
 export {
-  scanPII,
-  redactPII,
-  type PIIMatch,
-} from "./pii.js";
-
-// Injection
-export {
-  detectPromptInjection,
-  type InjectionResult,
-} from "./injection.js";
-
-// Toxicity
-export {
-  checkToxicity,
-} from "./toxicity.js";
-
-// Policy
-export {
-  createPolicy,
-  listPolicies,
-  getPolicy,
-  updatePolicy,
-  deletePolicy,
-  evaluatePolicy,
-  type Policy,
-  type PolicyRule,
-  type PolicyResult,
-  type PolicyViolation,
-} from "./policy.js";
-
+  type AllowlistEntry,
+  addAllowlistEntry,
+  deleteAllowlistEntry,
+  listAllowlistEntries,
+} from "./allowlist.js";
 // Guard (main entry points)
 export {
   checkInput,
@@ -47,18 +21,35 @@ export {
   type GuardResult,
   type GuardViolation,
 } from "./guard.js";
-
+// Injection
+export {
+  detectPromptInjection,
+  type InjectionResult,
+} from "./injection.js";
+// PII
+export {
+  type PIIMatch,
+  redactPII,
+  scanPII,
+} from "./pii.js";
+// Policy
+export {
+  createPolicy,
+  deletePolicy,
+  evaluatePolicy,
+  getPolicy,
+  listPolicies,
+  type Policy,
+  type PolicyResult,
+  type PolicyRule,
+  type PolicyViolation,
+  updatePolicy,
+} from "./policy.js";
+// Toxicity
+export { checkToxicity } from "./toxicity.js";
 // Violations
 export {
-  logViolation,
   listViolations,
+  logViolation,
   type Violation,
 } from "./violations.js";
-
-// Allowlist
-export {
-  addAllowlistEntry,
-  listAllowlistEntries,
-  deleteAllowlistEntry,
-  type AllowlistEntry,
-} from "./allowlist.js";

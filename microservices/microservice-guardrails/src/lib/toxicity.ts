@@ -4,13 +4,33 @@
 
 // Minimal representative lists — production systems should use larger curated lists
 const PROFANITY_WORDS = [
-  "fuck", "shit", "damn", "bastard", "asshole", "bitch", "crap",
-  "dick", "piss", "cunt", "cock", "motherfucker", "bullshit",
+  "fuck",
+  "shit",
+  "damn",
+  "bastard",
+  "asshole",
+  "bitch",
+  "crap",
+  "dick",
+  "piss",
+  "cunt",
+  "cock",
+  "motherfucker",
+  "bullshit",
 ];
 
 const SLUR_WORDS = [
-  "nigger", "nigga", "faggot", "fag", "retard", "retarded",
-  "kike", "spic", "chink", "wetback", "tranny",
+  "nigger",
+  "nigga",
+  "faggot",
+  "fag",
+  "retard",
+  "retarded",
+  "kike",
+  "spic",
+  "chink",
+  "wetback",
+  "tranny",
 ];
 
 const THREAT_PATTERNS = [
@@ -32,7 +52,10 @@ const HARASSMENT_PATTERNS = [
 ];
 
 function wordBoundaryMatch(text: string, word: string): boolean {
-  const re = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  const re = new RegExp(
+    `\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+    "i",
+  );
   return re.test(text);
 }
 
@@ -50,7 +73,9 @@ export function checkToxicity(text: string): {
   let score = 0;
 
   // Profanity check
-  const profanityCount = PROFANITY_WORDS.filter((w) => wordBoundaryMatch(text, w)).length;
+  const profanityCount = PROFANITY_WORDS.filter((w) =>
+    wordBoundaryMatch(text, w),
+  ).length;
   if (profanityCount > 0) {
     categories.push("profanity");
     score += Math.min(profanityCount * 0.15, 0.4);
@@ -71,7 +96,9 @@ export function checkToxicity(text: string): {
   }
 
   // Harassment check
-  const harassmentCount = HARASSMENT_PATTERNS.filter((p) => p.test(text)).length;
+  const harassmentCount = HARASSMENT_PATTERNS.filter((p) =>
+    p.test(text),
+  ).length;
   if (harassmentCount > 0) {
     categories.push("harassment");
     score += Math.min(harassmentCount * 0.2, 0.4);

@@ -20,7 +20,7 @@ export interface ContextWindow {
 export async function getContextWindow(
   sql: Sql,
   conversationId: string,
-  maxTokens: number
+  maxTokens: number,
 ): Promise<ContextWindow> {
   // Get all messages ordered by creation time
   const allMessages = await sql<Message[]>`
@@ -52,7 +52,7 @@ export async function getContextWindow(
   }
 
   // If system tokens alone exceed the budget, still include system messages
-  let remainingBudget = Math.max(0, maxTokens - systemTokens);
+  const remainingBudget = Math.max(0, maxTokens - systemTokens);
 
   // Start from the most recent non-system messages and work backwards
   const included: Message[] = [];
