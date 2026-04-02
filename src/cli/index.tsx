@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline/promises";
 import chalk from "chalk";
 import { Command } from "commander";
 import {
@@ -25,6 +26,10 @@ import { runMicroserviceCommand } from "../lib/runner.js";
 
 const program = new Command();
 
+function printJson(value: unknown): void {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
 program
   .name("microservices")
   .description("Production-grade microservice building blocks for SaaS apps")
@@ -35,24 +40,83 @@ program
   .command("list")
   .description("List all available microservices")
   .option("--installed", "Show only installed microservices")
-  .action((opts) => {
-    const services = opts.installed
-      ? MICROSERVICES.filter((m) => microserviceExists(m.name))
-      : MICROSERVICES;
+  .option("--category <name>", "Filter by category (case-insensitive)")
+  .option("--limit <n>", "Limit number of results")
+  .option("--offset <n>", "Skip the first N results")
+  .option("--json", "Print machine-readable JSON output")
+  .action(
+    (opts: {
+      installed?: boolean;
+      category?: string;
+      limit?: string;
+      offset?: string;
+      json?: boolean;
+    }) => {
+      const limit = opts.limit === undefined ? null : Number(opts.limit);
+      const offset = opts.offset === undefined ? 0 : Number(opts.offset);
 
-    console.log(chalk.bold("\nAvailable microservices:\n"));
-    for (const m of services) {
-      const installed = microserviceExists(m.name);
-      const status = installed
-        ? chalk.green("✓ installed")
-        : chalk.gray("  available");
+      if (limit !== null && (!Number.isInteger(limit) || limit < 0)) {
+        console.error(chalk.red("--limit must be a non-negative integer"));
+        process.exit(1);
+      }
+      if (!Number.isInteger(offset) || offset < 0) {
+        console.error(chalk.red("--offset must be a non-negative integer"));
+        process.exit(1);
+      }
+
+      const categoryFilter = opts.category?.trim().toLowerCase();
+      let services = opts.installed
+        ? MICROSERVICES.filter((m) => microserviceExists(m.name))
+        : MICROSERVICES;
+
+      if (categoryFilter) {
+        services = services.filter(
+          (m) => m.category.toLowerCase() === categoryFilter,
+        );
+      }
+
+      const start = offset;
+      const end = limit === null ? undefined : offset + limit;
+      const page = services.slice(start, end);
+      const payload = page.map((m) => ({
+        name: m.name,
+        displayName: m.displayName,
+        binary: m.binary,
+        package: m.package,
+        category: m.category,
+        installed: microserviceExists(m.name),
+        description: m.description,
+      }));
+
+      if (opts.json) {
+        printJson({
+          total: services.length,
+          count: payload.length,
+          offset,
+          limit,
+          category: opts.category ?? null,
+          services: payload,
+        });
+        return;
+      }
+
+      console.log(chalk.bold("\nAvailable microservices:\n"));
+      for (const m of payload) {
+        const status = m.installed
+          ? chalk.green("✓ installed")
+          : chalk.gray("  available");
+        console.log(
+          `  ${status}  ${chalk.cyan(m.binary.padEnd(22))}  ${m.description.slice(0, 60)}`,
+        );
+      }
       console.log(
-        `  ${status}  ${chalk.cyan(m.binary.padEnd(22))}  ${m.description.slice(0, 60)}`,
+        chalk.gray(
+          `Showing ${payload.length} of ${services.length} result(s) (offset ${offset}${limit === null ? "" : `, limit ${limit}`}).`,
+        ),
       );
-    }
-    console.log();
-  });
-
+      console.log();
+    },
+  );
 // Install one or more microservices
 program
   .command("install [names...]")
@@ -87,27 +151,64 @@ program
     }
     console.log();
   });
-
 // Remove a microservice
 program
   .command("remove <name>")
   .description("Remove an installed microservice")
-  .action((name: string) => {
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(async (name: string, opts: { yes?: boolean }) => {
+    if (!opts.yes) {
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        console.error(
+          chalk.red(
+            "Refusing to remove without confirmation in non-interactive mode. Re-run with --yes.",
+          ),
+        );
+        process.exit(1);
+      }
+
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        const answer = await rl.question(
+          `Remove ${name} from your global Bun installation? [y/N] `,
+        );
+        const confirmed = ["y", "yes"].includes(answer.trim().toLowerCase());
+        if (!confirmed) {
+          console.log(chalk.yellow("Cancelled."));
+          process.exit(1);
+        }
+      } finally {
+        rl.close();
+      }
+    }
+
     const ok = removeMicroservice(name);
-    if (ok) console.log(chalk.green(`✓ Removed ${name}`));
-    else
-      console.log(chalk.red(`✗ Failed to remove ${name} — is it installed?`));
+    if (ok) {
+      console.log(chalk.green(`✓ Removed ${name}`));
+      return;
+    }
+
+    console.error(chalk.red(`✗ Failed to remove ${name} — is it installed?`));
+    process.exit(1);
   });
 
 // Status of all or one microservice
 program
   .command("status [name]")
   .description("Show installation status")
-  .action((name?: string) => {
+  .option("--json", "Print machine-readable JSON output")
+  .action((name: string | undefined, opts: { json?: boolean }) => {
     const targets = name ? [name] : MICROSERVICES.map((m) => m.name);
+    const payload = targets.map((n) => getMicroserviceStatus(n));
+
+    if (opts.json) {
+      printJson(name ? payload[0] ?? null : payload);
+      return;
+    }
+
     console.log(chalk.bold("\nMicroservice status:\n"));
-    for (const n of targets) {
-      const s = getMicroserviceStatus(n);
+    for (const [index, n] of targets.entries()) {
+      const s = payload[index];
       const icon = s.installed ? chalk.green("✓") : chalk.gray("✗");
       const ver = s.version ? chalk.gray(`v${s.version}`) : "";
       const env = s.meta?.requiredEnv.join(", ") ?? "";
@@ -133,8 +234,14 @@ program
 program
   .command("search <query>")
   .description("Search microservices by name or keyword")
-  .action((query: string) => {
+  .option("--json", "Print machine-readable JSON output")
+  .action((query: string, opts: { json?: boolean }) => {
     const results = searchMicroservices(query);
+    if (opts.json) {
+      printJson(results);
+      return;
+    }
+
     if (results.length === 0) {
       console.log(chalk.gray(`No microservices matching "${query}"`));
       return;
@@ -317,13 +424,20 @@ program
 program
   .command("info <name>")
   .description("Show detailed info about a microservice")
-  .action((name: string) => {
+  .option("--json", "Print machine-readable JSON output")
+  .action((name: string, opts: { json?: boolean }) => {
     const m = getMicroservice(name);
     if (!m) {
       console.error(chalk.red(`Unknown microservice: ${name}`));
       process.exit(1);
     }
+
     const installed = microserviceExists(name);
+    if (opts.json) {
+      printJson({ ...m, installed });
+      return;
+    }
+
     console.log(chalk.bold(`\n${m.displayName}`));
     console.log(`  Package:     ${chalk.cyan(m.package)}`);
     console.log(`  Binary:      ${m.binary}`);
@@ -344,10 +458,51 @@ program
 program
   .command("check-env")
   .description("Verify environment variables for all installed microservices")
-  .action(() => {
+  .option("--json", "Print machine-readable JSON output")
+  .action((opts: { json?: boolean }) => {
     const installed = MICROSERVICES.filter((m) => microserviceExists(m.name));
     if (installed.length === 0) {
-      console.log(chalk.yellow("No microservices installed to check."));
+      if (opts.json) {
+        printJson({
+          summary: { installed: 0, totalMissingRequired: 0, allOk: true },
+          services: [],
+        });
+      } else {
+        console.log(chalk.yellow("No microservices installed to check."));
+      }
+      return;
+    }
+
+    const report = installed.map((m) => {
+      const missingRequired = m.requiredEnv.filter((env) => !process.env[env]);
+      const missingOptional = (m.optionalEnv ?? []).filter(
+        (env) => !process.env[env],
+      );
+      return {
+        name: m.name,
+        missingRequired,
+        missingOptional,
+        ok: missingRequired.length === 0,
+      };
+    });
+
+    const totalMissing = report.reduce(
+      (sum, service) => sum + service.missingRequired.length,
+      0,
+    );
+
+    if (opts.json) {
+      printJson({
+        summary: {
+          installed: installed.length,
+          totalMissingRequired: totalMissing,
+          allOk: totalMissing === 0,
+        },
+        services: report,
+      });
+      if (totalMissing > 0) {
+        process.exit(1);
+      }
       return;
     }
 
@@ -357,34 +512,30 @@ program
       ),
     );
 
-    let totalMissing = 0;
-    for (const m of installed) {
-      const missingRequired = m.requiredEnv.filter((env) => !process.env[env]);
-      const missingOptional = (m.optionalEnv ?? []).filter(
-        (env) => !process.env[env],
-      );
-
+    for (const service of report) {
       const status =
-        missingRequired.length > 0
+        service.missingRequired.length > 0
           ? chalk.red("✗ Critical Missing")
-          : missingOptional.length > 0
+          : service.missingOptional.length > 0
             ? chalk.yellow("⚠ Warning")
             : chalk.green("✓ OK");
 
-      console.log(`${chalk.bold(m.name.padEnd(12))} [${status}]`);
+      console.log(`${chalk.bold(service.name.padEnd(12))} [${status}]`);
 
-      if (missingRequired.length > 0) {
+      if (service.missingRequired.length > 0) {
         console.log(
-          chalk.red(`  Required missing: ${missingRequired.join(", ")}`),
-        );
-        totalMissing += missingRequired.length;
-      }
-      if (missingOptional.length > 0) {
-        console.log(
-          chalk.gray(`  Optional missing: ${missingOptional.join(", ")}`),
+          chalk.red(`  Required missing: ${service.missingRequired.join(", ")}`),
         );
       }
-      if (missingRequired.length === 0 && missingOptional.length === 0) {
+      if (service.missingOptional.length > 0) {
+        console.log(
+          chalk.gray(`  Optional missing: ${service.missingOptional.join(", ")}`),
+        );
+      }
+      if (
+        service.missingRequired.length === 0 &&
+        service.missingOptional.length === 0
+      ) {
         console.log(chalk.gray("  All variables set."));
       }
       console.log();
