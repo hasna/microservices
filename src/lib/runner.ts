@@ -7,7 +7,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { microserviceExists } from "./installer.js";
+import { microserviceExists, resolveMicroserviceBinary } from "./installer.js";
 import { getMicroservice } from "./registry.js";
 
 export interface RunResult {
@@ -39,14 +39,23 @@ export async function runMicroserviceCommand(
     return {
       success: false,
       stdout: "",
-      stderr: `microservice-${name} is not installed. Run: bun install -g ${meta.package}`,
+      stderr: `${meta.binary} is not installed. Run: bun install -g ${meta.package}`,
+      exitCode: 1,
+    };
+  }
+  const binaryPath = resolveMicroserviceBinary(name);
+  if (!binaryPath) {
+    return {
+      success: false,
+      stdout: "",
+      stderr: `Could not resolve global binary for ${meta.binary}.`,
       exitCode: 1,
     };
   }
 
   return new Promise((resolve) => {
     execFile(
-      meta.binary,
+      binaryPath,
       args,
       { timeout, maxBuffer: 10 * 1024 * 1024 },
       (error, stdout, stderr) => {

@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  getBunGlobalBinDir,
   getInstalledMicroservices,
   getMicroserviceStatus,
   microserviceExists,
+  resolveMicroserviceBinary,
 } from "./installer.js";
 import { MICROSERVICES } from "./registry.js";
 
@@ -43,4 +54,36 @@ describe("Installer", () => {
       expect(status.meta).toBeDefined();
     }
   }, 15000);
+
+  test("getBunGlobalBinDir prefers BUN_INSTALL/bin", () => {
+    expect(
+      getBunGlobalBinDir({
+        BUN_INSTALL: "/tmp/custom-bun",
+        HOME: "/tmp/home",
+      }),
+    ).toBe("/tmp/custom-bun/bin");
+  });
+
+  test("resolveMicroserviceBinary resolves executable from BUN_INSTALL", () => {
+    const temp = mkdtempSync(join(tmpdir(), "open-microservices-bin-"));
+    const binDir = join(temp, "bin");
+    const binaryPath = join(binDir, "microservice-auth");
+
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(binaryPath, "#!/usr/bin/env bash\necho 0.0.1\n");
+    chmodSync(binaryPath, 0o755);
+
+    const previous = process.env.BUN_INSTALL;
+    process.env.BUN_INSTALL = temp;
+    try {
+      expect(resolveMicroserviceBinary("auth")).toBe(binaryPath);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.BUN_INSTALL;
+      } else {
+        process.env.BUN_INSTALL = previous;
+      }
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
 });

@@ -7,6 +7,8 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
+import { accessSync, constants } from "node:fs";
+import { join } from "node:path";
 import {
   getMicroservice,
   MICROSERVICES,
@@ -25,28 +27,59 @@ export interface InstallOptions {
   force?: boolean;
 }
 
+export function getBunGlobalBinDir(env: NodeJS.ProcessEnv = process.env): string {
+  const bunInstall = env.BUN_INSTALL?.trim();
+  if (bunInstall) {
+    return join(bunInstall, "bin");
+  }
+
+  const home = env.HOME?.trim();
+  if (!home) {
+    throw new Error("Unable to determine Bun global bin path: HOME is not set.");
+  }
+
+  return join(home, ".bun", "bin");
+}
+
+export function resolveMicroserviceBinary(name: string): string | null {
+  const meta = getMicroservice(name);
+  if (!meta) return null;
+
+  const binDir = getBunGlobalBinDir();
+  const accessMode =
+    process.platform === "win32" ? constants.F_OK : constants.X_OK;
+  const candidates =
+    process.platform === "win32"
+      ? [join(binDir, `${meta.binary}.cmd`), join(binDir, `${meta.binary}.exe`)]
+      : [join(binDir, meta.binary)];
+
+  for (const candidate of candidates) {
+    try {
+      accessSync(candidate, accessMode);
+      return candidate;
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  return null;
+}
+
 /**
- * Check if a microservice binary is available in PATH
+ * Check if a microservice binary is available in Bun global bin.
  */
 export function microserviceExists(name: string): boolean {
-  const meta = getMicroservice(name);
-  if (!meta) return false;
-  try {
-    execSync(`which ${meta.binary}`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
+  return resolveMicroserviceBinary(name) !== null;
 }
 
 /**
  * Get the installed version of a microservice
  */
 export function getMicroserviceVersion(name: string): string | null {
-  const meta = getMicroservice(name);
-  if (!meta) return null;
+  const binaryPath = resolveMicroserviceBinary(name);
+  if (!binaryPath) return null;
   try {
-    const out = execFileSync(meta.binary, ["--version"], {
+    const out = execFileSync(binaryPath, ["--version"], {
       encoding: "utf8",
     }).trim();
     return out || null;
