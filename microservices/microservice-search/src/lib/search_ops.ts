@@ -284,6 +284,86 @@ async function hybridSearch(
   return merged.slice(0, limit);
 }
 
+export async function similarByEmbedding(
+  sql: Sql,
+  embedding: number[],
+  collection?: string,
+  workspaceId?: string,
+  limit: number = 10,
+): Promise<SearchResult[]> {
+  const embStr = JSON.stringify(embedding);
+
+  type Row = {
+    doc_id: string;
+    collection: string;
+    content: string;
+    metadata: any;
+    score: number;
+  };
+
+  if (collection && workspaceId) {
+    return sql<Row[]>`
+      SELECT
+        doc_id,
+        collection,
+        content,
+        metadata,
+        1 - (embedding <=> ${embStr}::vector) AS score
+      FROM search.documents
+      WHERE embedding IS NOT NULL
+        AND collection = ${collection}
+        AND workspace_id = ${workspaceId}
+      ORDER BY embedding <=> ${embStr}::vector
+      LIMIT ${limit}
+    `;
+  }
+
+  if (collection) {
+    return sql<Row[]>`
+      SELECT
+        doc_id,
+        collection,
+        content,
+        metadata,
+        1 - (embedding <=> ${embStr}::vector) AS score
+      FROM search.documents
+      WHERE embedding IS NOT NULL
+        AND collection = ${collection}
+      ORDER BY embedding <=> ${embStr}::vector
+      LIMIT ${limit}
+    `;
+  }
+
+  if (workspaceId) {
+    return sql<Row[]>`
+      SELECT
+        doc_id,
+        collection,
+        content,
+        metadata,
+        1 - (embedding <=> ${embStr}::vector) AS score
+      FROM search.documents
+      WHERE embedding IS NOT NULL
+        AND workspace_id = ${workspaceId}
+      ORDER BY embedding <=> ${embStr}::vector
+      LIMIT ${limit}
+    `;
+  }
+
+  return sql<Row[]>`
+    SELECT
+      doc_id,
+      collection,
+      content,
+      metadata,
+      1 - (embedding <=> ${embStr}::vector) AS score
+    FROM search.documents
+    WHERE embedding IS NOT NULL
+    ORDER BY embedding <=> ${embStr}::vector
+    LIMIT ${limit}
+  `;
+}
+
 export async function countDocuments(
   sql: Sql,
   collection: string,
@@ -304,4 +384,155 @@ export async function countDocuments(
     WHERE collection = ${collection}
   `;
   return parseInt(count, 10);
+}
+
+export interface FacetedSearchResult {
+  results: SearchResult[];
+  facets: Record<string, { value: string; count: number }[]>;
+}
+
+export async function facetedSearch(
+  sql: Sql,
+  query: SearchQuery & { facet_field: string; facet_limit?: number },
+): Promise<FacetedSearchResult> {
+  const { text, collection, workspaceId, mode = "text", limit = 10, facet_field, facet_limit = 20 } = query;
+
+  const results = await search(sql, { text, collection, workspaceId, mode, limit });
+
+  // Build facet counts from metadata JSONB field
+  const facetLimit = Math.max(1, Math.min(facet_limit, 100));
+  let facetSql;
+  if (collection && workspaceId) {
+    facetSql = sql<{ facet_value: string; count: number }[]>`
+      SELECT
+        metadata->>${facet_field} AS facet_value,
+        COUNT(*)::int AS count
+      FROM search.documents
+      WHERE fts_vector @@ plainto_tsquery('english', ${text})
+        AND collection = ${collection}
+        AND workspace_id = ${workspaceId}
+        AND metadata->>${facet_field} IS NOT NULL
+      GROUP BY facet_value
+      ORDER BY count DESC
+      LIMIT ${facetLimit}
+    `;
+  } else if (collection) {
+    facetSql = sql<{ facet_value: string; count: number }[]>`
+      SELECT
+        metadata->>${facet_field} AS facet_value,
+        COUNT(*)::int AS count
+      FROM search.documents
+      WHERE fts_vector @@ plainto_tsquery('english', ${text})
+        AND collection = ${collection}
+        AND metadata->>${facet_field} IS NOT NULL
+      GROUP BY facet_value
+      ORDER BY count DESC
+      LIMIT ${facetLimit}
+    `;
+  } else if (workspaceId) {
+    facetSql = sql<{ facet_value: string; count: number }[]>`
+      SELECT
+        metadata->>${facet_field} AS facet_value,
+        COUNT(*)::int AS count
+      FROM search.documents
+      WHERE fts_vector @@ plainto_tsquery('english', ${text})
+        AND workspace_id = ${workspaceId}
+        AND metadata->>${facet_field} IS NOT NULL
+      GROUP BY facet_value
+      ORDER BY count DESC
+      LIMIT ${facetLimit}
+    `;
+  } else {
+    facetSql = sql<{ facet_value: string; count: number }[]>`
+      SELECT
+        metadata->>${facet_field} AS facet_value,
+        COUNT(*)::int AS count
+      FROM search.documents
+      WHERE fts_vector @@ plainto_tsquery('english', ${text})
+        AND metadata->>${facet_field} IS NOT NULL
+      GROUP BY facet_value
+      ORDER BY count DESC
+      LIMIT ${facetLimit}
+    `;
+  }
+
+  const facets: Record<string, { value: string; count: number }[]> = {};
+  facets[facet_field] = await facetSql;
+
+  return { results, facets };
+}
+
+export async function multiCollectionSearch(
+  sql: Sql,
+  query: SearchQuery & { collections: string[] },
+): Promise<SearchResult[]> {
+  const { text, collections, workspaceId, mode = "text", limit = 10 } = query;
+  if (!collections.length) return [];
+
+  const safeLimit = Math.max(1, Math.min(limit, 200));
+  // Run search for each collection in parallel
+  const results = await Promise.all(
+    collections.map((col) =>
+      search(sql, { text, collection: col, workspaceId, mode, limit: safeLimit }),
+    ),
+  );
+
+  // Merge and resort by score
+  const merged: SearchResult[] = results.flat();
+  merged.sort((a, b) => b.score - a.score);
+  return merged.slice(0, safeLimit);
+}
+
+export async function autocomplete(
+  sql: Sql,
+  prefix: string,
+  collection?: string,
+  workspaceId?: string,
+  limit: number = 10,
+): Promise<{ doc_id: string; collection: string; content: string; metadata: any }[]> {
+  if (!prefix || prefix.trim() === "") return [];
+
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+
+  if (collection && workspaceId) {
+    return sql<{ doc_id: string; collection: string; content: string; metadata: any }[]>`
+      SELECT doc_id, collection, content, metadata
+      FROM search.documents
+      WHERE content ILIKE ${prefix + "%"}
+        AND collection = ${collection}
+        AND workspace_id = ${workspaceId}
+      ORDER BY updated_at DESC
+      LIMIT ${safeLimit}
+    `;
+  }
+
+  if (collection) {
+    return sql<{ doc_id: string; collection: string; content: string; metadata: any }[]>`
+      SELECT doc_id, collection, content, metadata
+      FROM search.documents
+      WHERE content ILIKE ${prefix + "%"}
+        AND collection = ${collection}
+      ORDER BY updated_at DESC
+      LIMIT ${safeLimit}
+    `;
+  }
+
+  if (workspaceId) {
+    return sql<{ doc_id: string; collection: string; content: string; metadata: any }[]>`
+      SELECT doc_id, collection, content, metadata
+      FROM search.documents
+      WHERE content ILIKE ${prefix + "%"}
+        AND workspace_id = ${workspaceId}
+      ORDER BY updated_at DESC
+      LIMIT ${safeLimit}
+    `;
+  }
+
+  return sql<{ doc_id: string; collection: string; content: string; metadata: any }[]>`
+    SELECT doc_id, collection, content, metadata
+    FROM search.documents
+    WHERE content ILIKE ${prefix + "%"}
+    ORDER BY updated_at DESC
+    LIMIT ${safeLimit}
+  `;
 }

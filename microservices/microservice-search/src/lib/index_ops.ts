@@ -95,6 +95,59 @@ export async function deleteCollection(
   return result.length;
 }
 
+export async function getDocument(
+  sql: Sql,
+  collection: string,
+  docId: string,
+): Promise<{ doc_id: string; collection: string; content: string; metadata: any; updated_at: string } | null> {
+  const result = await sql<{ doc_id: string; collection: string; content: string; metadata: any; updated_at: string }[]>`
+    SELECT doc_id, collection, content, metadata, updated_at
+    FROM search.documents
+    WHERE collection = ${collection} AND doc_id = ${docId}
+  `;
+  return result[0] ?? null;
+}
+
+export async function batchIndexDocuments(
+  sql: Sql,
+  documents: IndexDocumentInput[],
+): Promise<{ indexed: number; failed: number }> {
+  let indexed = 0;
+  let failed = 0;
+  for (const doc of documents) {
+    try {
+      await indexDocument(sql, doc);
+      indexed++;
+    } catch {
+      failed++;
+    }
+  }
+  return { indexed, failed };
+}
+
+export async function updateDocument(
+  sql: Sql,
+  collection: string,
+  docId: string,
+  data: Partial<Omit<IndexDocumentInput, "collection" | "docId">>,
+): Promise<boolean> {
+  const { content, workspaceId, metadata } = data;
+  if (!content && workspaceId === undefined && metadata === undefined) {
+    return false;
+  }
+  const result = await sql`
+    UPDATE search.documents
+    SET
+      content      = COALESCE(${content ?? null}, content),
+      workspace_id = ${workspaceId ?? workspaceId === undefined ? null : workspaceId},
+      metadata     = COALESCE(${metadata !== undefined ? sql.json(metadata) : null}, metadata),
+      updated_at   = NOW()
+    WHERE collection = ${collection} AND doc_id = ${docId}
+    RETURNING id
+  `;
+  return result.length > 0;
+}
+
 export async function listCollections(
   sql: Sql,
   workspaceId?: string,

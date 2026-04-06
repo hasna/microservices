@@ -94,7 +94,107 @@ export async function listFolders(
   `;
 }
 
-export async function deleteFolder(sql: Sql, id: string): Promise<boolean> {
+export async function deleteFolder(
+  sql: Sql,
+  id: string,
+  options?: { recursive?: boolean },
+): Promise<{ deleted_folders: number; deleted_files: number }> {
+  if (options?.recursive) {
+    // Get all descendant folder IDs
+    const descendants = await getDescendantFolderIds(sql, id);
+    const allFolderIds = [id, ...descendants.map(d => d.id)];
+    // Delete all files in these folders
+    const fileResult = await sql`DELETE FROM files.files WHERE folder_id = ANY(${allFolderIds}::uuid[])`;
+    // Delete all folders
+    const folderResult = await sql`DELETE FROM files.folders WHERE id = ANY(${allFolderIds}::uuid[])`;
+    return { deleted_folders: folderResult.count, deleted_files: fileResult.count };
+  }
+  // Non-recursive: only delete if empty
+  const [childFiles] = await sql<[{ count: string }]>`SELECT COUNT(*) as count FROM files.files WHERE folder_id = ${id} AND deleted_at IS NULL`;
+  if (parseInt(childFiles.count, 10) > 0) {
+    throw new Error("Folder is not empty. Use recursive=true to delete non-empty folders.");
+  }
+  const [childFolders] = await sql<[{ count: string }]>`SELECT COUNT(*) as count FROM files.folders WHERE parent_id = ${id}`;
+  if (parseInt(childFolders.count, 10) > 0) {
+    throw new Error("Folder has sub-folders. Use recursive=true to delete non-empty folders.");
+  }
   const result = await sql`DELETE FROM files.folders WHERE id = ${id}`;
-  return result.count > 0;
+  return { deleted_folders: result.count, deleted_files: 0 };
+}
+
+async function getDescendantFolderIds(sql: Sql, parentId: string): Promise<{ id: string }[]> {
+  return sql<{ id: string }[]>`
+    WITH RECURSIVE descendants AS (
+      SELECT id FROM files.folders WHERE parent_id = ${parentId}
+      UNION ALL
+      SELECT f.id FROM files.folders f JOIN descendants d ON f.parent_id = d.id
+    )
+    SELECT id FROM descendants
+  `;
+}
+
+/**
+ * Rename a folder (updates name and recalculates path for all descendants).
+ */
+export async function renameFolder(sql: Sql, id: string, newName: string): Promise<Folder | null> {
+  const [folder] = await sql<Folder[]>`
+    UPDATE files.folders SET name = ${newName}, updated_at = NOW()
+    WHERE id = ${id} RETURNING *
+  `;
+  if (!folder) return null;
+
+  // Recalculate path for this folder
+  const parentPath = folder.parent_id
+    ? (await getFolder(sql, folder.parent_id))?.path ?? "/"
+    : "/";
+  const newPath = buildPath(newName, parentPath);
+
+  await sql`UPDATE files.folders SET path = ${newPath}, updated_at = NOW() WHERE id = ${id}`;
+
+  // Update all descendant paths
+  const descendants = await getDescendantFolderIds(sql, id);
+  for (const desc of descendants) {
+    const [descFolder] = await sql<Folder[]>`SELECT * FROM files.folders WHERE id = ${desc.id}`;
+    if (descFolder) {
+      const descNewPath = buildPath(descFolder.name, newPath);
+      await sql`UPDATE files.folders SET path = ${descNewPath}, updated_at = NOW() WHERE id = ${desc.id}`;
+    }
+  }
+
+  return { ...folder, name: newName, path: newPath };
+}
+
+/**
+ * Move a folder to a new parent (recalculates path for folder and all descendants).
+ */
+export async function moveFolder(sql: Sql, id: string, newParentId: string | null): Promise<Folder | null> {
+  const [folder] = await sql<Folder[]>`
+    UPDATE files.folders SET parent_id = ${newParentId}, updated_at = NOW()
+    WHERE id = ${id} RETURNING *
+  `;
+  if (!folder) return null;
+
+  // Calculate new parent path
+  const parentPath = newParentId
+    ? (await getFolder(sql, newParentId))?.path ?? "/"
+    : "/";
+  const newPath = buildPath(folder.name, parentPath);
+
+  await sql`UPDATE files.folders SET path = ${newPath}, updated_at = NOW() WHERE id = ${id}`;
+
+  // Update all descendant paths
+  const descendants = await getDescendantFolderIds(sql, id);
+  for (const desc of descendants) {
+    const [descFolder] = await sql<Folder[]>`SELECT * FROM files.folders WHERE id = ${desc.id}`;
+    if (descFolder) {
+      // Find the parent path of this descendant
+      const descParentPath = descFolder.parent_id
+        ? (await getFolder(sql, descFolder.parent_id))?.path ?? "/"
+        : "/";
+      const descNewPath = buildPath(descFolder.name, descParentPath);
+      await sql`UPDATE files.folders SET path = ${descNewPath}, updated_at = NOW() WHERE id = ${desc.id}`;
+    }
+  }
+
+  return { ...folder, parent_id: newParentId, path: newPath };
 }

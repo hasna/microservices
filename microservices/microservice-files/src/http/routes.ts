@@ -6,14 +6,18 @@ import type { Sql } from "postgres";
 import { z } from "zod";
 import {
   bulkSoftDelete,
+  bulkRestore,
   createFileRecord,
   getFile,
   getStorageStats,
+  listDeletedFiles,
   listFiles,
   moveFile,
   renameFile,
+  restoreFile,
   softDeleteFile,
 } from "../lib/files.js";
+import { moveFolder, renameFolder } from "../lib/folders.js";
 import {
   getMimeType,
   getPresignedUrl,
@@ -320,6 +324,87 @@ export function makeRouter(sql: Sql) {
         } catch {
           return apiError("NOT_FOUND", "File not found", undefined, 404);
         }
+      }
+
+      // POST /files/:id/restore — restore a soft-deleted file
+      if (method === "POST" && path.match(/^\/files\/[^/]+\/restore$/)) {
+        const id = path.split("/")[2];
+        const restored = await restoreFile(sql, id);
+        if (!restored) return apiError("NOT_FOUND", "File not found or not deleted", undefined, 404);
+        return json({ ok: true, id });
+      }
+
+      // POST /files/restore-bulk — bulk restore
+      if (method === "POST" && path === "/files/restore-bulk") {
+        const BulkRestoreSchema = z.object({ ids: z.array(z.string()).min(1) });
+        const parsed = await parseBody(req, BulkRestoreSchema);
+        if ("error" in parsed) return parsed.error;
+        const count = await bulkRestore(sql, parsed.data.ids);
+        return json({ restored: count });
+      }
+
+      // GET /files/deleted — list soft-deleted files
+      if (method === "GET" && path === "/files/deleted") {
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id query param required");
+        const limit = parseInt(url.searchParams.get("limit") ?? "100", 10);
+        const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+        const files = await listDeletedFiles(sql, workspaceId, { limit, offset });
+        return json({ data: files, count: files.length });
+      }
+
+      // PATCH /folders/:id — rename folder
+      if (method === "PATCH" && path.match(/^\/folders\/[^/]+$/)) {
+        const id = path.split("/")[2];
+        const RenameFolderSchema = z.object({ name: z.string().min(1) });
+        const parsed = await parseBody(req, RenameFolderSchema);
+        if ("error" in parsed) return parsed.error;
+        const folder = await renameFolder(sql, id, parsed.data.name);
+        if (!folder) return apiError("NOT_FOUND", "Folder not found", undefined, 404);
+        return json(folder);
+      }
+
+      // POST /folders/:id/move — move folder
+      if (method === "POST" && path.match(/^\/folders\/[^/]+\/move$/)) {
+        const id = path.split("/")[2];
+        const MoveFolderSchema = z.object({ parent_id: z.string().nullable() });
+        const parsed = await parseBody(req, MoveFolderSchema);
+        if ("error" in parsed) return parsed.error;
+        const folder = await moveFolder(sql, id, parsed.data.parent_id);
+        if (!folder) return apiError("NOT_FOUND", "Folder not found", undefined, 404);
+        return json(folder);
+      }
+
+      // GET /health/full — comprehensive health report
+      if (method === "GET" && path === "/health/full") {
+        const start = Date.now();
+        let dbOk = false;
+        try {
+          await sql`SELECT 1`;
+          dbOk = true;
+        } catch {}
+        return json({
+          ok: dbOk,
+          service: "microservice-files",
+          db: dbOk,
+          latency_ms: Date.now() - start,
+          version: "0.0.1",
+        });
+      }
+
+      // GET /health/ready — readiness probe
+      if (method === "GET" && path === "/health/ready") {
+        let ready = false;
+        try {
+          await sql`SELECT 1`;
+          ready = true;
+        } catch {}
+        return json({ ready, service: "microservice-files" }, ready ? 200 : 503);
+      }
+
+      // GET /health/live — liveness probe
+      if (method === "GET" && path === "/health/live") {
+        return json({ alive: true, service: "microservice-files" });
       }
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);

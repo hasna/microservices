@@ -246,3 +246,128 @@ export async function findDuplicates(
   }
   return result;
 }
+
+/**
+ * Upload a file from a URL — fetches content and stores it.
+ * Returns the created FileRecord.
+ */
+export async function uploadFromUrl(
+  sql: Sql,
+  data: {
+    workspace_id?: string;
+    folder_id?: string;
+    name: string;
+    url: string;
+    mime_type?: string;
+    access?: "public" | "private" | "signed";
+    metadata?: any;
+    uploaded_by?: string;
+  },
+): Promise<FileRecord> {
+  const response = await fetch(data.url);
+  if (!response.ok) throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const size_bytes = buffer.length;
+  const mime_type = data.mime_type ?? response.headers.get("content-type") ?? "application/octet-stream";
+  // Determine storage backend
+  const storage: "s3" | "local" = process.env.S3_BUCKET ? "s3" : "local";
+  const storage_key = `${data.workspace_id ?? "common"}/${Date.now()}-${data.name}`;
+  let url: string | undefined;
+  if (storage === "s3") {
+    // Upload to S3 using env vars
+    const { S3_BUCKET, AWS_REGION } = process.env as Record<string, string>;
+    url = `https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${storage_key}`;
+    // S3 upload would go here — for now use the url field as provided
+  } else {
+    // Local storage
+    const localPath = `./storage/${storage_key}`;
+    const localDir = localPath.substring(0, localPath.lastIndexOf("/"));
+    await import("fs/promises").then(fs => fs.mkdir(localDir, { recursive: true }));
+    await import("fs/promises").then(fs => fs.writeFile(localPath, buffer));
+    url = `/storage/${storage_key}`;
+  }
+  const [file] = await sql<FileRecord[]>`
+    INSERT INTO files.files (
+      workspace_id, folder_id, name, original_name, mime_type,
+      size_bytes, storage, storage_key, url, access, metadata, uploaded_by
+    ) VALUES (
+      ${data.workspace_id ?? null},
+      ${data.folder_id ?? null},
+      ${data.name},
+      ${data.name},
+      ${mime_type},
+      ${size_bytes},
+      ${storage},
+      ${storage_key},
+      ${url},
+      ${data.access ?? "private"},
+      ${JSON.stringify(data.metadata ?? {})},
+      ${data.uploaded_by ?? null}
+    )
+    RETURNING *
+  `;
+  return file;
+}
+
+/**
+ * Restore a soft-deleted file.
+ */
+export async function restoreFile(sql: Sql, id: string): Promise<boolean> {
+  const result = await sql`
+    UPDATE files.files SET deleted_at = NULL, updated_at = NOW()
+    WHERE id = ${id} AND deleted_at IS NOT NULL
+  `;
+  return result.count > 0;
+}
+
+/**
+ * Bulk restore multiple soft-deleted files.
+ */
+export async function bulkRestore(sql: Sql, ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const result = await sql`
+    UPDATE files.files SET deleted_at = NULL, updated_at = NOW()
+    WHERE id = ANY(${ids}::uuid[]) AND deleted_at IS NOT NULL
+  `;
+  return result.count;
+}
+
+/**
+ * List soft-deleted files in a workspace.
+ */
+export async function listDeletedFiles(
+  sql: Sql,
+  workspaceId: string,
+  options?: { limit?: number; offset?: number },
+): Promise<FileRecord[]> {
+  const limit = options?.limit ?? 100;
+  const offset = options?.offset ?? 0;
+  return sql<FileRecord[]>`
+    SELECT * FROM files.files
+    WHERE workspace_id = ${workspaceId} AND deleted_at IS NOT NULL
+    ORDER BY deleted_at DESC
+    LIMIT ${limit}
+    OFFSET ${offset}
+  `;
+}
+
+/**
+ * Get file content as base64 string.
+ */
+export async function getFileContent(
+  sql: Sql,
+  id: string,
+): Promise<{ content: string; mime_type: string; name: string } | null> {
+  const file = await getFile(sql, id);
+  if (!file) return null;
+  if (file.storage === "local") {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const localPath = path.join(process.cwd(), "storage", file.storage_key);
+    const buffer = await fs.readFile(localPath);
+    return { content: buffer.toString("base64"), mime_type: file.mime_type, name: file.name };
+  }
+  // For S3, return URL reference
+  return { content: file.url ?? "", mime_type: file.mime_type, name: file.name };
+}

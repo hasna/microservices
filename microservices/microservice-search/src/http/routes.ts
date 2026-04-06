@@ -7,10 +7,11 @@ import { z } from "zod";
 import {
   deleteCollection,
   deleteDocument,
+  getDocument,
   indexDocument,
   listCollections,
 } from "../lib/index_ops.js";
-import { search } from "../lib/search_ops.js";
+import { search, countDocuments } from "../lib/search_ops.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -130,6 +131,56 @@ export function makeRouter(sql: Sql) {
         const workspaceId = url.searchParams.get("workspace_id") ?? undefined;
         const collections = await listCollections(sql, workspaceId);
         return json({ collections, count: collections.length });
+      }
+
+      // GET /search/collections/:name/count
+      if (method === "GET" && path.match(/^\/search\/collections\/[^/]+\/count$/)) {
+        const collection = decodeURIComponent(path.split("/")[3]);
+        const workspaceId = url.searchParams.get("workspace_id") ?? undefined;
+        const count = await countDocuments(sql, collection, workspaceId);
+        return json({ collection, count });
+      }
+
+      // GET /search/documents/:collection/:doc_id
+      if (method === "GET" && path.match(/^\/search\/documents\/[^/]+\/[^/]+$/)) {
+        const segments = path.split("/");
+        const collection = decodeURIComponent(segments[3]);
+        const docId = decodeURIComponent(segments[4]);
+        const doc = await getDocument(sql, collection, docId);
+        if (!doc) return apiError("NOT_FOUND", "Document not found", undefined, 404);
+        return json({ found: true, document: doc });
+      }
+
+      // GET /health/full — comprehensive health report
+      if (method === "GET" && path === "/health/full") {
+        const start = Date.now();
+        let dbOk = false;
+        try {
+          await sql`SELECT 1`;
+          dbOk = true;
+        } catch {}
+        return json({
+          ok: dbOk,
+          service: "microservice-search",
+          db: dbOk,
+          latency_ms: Date.now() - start,
+          version: "0.0.1",
+        });
+      }
+
+      // GET /health/ready — readiness probe
+      if (method === "GET" && path === "/health/ready") {
+        let ready = false;
+        try {
+          await sql`SELECT 1`;
+          ready = true;
+        } catch {}
+        return json({ ready, service: "microservice-search" }, ready ? 200 : 503);
+      }
+
+      // GET /health/live — liveness probe
+      if (method === "GET" && path === "/health/live") {
+        return json({ alive: true, service: "microservice-search" });
       }
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);

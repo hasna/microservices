@@ -7,6 +7,7 @@ export async function migrate(sql: Sql): Promise<void> {
   await run(sql, "002_subscriptions", m002);
   await run(sql, "003_invoices", m003);
   await run(sql, "004_usage_records", m004);
+await run(sql, "005_coupons_and_mrr", m005);
 }
 
 async function run(sql: Sql, name: string, fn: (sql: Sql) => Promise<void>) {
@@ -94,4 +95,59 @@ async function m004(sql: Sql) {
     )`;
   await sql`CREATE INDEX ON billing.usage_records (subscription_id)`;
   await sql`CREATE INDEX ON billing.usage_records (recorded_at)`;
+}
+
+async function m005(sql: Sql) {
+  // Coupons table
+  await sql`
+    CREATE TABLE billing.coupons (
+      id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      code              TEXT NOT NULL UNIQUE,
+      discount_type     TEXT NOT NULL CHECK (discount_type IN ('percent', 'fixed')),
+      discount_value    INT NOT NULL,
+      currency          TEXT,
+      max_redemptions   INT,
+      redemption_count  INT NOT NULL DEFAULT 0,
+      expires_at        TIMESTAMPTZ,
+      active            BOOLEAN NOT NULL DEFAULT true,
+      metadata          JSONB NOT NULL DEFAULT '{}',
+      created_at        TIMESTAMMTZ NOT NULL DEFAULT NOW()
+    )`;
+  await sql`CREATE INDEX ON billing.coupons (code, active)`;
+
+  // Coupon redemption log
+  await sql`
+    CREATE TABLE billing.coupon_redemptions (
+      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      coupon_id       UUID NOT NULL REFERENCES billing.coupons(id),
+      subscription_id UUID NOT NULL REFERENCES billing.subscriptions(id),
+      workspace_id     UUID NOT NULL,
+      redeemed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`;
+  await sql`CREATE INDEX ON billing.coupon_redemptions (subscription_id)`;
+
+  // Workspace credits (for manual adjustments / refunds)
+  await sql`
+    CREATE TABLE billing.credits (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      workspace_id   UUID NOT NULL,
+      amount_cents   INT NOT NULL,
+      reason        TEXT,
+      applied_to    UUID,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`;
+  await sql`CREATE INDEX ON billing.credits (workspace_id)`;
+
+  // MRR tracking snapshot (for revenue analytics)
+  await sql`
+    CREATE TABLE billing.mrr_snapshots (
+      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      workspace_id    UUID,
+      amount_cents    INT NOT NULL,
+      currency        TEXT NOT NULL DEFAULT 'usd',
+      interval         TEXT NOT NULL,
+      snapshot_date   DATE NOT NULL DEFAULT CURRENT_DATE,
+      created_at      TIMESTAMMTZ NOT NULL DEFAULT NOW()
+    )`;
+  await sql`CREATE INDEX ON billing.mrr_snapshots (workspace_id, snapshot_date)`;
 }

@@ -47,9 +47,23 @@ export {
   getSubscriptionByStripeId,
   getWorkspaceSubscription,
   listSubscriptions,
+  pauseSubscription,
+  resumeSubscription,
   type Subscription,
   type SubscriptionStatus,
   type UpsertSubscriptionData,
   updateSubscriptionStatus,
   upsertSubscription,
 } from "./subscriptions.js";
+export {
+  addCredit,
+  createCoupon,
+  getCouponByCode,
+  getCredits,
+  redeemCoupon,
+  type Coupon,
+} from "./coupons.js";
+export {
+  getRevenueMetrics,
+  type RevenueMetrics,
+} from "./analytics.js";

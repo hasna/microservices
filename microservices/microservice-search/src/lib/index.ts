@@ -18,13 +18,21 @@ export {
   deleteCollection,
   deleteDocument,
   type IndexDocumentInput,
+  getDocument,
+  batchIndexDocuments,
   indexDocument,
   listCollections,
+  updateDocument,
 } from "./index_ops.js";
 // Search
 export {
   countDocuments,
+  facetedSearch,
+  multiCollectionSearch,
+  autocomplete,
   type SearchQuery,
   type SearchResult,
+  type FacetedSearchResult,
   search,
+  similarByEmbedding,
 } from "./search_ops.js";

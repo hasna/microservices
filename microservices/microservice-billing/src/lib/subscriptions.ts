@@ -172,3 +172,29 @@ export async function listSubscriptions(
     Subscription[]
   >`SELECT * FROM billing.subscriptions ORDER BY created_at DESC`;
 }
+
+export async function pauseSubscription(
+  sql: Sql,
+  id: string,
+): Promise<{ paused: boolean; paused_at: string }> {
+  const [sub] = await sql<[{ id: string; status: string }]>`
+    UPDATE billing.subscriptions
+    SET status = 'paused', metadata = jsonb_set(COALESCE(metadata, '{}'), '{paused_at}', to_jsonb(NOW()::text)), updated_at = NOW()
+    WHERE id = ${id} AND status = 'active'
+    RETURNING id, status`;
+  if (!sub) throw new Error("Subscription not found or not active");
+  return { paused: true, paused_at: new Date().toISOString() };
+}
+
+export async function resumeSubscription(
+  sql: Sql,
+  id: string,
+): Promise<{ resumed: boolean }> {
+  const [sub] = await sql<[{ id: string; status: string }]>`
+    UPDATE billing.subscriptions
+    SET status = 'active', updated_at = NOW()
+    WHERE id = ${id} AND status = 'paused'
+    RETURNING id, status`;
+  if (!sub) throw new Error("Subscription not found or not paused");
+  return { resumed: true };
+}

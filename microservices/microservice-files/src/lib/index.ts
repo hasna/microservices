@@ -19,6 +19,7 @@ export {
   type FileRecord,
   findDuplicates,
   getFile,
+  getFileContent,
   getStorageStats,
   hardDeleteFile,
   listFiles,
@@ -26,6 +27,7 @@ export {
   renameFile,
   softDeleteFile,
   updateFile,
+  uploadFromUrl,
 } from "./files.js";
 
 // Folders
@@ -54,3 +56,14 @@ export {
   uploadToLocal,
   uploadToS3,
 } from "./storage.js";
+
+// Analytics
+export {
+  type TypeDistribution,
+  type StorageQuota,
+  getTypeDistribution,
+  searchFiles,
+  getStorageQuota,
+  getLargestFiles,
+  getFileActivityTimeline,
+} from "./analytics.js";
