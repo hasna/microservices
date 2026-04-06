@@ -12,7 +12,9 @@ import { evaluateAllFlags, evaluateFlag } from "../lib/evaluate.js";
 import {
   assignVariant,
   createExperiment,
+  getExperiment,
   listExperiments,
+  updateExperimentStatus,
 } from "../lib/experiments.js";
 import {
   addRule,
@@ -23,6 +25,7 @@ import {
   getFlagHistory,
   listFlags,
   listRules,
+  removeOverride,
   setOverride,
   updateFlag,
 } from "../lib/flags.js";
@@ -199,6 +202,58 @@ server.tool(
     limit: z.number().optional().default(20),
   },
   async ({ flag_id, limit }) => text(await getFlagHistory(sql, flag_id, limit)),
+);
+
+server.tool(
+  "flags_get_experiment",
+  "Get an experiment by ID",
+  { experiment_id: z.string() },
+  async ({ experiment_id }) => text(await getExperiment(sql, experiment_id)),
+);
+
+server.tool(
+  "flags_update_experiment_status",
+  "Update experiment status (active, paused, completed)",
+  {
+    experiment_id: z.string(),
+    status: z.enum(["active", "paused", "completed"]),
+  },
+  async ({ experiment_id, status }) =>
+    text(await updateExperimentStatus(sql, experiment_id, status)),
+);
+
+server.tool(
+  "flags_remove_override",
+  "Remove an override for a flag",
+  {
+    flag_id: z.string(),
+    target_type: z.enum(["user", "workspace"]),
+    target_id: z.string(),
+  },
+  async ({ flag_id, target_type, target_id }) =>
+    text({ removed: await removeOverride(sql, flag_id, target_type, target_id) }),
+);
+
+server.tool(
+  "flags_update_flag",
+  "Update a feature flag (name, description, default_value, enabled)",
+  {
+    id: z.string().describe("Flag ID to update"),
+    name: z.string().optional().describe("New display name"),
+    description: z.string().optional().describe("New description"),
+    enabled: z.boolean().optional().describe("Enable or disable the flag"),
+    default_value: z.string().optional().describe("New default value"),
+  },
+  async ({ id, ...rest }) => {
+    const data: Parameters<typeof updateFlag>[2] = {};
+    if (rest.name !== undefined) data.name = rest.name;
+    if (rest.description !== undefined) data.description = rest.description;
+    if (rest.enabled !== undefined) data.enabled = rest.enabled;
+    if (rest.default_value !== undefined) data.defaultValue = rest.default_value;
+    const result = await updateFlag(sql, id, data);
+    if (!result) return text({ error: "Flag not found" });
+    return text(result);
+  },
 );
 
 async function main(): Promise<void> {

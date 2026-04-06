@@ -6,6 +6,7 @@ export async function migrate(sql: Sql): Promise<void> {
   await run(sql, "001_agents", m001);
   await run(sql, "002_messages", m002);
   await run(sql, "003_tasks", m003);
+  await run(sql, "004_tools", m004);
 }
 
 async function run(sql: Sql, name: string, fn: (sql: Sql) => Promise<void>) {
@@ -79,4 +80,25 @@ async function m003(sql: Sql) {
   await sql`CREATE INDEX ON agents.tasks (assigned_to)`;
   await sql`CREATE INDEX ON agents.tasks (required_capability)`;
   await sql`CREATE INDEX ON agents.tasks (priority DESC)`;
+}
+
+async function m004(sql: Sql) {
+  // Agent tool registry — tools that agents expose for discovery and invocation
+  await sql`
+    CREATE TABLE agents.agent_tools (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id      UUID NOT NULL REFERENCES agents.agents(id) ON DELETE CASCADE,
+      name          TEXT NOT NULL,
+      description   TEXT,
+      schema        JSONB DEFAULT '{}', -- JSON Schema for tool input
+      config        JSONB DEFAULT '{}',
+      tags          TEXT[] DEFAULT '{}',
+      is_active     BOOLEAN DEFAULT true,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (agent_id, name)
+    )`;
+  await sql`CREATE INDEX ON agents.agent_tools (agent_id, is_active)`;
+  await sql`CREATE INDEX ON agents.agent_tools USING GIN (tags)`;
+  await sql`CREATE INDEX ON agents.agent_tools (name)`;
 }

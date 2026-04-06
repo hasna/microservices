@@ -13,11 +13,14 @@ import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
 import {
   checkQuota,
+  getQuota,
   getUsageSummary,
+  isValidPeriod,
   listMetrics,
   setQuota,
+  VALID_PERIODS,
 } from "../lib/query.js";
-import { track } from "../lib/track.js";
+import { getPeriodStart, track } from "../lib/track.js";
 
 const server = new Server(
   { name: "microservice-usage", version: "0.0.1" },
@@ -120,6 +123,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["workspace_id"],
       },
     },
+    {
+      name: "usage_get_quota",
+      description: "Get the configured quota (limit) for a workspace and metric",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspace_id: { type: "string" },
+          metric: { type: "string" },
+          period: {
+            type: "string",
+            enum: ["hour", "day", "month", "total"],
+          },
+        },
+        required: ["workspace_id", "metric"],
+      },
+    },
+    {
+      name: "usage_get_valid_periods",
+      description: "Get the list of valid period strings for quota configuration",
+      inputSchema: {
+        type: "object",
+        properties: {},
+      },
+    },
+    {
+      name: "usage_check_period_valid",
+      description: "Check whether a period string is valid",
+      inputSchema: {
+        type: "object",
+        properties: {
+          period: { type: "string" },
+        },
+        required: ["period"],
+      },
+    },
+    {
+      name: "usage_get_period_start",
+      description: "Get the start date of the current period for a given period type",
+      inputSchema: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            enum: ["hour", "day", "month"],
+          },
+        },
+        required: ["period"],
+      },
+    },
   ],
 }));
 
@@ -179,6 +231,27 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   if (name === "usage_list_metrics") {
     return text(await listMetrics(sql, String(a.workspace_id)));
+  }
+
+  if (name === "usage_get_quota") {
+    return text(await getQuota(
+      sql,
+      String(a.workspace_id),
+      String(a.metric),
+      a.period ? String(a.period) : "month",
+    ));
+  }
+
+  if (name === "usage_get_valid_periods") {
+    return text({ valid_periods: VALID_PERIODS });
+  }
+
+  if (name === "usage_check_period_valid") {
+    return text({ valid: isValidPeriod(String(a.period)) });
+  }
+
+  if (name === "usage_get_period_start") {
+    return text({ period_start: getPeriodStart(String(a.period)) });
   }
 
   throw new Error(`Unknown tool: ${name}`);

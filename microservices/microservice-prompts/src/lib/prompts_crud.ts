@@ -138,3 +138,56 @@ export async function deletePrompt(sql: Sql, id: string): Promise<boolean> {
   const result = await sql`DELETE FROM prompts.prompts WHERE id = ${id}`;
   return result.count > 0;
 }
+
+/**
+ * Clone an existing prompt with a new name (copies the current version).
+ */
+export async function clonePrompt(
+  sql: Sql,
+  sourcePromptId: string,
+  newName: string,
+  createdBy?: string,
+): Promise<PromptWithContent> {
+  const [source] = await sql<any[]>`
+    SELECT p.*, v.content, v.version_number, v.model, v.variables
+    FROM prompts.prompts p
+    LEFT JOIN prompts.versions v ON v.id = p.current_version_id
+    WHERE p.id = ${sourcePromptId}`;
+  if (!source) throw new Error(`Prompt ${sourcePromptId} not found`);
+
+  return await sql.begin(async (tx: any) => {
+    const [newPrompt] = await (tx as any)`
+      INSERT INTO prompts.prompts (workspace_id, name, description, tags)
+      VALUES (${source.workspace_id}, ${newName}, ${source.description}, ${source.tags})
+      RETURNING *`;
+    const [version] = await (tx as any)`
+      INSERT INTO prompts.versions (prompt_id, version_number, content, variables, model, created_by, change_note)
+      VALUES (${newPrompt.id}, 1, ${source.content}, ${source.variables}, ${source.model}, ${createdBy ?? null}, ${'Cloned from ' + source.name})`;
+    await (tx as any)`UPDATE prompts.prompts SET current_version_id = ${version.id} WHERE id = ${newPrompt.id}`;
+    return {
+      ...newPrompt,
+      current_version_id: version.id,
+      content: source.content,
+      version_number: 1,
+      model: source.model,
+      variables: source.variables,
+    } as PromptWithContent;
+  });
+}
+
+/**
+ * Validate that provided variables match the expected template variables.
+ * Returns missing and unexpected variables.
+ */
+export function validateVariables(
+  template: string,
+  provided: Record<string, string>,
+): { valid: boolean; missing: string[]; unexpected: string[] } {
+  const matches = template.match(/\{\{(\w+)\}\}/g);
+  const expected = matches ? [...new Set(matches.map((m) => m.slice(2, -2)))] : [];
+  const providedKeys = Object.keys(provided);
+  const missing = expected.filter((v) => !providedKeys.includes(v));
+  const unexpected = providedKeys.filter((v) => !expected.includes(v));
+  return { valid: missing.length === 0 && unexpected.length === 0, missing, unexpected };
+}
+

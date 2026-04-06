@@ -197,12 +197,110 @@ export async function updateJobProgress(
   progress: number,
   message?: string,
 ): Promise<void> {
-  // progress stored in result jsonb as {progress: N, message: "..."}
   await sql`
-    UPDATE jobs.jobs SET
-      result = jsonb_build_object('progress', ${Math.min(100, Math.max(0, progress))}, 'message', ${message ?? null}),
-      updated_at = NOW()
-    WHERE id = ${id} AND status = 'running'`;
+    UPDATE jobs.jobs
+    SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{progress}', ${progress}),
+        metadata = jsonb_set(COALESCE(metadata, '{}'), '{progress_message}', ${message ? JSON.stringify(message) : 'null'}),
+        updated_at = NOW()
+    WHERE id = ${id}`;
+}
+
+export interface IdempotencyResult {
+  job: Job;
+  is_duplicate: boolean;
+}
+
+/**
+ * Enqueue with idempotency — if a job with the same idempotency_key
+ * is already pending/running/completed within the dedup_window_minutes, return it instead.
+ */
+export async function enqueueIdempotent(
+  sql: Sql,
+  data: {
+    type: string;
+    payload?: any;
+    queue?: string;
+    priority?: number;
+    runAt?: Date;
+    maxAttempts?: number;
+    workspaceId?: string;
+    idempotencyKey: string;
+    dedupWindowMinutes?: number;
+  },
+): Promise<IdempotencyResult> {
+  const dedupWindow = data.dedupWindowMinutes ?? 60;
+  const cutoff = new Date(Date.now() - dedupWindow * 60000).toISOString();
+
+  // Check for existing job
+  const [existing] = await sql<Job[]>`
+    SELECT * FROM jobs.jobs
+    WHERE idempotency_key = ${data.idempotencyKey}
+      AND status IN ('pending', 'running', 'completed')
+      AND created_at > ${cutoff}
+    LIMIT 1`;
+
+  if (existing) {
+    return { job: existing, is_duplicate: true };
+  }
+
+  const [job] = await sql<Job[]>`
+    INSERT INTO jobs.jobs (type, payload, queue, priority, run_at, max_attempts, workspace_id, idempotency_key)
+    VALUES (${data.type}, ${JSON.stringify(data.payload ?? {})}, ${data.queue ?? "default"},
+            ${data.priority ?? 0}, ${data.runAt?.toISOString() ?? sql`NOW()`},
+            ${data.maxAttempts ?? 3}, ${data.workspaceId ?? null}, ${data.idempotencyKey})
+    RETURNING *`;
+  return { job, is_duplicate: false };
+}
+
+/**
+ * Enqueue multiple jobs in a batch.
+ * Returns the batch record with job IDs.
+ */
+export async function batchEnqueue(
+  sql: Sql,
+  jobs: Array<{
+    type: string;
+    payload?: any;
+    queue?: string;
+    priority?: number;
+    runAt?: Date;
+    maxAttempts?: number;
+    workspaceId?: string;
+  }>,
+): Promise<{ batch_id: string; job_count: number }> {
+  const [batch] = await sql<[{ id: string }]>`
+    INSERT INTO jobs.batches (queue, total_jobs)
+    VALUES ('default', ${jobs.length})
+    RETURNING id`;
+
+  for (const job of jobs) {
+    await enqueue(sql, {
+      type: job.type,
+      payload: job.payload,
+      queue: job.queue ?? "default",
+      priority: job.priority ?? 0,
+      runAt: job.runAt,
+      maxAttempts: job.maxAttempts ?? 3,
+      workspaceId: job.workspaceId,
+    });
+  }
+
+  return { batch_id: batch.id, job_count: jobs.length };
+}
+
+/**
+ * Get job progress from metadata.
+ */
+export async function getJobProgress(
+  sql: Sql,
+  id: string,
+): Promise<{ progress: number; message: string | null } | null> {
+  const [job] = await sql<[{ metadata: any } | undefined]>`SELECT metadata FROM jobs.jobs WHERE id = ${id}`;
+  if (!job) return null;
+  return {
+    progress: job.metadata?.progress ?? 0,
+    message: job.metadata?.progress_message ?? null,
+  };
 }
 
 export async function listDeadLetterJobs(

@@ -11,11 +11,14 @@ import { migrate } from "../db/migrations.js";
 import {
   acceptInvite,
   createInvite,
+  getInviteByToken,
   listWorkspaceInvites,
+  revokeInvite,
 } from "../lib/invites.js";
 import {
   addMember,
   checkPermission,
+  getMember,
   listMembers,
   removeMember,
   transferOwnership,
@@ -25,7 +28,9 @@ import {
   createWorkspace,
   deleteWorkspace,
   getWorkspace,
+  getWorkspaceBySlug,
   listUserWorkspaces,
+  updateWorkspace,
 } from "../lib/workspaces.js";
 
 const server = new McpServer({
@@ -217,6 +222,49 @@ server.tool(
     }
     return text({ results });
   },
+);
+
+server.tool(
+  "teams_get_invite_by_token",
+  "Get invite details by its token (for previewing before accepting)",
+  { token: z.string() },
+  async ({ token }) => text(await getInviteByToken(sql, token)),
+);
+
+server.tool(
+  "teams_revoke_invite",
+  "Revoke a pending invite by ID",
+  { invite_id: z.string() },
+  async ({ invite_id }) => text({ revoked: await revokeInvite(sql, invite_id) }),
+);
+
+server.tool(
+  "teams_get_member",
+  "Get a specific member's details in a workspace",
+  {
+    workspace_id: z.string(),
+    user_id: z.string(),
+  },
+  async ({ workspace_id, user_id }) => text(await getMember(sql, workspace_id, user_id)),
+);
+
+server.tool(
+  "teams_get_workspace_by_slug",
+  "Get workspace by its URL slug (e.g. acme-corp)",
+  { slug: z.string() },
+  async ({ slug }) => text(await getWorkspaceBySlug(sql, slug)),
+);
+
+server.tool(
+  "teams_update_workspace",
+  "Update workspace name or metadata",
+  {
+    id: z.string(),
+    name: z.string().optional(),
+    slug: z.string().optional(),
+    metadata: z.record(z.any()).optional(),
+  },
+  async ({ id, ...rest }) => text(await updateWorkspace(sql, id, rest)),
 );
 
 async function main(): Promise<void> {

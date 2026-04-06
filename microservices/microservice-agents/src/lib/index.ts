@@ -32,3 +32,18 @@ export {
   listTasks,
   type Task,
 } from "./tasks.js";
+export {
+  type AgentTool,
+  type RegisterToolInput,
+  registerTool,
+  deregisterTool,
+  getTool,
+  getToolByName,
+  listToolsForAgent,
+  listToolsByTag,
+  updateTool,
+  activateTool,
+  deactivateTool,
+  searchTools,
+  discoverToolsForCapability,
+} from "./tools.js";

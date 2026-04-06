@@ -11,9 +11,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
-import { createFlow, listFlows } from "../lib/flows.js";
+import { createFlow, deleteFlow, getFlow, getFlowByName, listFlows, updateFlow } from "../lib/flows.js";
 import {
   getProgress,
+  getUserFlows,
   isComplete,
   markStep,
   resetProgress,
@@ -124,6 +125,41 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["user_id", "flow_id"],
       },
     },
+    {
+      name: "onboarding_get_flow",
+      description: "Get a flow by ID",
+      inputSchema: { type: "object", properties: { flow_id: { type: "string" } }, required: ["flow_id"] },
+    },
+    {
+      name: "onboarding_get_flow_by_name",
+      description: "Get a flow by its unique name",
+      inputSchema: { type: "object", properties: { name: { type: "string" }, workspace_id: { type: "string" } }, required: ["name"] },
+    },
+    {
+      name: "onboarding_update_flow",
+      description: "Update a flow's name, description, or steps",
+      inputSchema: {
+        type: "object",
+        properties: {
+          flow_id: { type: "string" },
+          name: { type: "string" },
+          description: { type: "string" },
+          steps: { type: "array" },
+          active: { type: "boolean" },
+        },
+        required: ["flow_id"],
+      },
+    },
+    {
+      name: "onboarding_delete_flow",
+      description: "Delete an onboarding flow",
+      inputSchema: { type: "object", properties: { flow_id: { type: "string" } }, required: ["flow_id"] },
+    },
+    {
+      name: "onboarding_get_user_flows",
+      description: "Get all flows and their completion status for a user",
+      inputSchema: { type: "object", properties: { user_id: { type: "string" } }, required: ["user_id"] },
+    },
   ],
 }));
 
@@ -185,6 +221,27 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (name === "onboarding_reset") {
     await resetProgress(sql, String(a.user_id), String(a.flow_id));
     return text({ ok: true });
+  }
+
+  if (name === "onboarding_get_flow") {
+    return text(await getFlow(sql, String(a.flow_id)));
+  }
+
+  if (name === "onboarding_get_flow_by_name") {
+    return text(await getFlowByName(sql, String(a.name), a.workspace_id ? String(a.workspace_id) : undefined));
+  }
+
+  if (name === "onboarding_update_flow") {
+    const { flow_id, ...rest } = a;
+    return text(await updateFlow(sql, String(flow_id), rest));
+  }
+
+  if (name === "onboarding_delete_flow") {
+    return text({ deleted: await deleteFlow(sql, String(a.flow_id)) });
+  }
+
+  if (name === "onboarding_get_user_flows") {
+    return text(await getUserFlows(sql, String(a.user_id)));
   }
 
   throw new Error(`Unknown tool: ${name}`);

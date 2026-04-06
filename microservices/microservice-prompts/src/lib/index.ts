@@ -23,9 +23,12 @@ export {
   getPrompt,
   getPromptById,
   listPrompts,
+  clonePrompt,
+  validateVariables,
   type Prompt,
   type PromptWithContent,
 } from "./prompts_crud.js";
+export { searchPrompts } from "./search.js";
 export {
   interpolateVariables,
   type ResolveContext,

@@ -14,12 +14,18 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
-import { createCampaign } from "../lib/campaigns.js";
+import { createCampaign, getCampaign, listCampaigns, updateCampaign } from "../lib/campaigns.js";
 import {
+  calculatePriorityScore,
+  getEntry,
+  getEntryByEmail,
   getPosition,
   inviteBatch,
+  isValidEmail,
   joinWaitlist,
   listEntries,
+  markJoined,
+  removeEntry,
   updateScore,
 } from "../lib/entries.js";
 import { getWaitlistStats } from "../lib/stats.js";
@@ -140,6 +146,50 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["entry_id", "score"],
       },
     },
+    {
+      name: "waitlist_get_campaign",
+      description: "Get a waitlist campaign by ID",
+      inputSchema: { type: "object", properties: { campaign_id: { type: "string" } }, required: ["campaign_id"] },
+    },
+    {
+      name: "waitlist_list_campaigns",
+      description: "List all waitlist campaigns",
+      inputSchema: { type: "object", properties: { status: { type: "string", enum: ["active", "paused", "closed"] } } },
+    },
+    {
+      name: "waitlist_update_campaign",
+      description: "Update a campaign's name, description, or status",
+      inputSchema: {
+        type: "object",
+        properties: {
+          campaign_id: { type: "string" },
+          name: { type: "string" },
+          description: { type: "string" },
+          status: { type: "string", enum: ["active", "paused", "closed"] },
+        },
+        required: ["campaign_id"],
+      },
+    },
+    {
+      name: "waitlist_get_entry",
+      description: "Get a waitlist entry by ID",
+      inputSchema: { type: "object", properties: { entry_id: { type: "string" } }, required: ["entry_id"] },
+    },
+    {
+      name: "waitlist_get_entry_by_email",
+      description: "Get a waitlist entry by email within a campaign",
+      inputSchema: { type: "object", properties: { campaign_id: { type: "string" }, email: { type: "string" } }, required: ["campaign_id", "email"] },
+    },
+    {
+      name: "waitlist_mark_joined",
+      description: "Mark an invited entry as joined (user completed sign-up)",
+      inputSchema: { type: "object", properties: { entry_id: { type: "string" } }, required: ["entry_id"] },
+    },
+    {
+      name: "waitlist_remove_entry",
+      description: "Remove a waitlist entry",
+      inputSchema: { type: "object", properties: { entry_id: { type: "string" } }, required: ["entry_id"] },
+    },
   ],
 }));
 
@@ -200,6 +250,35 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (name === "waitlist_update_score") {
     await updateScore(sql, String(a.entry_id), Number(a.score));
     return text({ ok: true });
+  }
+
+  if (name === "waitlist_get_campaign") {
+    return text(await getCampaign(sql, String(a.campaign_id)));
+  }
+
+  if (name === "waitlist_list_campaigns") {
+    return text(await listCampaigns(sql, a.status ? String(a.status) : undefined));
+  }
+
+  if (name === "waitlist_update_campaign") {
+    const { campaign_id, ...rest } = a;
+    return text(await updateCampaign(sql, String(campaign_id), rest));
+  }
+
+  if (name === "waitlist_get_entry") {
+    return text(await getEntry(sql, String(a.entry_id)));
+  }
+
+  if (name === "waitlist_get_entry_by_email") {
+    return text(await getEntryByEmail(sql, String(a.campaign_id), String(a.email)));
+  }
+
+  if (name === "waitlist_mark_joined") {
+    return text({ joined: await markJoined(sql, String(a.entry_id)) });
+  }
+
+  if (name === "waitlist_remove_entry") {
+    return text({ removed: await removeEntry(sql, String(a.entry_id)) });
   }
 
   throw new Error(`Unknown tool: ${name}`);

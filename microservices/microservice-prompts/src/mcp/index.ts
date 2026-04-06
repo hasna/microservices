@@ -7,14 +7,18 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { getDb } from "../db/client.js";
 import { migrate } from "../db/migrations.js";
-import { createExperiment } from "../lib/experiments.js";
-import { setOverride } from "../lib/overrides.js";
+import { createExperiment, pickVariant, startExperiment, stopExperiment, getAssignment, listExperiments } from "../lib/experiments.js";
+import { setOverride, getOverrideForScope, removeOverride, listOverrides } from "../lib/overrides.js";
 import {
   createPrompt,
   deletePrompt,
+  getPrompt,
+  getPromptById,
   listPrompts,
+  clonePrompt,
+  validateVariables,
 } from "../lib/prompts_crud.js";
-import { resolvePrompt } from "../lib/resolve.js";
+import { resolvePrompt, interpolateVariables } from "../lib/resolve.js";
 import {
   diffVersions,
   getVersion,
@@ -22,6 +26,7 @@ import {
   rollback,
   updatePrompt,
 } from "../lib/versions.js";
+import { searchPrompts } from "../lib/search.js";
 
 const server = new Server(
   { name: "microservice-prompts", version: "0.0.1" },
@@ -172,6 +177,140 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["id"],
       },
     },
+    {
+      name: "prompts_get_override",
+      description: "Get the active override for a prompt at a given scope",
+      inputSchema: {
+        type: "object",
+        properties: {
+          prompt_id: { type: "string" },
+          scope_type: { type: "string" },
+          scope_id: { type: "string" },
+        },
+        required: ["prompt_id", "scope_type", "scope_id"],
+      },
+    },
+    {
+      name: "prompts_remove_override",
+      description: "Remove a prompt override for a scope",
+      inputSchema: {
+        type: "object",
+        properties: { override_id: { type: "string" } },
+        required: ["override_id"],
+      },
+    },
+    {
+      name: "prompts_pick_variant",
+      description: "Pick an experiment variant for a user (uses sticky assignment)",
+      inputSchema: {
+        type: "object",
+        properties: {
+          experiment_id: { type: "string" },
+          user_id: { type: "string" },
+        },
+        required: ["experiment_id", "user_id"],
+      },
+    },
+    {
+      name: "prompts_list_overrides",
+      description: "List all overrides for a prompt",
+      inputSchema: { type: "object", properties: { prompt_id: { type: "string" } }, required: ["prompt_id"] },
+    },
+    {
+      name: "prompts_interpolate",
+      description: "Interpolate variables into a prompt template without resolution (direct substitution)",
+      inputSchema: {
+        type: "object",
+        properties: {
+          template: { type: "string" },
+          variables: { type: "object" },
+        },
+        required: ["template", "variables"],
+      },
+    },
+    {
+      name: "prompts_get_prompt",
+      description: "Get the latest version of a prompt by workspace and name",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspace_id: { type: "string" },
+          name: { type: "string" },
+        },
+        required: ["workspace_id", "name"],
+      },
+    },
+    {
+      name: "prompts_start_experiment",
+      description: "Start an A/B experiment (enable variant assignment)",
+      inputSchema: { type: "object", properties: { experiment_id: { type: "string" } }, required: ["experiment_id"] },
+    },
+    {
+      name: "prompts_stop_experiment",
+      description: "Stop an A/B experiment (disable new assignments, keep existing)",
+      inputSchema: { type: "object", properties: { experiment_id: { type: "string" } }, required: ["experiment_id"] },
+    },
+    {
+      name: "prompts_list_experiments",
+      description: "List all experiments for a prompt",
+      inputSchema: { type: "object", properties: { prompt_id: { type: "string" } }, required: ["prompt_id"] },
+    },
+    {
+      name: "prompts_get_assignment",
+      description: "Get which variant a user was assigned to in an experiment",
+      inputSchema: {
+        type: "object",
+        properties: { experiment_id: { type: "string" }, user_id: { type: "string" } },
+        required: ["experiment_id", "user_id"],
+      },
+    },
+    {
+      name: "prompts_get_prompt_by_id",
+      description: "Get a prompt by its UUID",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+      },
+    },
+    {
+      name: "prompts_search",
+      description: "Full-text search across prompt names, descriptions, and content",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspace_id: { type: "string" },
+          query: { type: "string" },
+          limit: { type: "number" },
+        },
+        required: ["workspace_id", "query"],
+      },
+    },
+    {
+      name: "prompts_clone",
+      description: "Clone an existing prompt with a new name (copies current version)",
+      inputSchema: {
+        type: "object",
+        properties: {
+          source_prompt_id: { type: "string" },
+          new_name: { type: "string" },
+          created_by: { type: "string" },
+        },
+        required: ["source_prompt_id", "new_name"],
+      },
+    },
+    {
+      name: "prompts_validate_variables",
+      description: "Validate that provided variables match the expected template variables",
+      inputSchema: {
+        type: "object",
+        properties: {
+          template: { type: "string" },
+          variables: { type: "object" },
+        },
+        required: ["template", "variables"],
+      },
+    },
   ],
 }));
 
@@ -264,6 +403,54 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
   if (name === "prompts_delete") {
     return t({ deleted: await deletePrompt(sql, String(a.id)) });
+  }
+  if (name === "prompts_get_override") {
+    const override = await getOverrideForScope(
+      sql,
+      String(a.prompt_id),
+      a.scope_type as "workspace" | "user" | "agent",
+      String(a.scope_id),
+    );
+    return t(override || null);
+  }
+  if (name === "prompts_remove_override") {
+    return t({ removed: await removeOverride(sql, String(a.override_id)) });
+  }
+  if (name === "prompts_pick_variant") {
+    return t(await pickVariant(sql, String(a.experiment_id), String(a.user_id)));
+  }
+  if (name === "prompts_list_overrides") {
+    return t(await listOverrides(sql, String(a.prompt_id)));
+  }
+  if (name === "prompts_interpolate") {
+    return t({ result: interpolateVariables(String(a.template), a.variables as Record<string, string>) });
+  }
+  if (name === "prompts_get_prompt") {
+    return t(await getPrompt(sql, String(a.workspace_id), String(a.name)));
+  }
+  if (name === "prompts_start_experiment") {
+    return t(await startExperiment(sql, String(a.experiment_id)));
+  }
+  if (name === "prompts_stop_experiment") {
+    return t(await stopExperiment(sql, String(a.experiment_id)));
+  }
+  if (name === "prompts_list_experiments") {
+    return t(await listExperiments(sql, String(a.prompt_id)));
+  }
+  if (name === "prompts_get_assignment") {
+    return t(await getAssignment(sql, String(a.experiment_id), String(a.user_id)));
+  }
+  if (name === "prompts_get_prompt_by_id") {
+    return t(await getPromptById(sql, String(a.id)));
+  }
+  if (name === "prompts_search") {
+    return t(await searchPrompts(sql, String(a.workspace_id), String(a.query), { limit: a.limit as number | undefined }));
+  }
+  if (name === "prompts_clone") {
+    return t(await clonePrompt(sql, String(a.source_prompt_id), String(a.new_name), a.created_by as string | undefined));
+  }
+  if (name === "prompts_validate_variables") {
+    return t(validateVariables(String(a.template), a.variables as Record<string, string>));
   }
   throw new Error(`Unknown tool: ${name}`);
 });
