@@ -18,6 +18,12 @@ export interface Conversation {
   message_count: number;
   created_at: string;
   updated_at: string;
+  parent_id: string | null;
+  fork_depth: number;
+  summary: string | null;
+  summary_tokens: number | null;
+  is_fork_pinned: boolean;
+  root_id: string | null;
 }
 
 export async function createConversation(
@@ -123,13 +129,14 @@ export async function updateConversation(
     is_archived?: boolean;
     is_pinned?: boolean;
     metadata?: any;
+    summary?: string;
+    summary_tokens?: number;
+    is_fork_pinned?: boolean;
   },
 ): Promise<Conversation | null> {
-  const _sets: string[] = [];
   const conv = await getConversation(sql, id);
   if (!conv) return null;
 
-  // Build dynamic update
   const [updated] = await sql<Conversation[]>`
     UPDATE sessions.conversations SET
       title         = COALESCE(${data.title ?? null}, title),
@@ -138,11 +145,101 @@ export async function updateConversation(
       is_archived   = COALESCE(${data.is_archived ?? null}, is_archived),
       is_pinned     = COALESCE(${data.is_pinned ?? null}, is_pinned),
       metadata      = COALESCE(${data.metadata ? JSON.stringify(data.metadata) : null}::jsonb, metadata),
+      summary       = COALESCE(${data.summary ?? null}, summary),
+      summary_tokens = COALESCE(${data.summary_tokens ?? null}, summary_tokens),
+      is_fork_pinned = COALESCE(${data.is_fork_pinned ?? null}, is_fork_pinned),
       updated_at    = NOW()
     WHERE id = ${id}
     RETURNING *
   `;
   return updated ?? null;
+}
+
+/**
+ * Update or set a conversation summary (typically called by an LLM summarizer).
+ */
+export async function updateSummary(
+  sql: Sql,
+  id: string,
+  summary: string,
+  summaryTokens: number,
+): Promise<Conversation | null> {
+  return updateConversation(sql, id, { summary, summary_tokens: summaryTokens });
+}
+
+/**
+ * Pin or unpin a fork in the conversation tree.
+ */
+export async function setForkPinned(
+  sql: Sql,
+  id: string,
+  pinned: boolean,
+): Promise<Conversation | null> {
+  return updateConversation(sql, id, { is_fork_pinned: pinned });
+}
+
+/**
+ * Get the full fork tree for a given conversation (all descendants).
+ */
+export async function getForkTree(
+  sql: Sql,
+  conversationId: string,
+): Promise<Conversation[]> {
+  // Find root
+  const conv = await getConversation(sql, conversationId);
+  if (!conv) return [];
+  const rootId = conv.root_id ?? conv.id;
+
+  // Recursive CTE to get all descendants
+  return sql<Conversation[]>`
+    WITH RECURSIVE fork_tree AS (
+      SELECT * FROM sessions.conversations WHERE id = ${rootId}
+      UNION ALL
+      SELECT c.* FROM sessions.conversations c
+      INNER JOIN fork_tree ft ON c.parent_id = ft.id
+    )
+    SELECT * FROM fork_tree ORDER BY fork_depth ASC, created_at ASC
+  `;
+}
+
+/**
+ * Summarize a conversation: condenses older messages into a summary.
+ * The actual summarization should be done by an LLM — this function stores the result.
+ */
+export async function summarizeConversation(
+  sql: Sql,
+  id: string,
+  summaryText: string,
+  tokensUsed: number,
+): Promise<Conversation | null> {
+  return updateSummary(sql, id, summaryText, tokensUsed);
+}
+
+/**
+ * Get the root conversation of a fork tree.
+ */
+export async function getRootConversation(
+  sql: Sql,
+  conversationId: string,
+): Promise<Conversation | null> {
+  const conv = await getConversation(sql, conversationId);
+  if (!conv) return null;
+  if (!conv.root_id) return conv;
+  return getConversation(sql, conv.root_id);
+}
+
+/**
+ * List all forks directly descended from a conversation.
+ */
+export async function listChildForks(
+  sql: Sql,
+  conversationId: string,
+): Promise<Conversation[]> {
+  return sql<Conversation[]>`
+    SELECT * FROM sessions.conversations
+    WHERE parent_id = ${conversationId}
+    ORDER BY created_at ASC
+  `;
 }
 
 export async function deleteConversation(
@@ -166,6 +263,7 @@ export async function forkConversation(
   sql: Sql,
   conversationId: string,
   fromMessageId: string,
+  opts: { title?: string; pinFork?: boolean } = {},
 ): Promise<Conversation | null> {
   const original = await getConversation(sql, conversationId);
   if (!original) return null;
@@ -176,24 +274,33 @@ export async function forkConversation(
   `;
   if (!targetMsg) return null;
 
-  // Create a new conversation
+  const rootId = original.root_id ?? original.id;
+
+  // Create a new conversation with fork tree fields
   const [forked] = await sql<Conversation[]>`
-    INSERT INTO sessions.conversations (workspace_id, user_id, title, model, system_prompt, metadata)
+    INSERT INTO sessions.conversations (workspace_id, user_id, title, model, system_prompt, metadata, parent_id, fork_depth, root_id, is_fork_pinned)
     VALUES (
       ${original.workspace_id},
       ${original.user_id},
-      ${original.title ? `Fork of ${original.title}` : "Forked conversation"},
+      ${opts.title ?? (original.title ? `Fork of ${original.title}` : "Forked conversation")},
       ${original.model},
       ${original.system_prompt},
-      ${JSON.stringify(original.metadata)}
+      ${JSON.stringify(original.metadata)},
+      ${conversationId},
+      ${original.fork_depth + 1},
+      ${rootId},
+      ${opts.pinFork ?? false}
     )
     RETURNING *
   `;
 
-  // Copy messages up to and including the target message
+  // Copy messages up to and including the target message, marking fork point
   await sql`
-    INSERT INTO sessions.messages (conversation_id, role, content, name, tool_calls, tokens, latency_ms, model, metadata, is_pinned, created_at)
-    SELECT ${forked.id}, role, content, name, tool_calls, tokens, latency_ms, model, metadata, is_pinned, created_at
+    INSERT INTO sessions.messages (conversation_id, role, content, name, tool_calls, tokens, latency_ms, model, metadata, is_pinned, fork_point, created_at)
+    SELECT
+      ${forked.id}, role, content, name, tool_calls, tokens, latency_ms, model, metadata, is_pinned,
+      CASE WHEN id = ${fromMessageId} THEN true ELSE false END,
+      created_at
     FROM sessions.messages
     WHERE conversation_id = ${conversationId}
       AND created_at <= ${targetMsg.created_at}

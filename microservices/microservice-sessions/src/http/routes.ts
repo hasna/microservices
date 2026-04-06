@@ -20,6 +20,12 @@ import {
   pinMessage,
   searchMessages,
 } from "../lib/messages.js";
+import { pinFork, unpinFork } from "../lib/fork-pinning.js";
+import {
+  createScheduledArchival,
+  getScheduledArchival,
+} from "../lib/session-scheduler.js";
+import { listRetentionPolicyRules } from "../lib/session-retention-policies.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -299,6 +305,105 @@ export function makeRouter(sql: Sql) {
         return msg
           ? json(msg)
           : apiError("NOT_FOUND", "Message not found", undefined, 404);
+      }
+
+      // GET /sessions/scheduled/:workspace_id — list scheduled archivals for a workspace
+      if (
+        method === "GET" &&
+        path.match(/^\/sessions\/scheduled\/[^/]+$/)
+      ) {
+        const workspaceId = path.split("/")[3];
+        const status = url.searchParams.get("status") ?? undefined;
+        const action = url.searchParams.get("action") ?? undefined;
+        const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : 50;
+        const offset = url.searchParams.get("offset") ? parseInt(url.searchParams.get("offset")!, 10) : 0;
+        const statusFilter = status ? sql`AND sa.status = ${status}` : sql``;
+        const actionFilter = action ? sql`AND sa.action = ${action}` : sql``;
+        const rows = await sql`
+          SELECT sa.*, c.title as session_title
+          FROM sessions.scheduled_archivals sa
+          JOIN sessions.conversations c ON c.id = sa.session_id
+          WHERE c.workspace_id = ${workspaceId}
+            ${statusFilter}
+            ${actionFilter}
+          ORDER BY sa.scheduled_for ASC
+          LIMIT ${limit} OFFSET ${offset}
+        `;
+        return json({ workspace_id: workspaceId, archivals: rows, count: rows.length, limit, offset });
+      }
+
+      // POST /sessions/scheduled/bulk — bulk schedule archival for multiple sessions
+      if (method === "POST" && path === "/sessions/scheduled/bulk") {
+        const BulkScheduleSchema = z.object({
+          session_ids: z.array(z.string().uuid()).min(1).max(200),
+          scheduled_for: z.string(),
+          action: z.enum(["archive", "delete", "snapshot_then_delete", "summarize"]),
+          retention_policy_id: z.string().uuid().optional(),
+        });
+        const parsed = await parseBody(req, BulkScheduleSchema);
+        if ("error" in parsed) return parsed.error;
+        const scheduledFor = new Date(parsed.data.scheduled_for);
+        const results: { session_id: string; archival_id: string | null; error?: string }[] = [];
+        for (const sid of parsed.data.session_ids) {
+          try {
+            const arch = await createScheduledArchival(sql, {
+              sessionId: sid,
+              scheduledFor,
+              action: parsed.data.action,
+              retentionPolicyId: parsed.data.retention_policy_id,
+            });
+            results.push({ session_id: sid, archival_id: arch.id });
+          } catch (e) {
+            results.push({ session_id: sid, archival_id: null, error: e instanceof Error ? e.message : String(e) });
+          }
+        }
+        return json({
+          total: results.length,
+          scheduled: results.filter(r => r.archival_id !== null).length,
+          errors: results.filter(r => r.error).length,
+          results,
+        }, 201);
+      }
+
+      // GET /sessions/retention/:workspace_id — list retention policies for a workspace
+      if (
+        method === "GET" &&
+        path.match(/^\/sessions\/retention\/[^/]+$/)
+      ) {
+        const workspaceId = path.split("/")[3];
+        const enabled = url.searchParams.get("enabled");
+        const trigger = url.searchParams.get("trigger") ?? undefined;
+        const action = url.searchParams.get("action") ?? undefined;
+        const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : 50;
+        const offset = url.searchParams.get("offset") ? parseInt(url.searchParams.get("offset")!, 10) : 0;
+        const enabledFilter = enabled !== null ? { enabled: enabled === "true" } : {};
+        const policies = await listRetentionPolicyRules(sql, workspaceId, { trigger, action, ...enabledFilter, limit, offset });
+        return json({ workspace_id: workspaceId, policies, count: policies.length, limit, offset });
+      }
+
+      // POST /sessions/forks/:fork_id/pin — pin a fork
+      if (
+        method === "POST" &&
+        path.match(/^\/sessions\/forks\/[^/]+\/pin$/)
+      ) {
+        const forkId = path.split("/")[3];
+        const body = await req.json().catch(() => ({}));
+        const pin = await pinFork(sql, forkId, {
+          pinnedBy: body.pinned_by ?? null,
+          pinNote: body.pin_note ?? null,
+          autoProtect: body.auto_protect ?? true,
+        });
+        return json(pin, 201);
+      }
+
+      // DELETE /sessions/forks/:fork_id/pin — unpin a fork
+      if (
+        method === "DELETE" &&
+        path.match(/^\/sessions\/forks\/[^/]+\/pin$/)
+      ) {
+        const forkId = path.split("/")[3];
+        const unpinned = await unpinFork(sql, forkId);
+        return json({ fork_id: forkId, unpinned });
       }
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);

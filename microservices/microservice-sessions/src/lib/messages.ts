@@ -16,6 +16,8 @@ export interface Message {
   model: string | null;
   metadata: any;
   is_pinned: boolean;
+  fork_point: boolean;
+  summary_of_prior: boolean;
   created_at: string;
 }
 
