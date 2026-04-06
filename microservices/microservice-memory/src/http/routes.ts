@@ -13,6 +13,9 @@ import {
   storeMemory,
   updateMemoryImportance,
 } from "../lib/memories.js";
+import { listNamespaces, createNamespace, getNamespaceStats } from "../lib/memory-namespaces.js";
+import { getMemoryTrends, computeMemoryHealthScore } from "../lib/memory-analytics.js";
+import { getMemoryTypeDistribution } from "../lib/memory-type-queries.js";
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -239,6 +242,63 @@ export function makeRouter(sql: Sql) {
         if ("error" in parsed) return parsed.error;
         await updateMemoryImportance(sql, id, parsed.data.importance);
         return json({ ok: true });
+      }
+
+      // GET /memory/namespaces?workspace_id
+      if (method === "GET" && path === "/memory/namespaces") {
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId)
+          return apiError("VALIDATION_ERROR", "workspace_id is required");
+        const ns = await listNamespaces(sql, workspaceId);
+        return json({ data: ns, count: ns.length });
+      }
+
+      // POST /memory/namespaces
+      if (method === "POST" && path === "/memory/namespaces") {
+        const body = await req.json().catch(() => null);
+        if (!body || !body.workspace_id || !body.name)
+          return apiError("VALIDATION_ERROR", "workspace_id and name are required");
+        const ns = await createNamespace(sql, {
+          workspaceId: body.workspace_id,
+          name: body.name,
+          description: body.description,
+          config: body.config,
+        });
+        return json(ns, 201);
+      }
+
+      // GET /memory/namespaces/:name/stats?workspace_id
+      if (method === "GET" && path.match(/^\/memory\/namespaces\/[^/]+\/stats$/)) {
+        const name = path.split("/")[3];
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId)
+          return apiError("VALIDATION_ERROR", "workspace_id is required");
+        const stats = await getNamespaceStats(sql, workspaceId, name);
+        return json(stats);
+      }
+
+      // GET /memory/analytics?workspace_id&period_days
+      if (method === "GET" && path === "/memory/analytics") {
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId)
+          return apiError("VALIDATION_ERROR", "workspace_id is required");
+        const periodDays = url.searchParams.get("period_days")
+          ? parseInt(url.searchParams.get("period_days")!, 10)
+          : 7;
+        const [trends, health] = await Promise.all([
+          getMemoryTrends(sql, workspaceId, periodDays),
+          computeMemoryHealthScore(sql, workspaceId),
+        ]);
+        return json({ trends, health });
+      }
+
+      // GET /memory/types?workspace_id
+      if (method === "GET" && path === "/memory/types") {
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId)
+          return apiError("VALIDATION_ERROR", "workspace_id is required");
+        const distribution = await getMemoryTypeDistribution(sql, workspaceId);
+        return json(distribution);
       }
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);
