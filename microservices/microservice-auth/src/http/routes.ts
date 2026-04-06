@@ -30,6 +30,18 @@ import {
   getUserById,
   updateUser,
 } from "../lib/users.js";
+import {
+  queryAuditLog,
+} from "../lib/audit-log.js";
+import {
+  listWorkspaceMembers,
+  listWorkspaceInvites,
+} from "../lib/workspaces.js";
+import {
+  getAuthHealth,
+  getAuthReadiness,
+  getAuthLiveness,
+} from "../lib/auth-health.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -342,6 +354,51 @@ export function makeRouter(sql: Sql) {
       if (method === "GET" && path.match(/^\/auth\/oauth\/[^/]+\/callback$/)) {
         const provider = path.split("/")[3];
         return handleOAuthCallback(req, sql, provider);
+      }
+
+      // GET /auth/audit-log — query audit log with filters
+      if (method === "GET" && path === "/auth/audit-log") {
+        const url = new URL(req.url);
+        const result = await queryAuditLog(sql, {
+          user_id: url.searchParams.get("user_id") || undefined,
+          event_type: (url.searchParams.get("event_type") as any) || undefined,
+          ip_address: url.searchParams.get("ip_address") || undefined,
+          limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : 100,
+          offset: url.searchParams.get("offset") ? Number(url.searchParams.get("offset")) : 0,
+        });
+        return json(result);
+      }
+
+      // GET /auth/workspaces/:workspace_id/members — list workspace members
+      if (method === "GET" && path.match(/^\/auth\/workspaces\/[^/]+\/members$/)) {
+        const workspaceId = path.split("/")[3];
+        const members = await listWorkspaceMembers(sql, workspaceId);
+        return json({ workspace_id: workspaceId, members });
+      }
+
+      // GET /auth/workspaces/:workspace_id/invites — list pending workspace invites
+      if (method === "GET" && path.match(/^\/auth\/workspaces\/[^/]+\/invites$/)) {
+        const workspaceId = path.split("/")[3];
+        const invites = await listWorkspaceInvites(sql, workspaceId);
+        return json({ workspace_id: workspaceId, invites });
+      }
+
+      // GET /auth/health/full — comprehensive health report
+      if (method === "GET" && path === "/auth/health/full") {
+        const health = await getAuthHealth(sql);
+        return json(health);
+      }
+
+      // GET /auth/health/ready — readiness probe
+      if (method === "GET" && path === "/auth/health/ready") {
+        const readiness = await getAuthReadiness(sql);
+        return json(readiness);
+      }
+
+      // GET /auth/health/live — liveness probe
+      if (method === "GET" && path === "/auth/health/live") {
+        const liveness = await getAuthLiveness();
+        return json(liveness);
       }
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);
