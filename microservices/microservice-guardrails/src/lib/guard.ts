@@ -229,3 +229,43 @@ export async function checkOutput(
     violations,
   };
 }
+
+/**
+ * Streaming input guard — checks chunks as they arrive from an async generator.
+ * Yields chunks (potentially sanitized) and streams violations in parallel.
+ */
+export async function* checkInputStream(
+  sql: Sql,
+  chunks: AsyncGenerator<string>,
+  workspaceId?: string,
+): AsyncGenerator<{ chunk: string; safe: boolean; violations: GuardViolation[] }> {
+  let buffer = "";
+  for await (const chunk of chunks) {
+    buffer += chunk;
+    const result = await checkInput(sql, buffer, workspaceId);
+    yield {
+      chunk: result.sanitized,
+      safe: result.safe,
+      violations: result.violations,
+    };
+  }
+}
+
+/**
+ * Streaming output guard — checks each output chunk for PII, toxicity, policy.
+ * Yields sanitized chunks as they're generated.
+ */
+export async function* checkOutputStream(
+  sql: Sql,
+  chunks: AsyncGenerator<string>,
+  workspaceId?: string,
+): AsyncGenerator<{ chunk: string; safe: boolean; violations: GuardViolation[] }> {
+  for await (const chunk of chunks) {
+    const result = await checkOutput(sql, chunk, workspaceId);
+    yield {
+      chunk: result.sanitized,
+      safe: result.safe,
+      violations: result.violations,
+    };
+  }
+}

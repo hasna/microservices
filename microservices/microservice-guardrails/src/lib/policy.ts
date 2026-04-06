@@ -1,11 +1,33 @@
 /**
- * Policy CRUD and evaluation.
+ * Policy CRUD and evaluation with a composable DSL.
+ *
+ * DSL rule types:
+ *   - block_words     : block specific words/phrases
+ *   - max_length     : enforce max character length
+ *   - require_format : require text to match a regex pattern
+ *   - custom_regex   : detect pattern and optionally redact
+ *   - pii_type       : detect specific PII types (email, phone, ssn, etc.)
+ *   - entity_count   : count entity mentions vs threshold
+ *   - and            : all sub-rules must pass
+ *   - or             : at least one sub-rule must pass
+ *   - not            : sub-rule must NOT pass
  */
 
 import type { Sql } from "postgres";
 
+export type RuleType =
+  | "block_words"
+  | "max_length"
+  | "require_format"
+  | "custom_regex"
+  | "pii_type"
+  | "entity_count"
+  | "and"
+  | "or"
+  | "not";
+
 export interface PolicyRule {
-  type: "block_words" | "max_length" | "require_format" | "custom_regex";
+  type: RuleType;
   config: any;
   action: "block" | "warn" | "sanitize";
 }
@@ -221,6 +243,82 @@ function evaluateRule(
       } catch {
         return { violated: false, details: { error: "invalid regex" } };
       }
+    }
+
+    case "pii_type": {
+      const piiTypes = (rule.config.types as string[]) ?? [];
+      const detectors: Record<string, RegExp> = {
+        email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/gi,
+        phone: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g,
+        ssn: /\b\d{3}[-]\d{2}[-]\d{4}\b/g,
+        credit_card: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g,
+        ip_address: /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
+        url: /https?:\/\/[^\s]+/gi,
+      };
+      const found: string[] = [];
+      for (const piiType of piiTypes) {
+        const re = detectors[piiType];
+        if (re && re.test(text)) found.push(piiType);
+      }
+      if (found.length === 0) return { violated: false, details: {} };
+      let sanitized = text;
+      if (rule.action === "sanitize") {
+        for (const piiType of found) {
+          const re = detectors[piiType];
+          if (re) sanitized = sanitized.replace(re, `[${piiType.toUpperCase()}_REDACTED]`);
+        }
+      }
+      return { violated: true, details: { pii_types_found: found }, sanitized };
+    }
+
+    case "entity_count": {
+      const entityType = (rule.config.entity_type as string) ?? "person";
+      const threshold = (rule.config.threshold as number) ?? 1;
+      // Simple regex-based entity detection
+      const entityPatterns: Record<string, RegExp> = {
+        person: /\b[A-Z][a-z]+ [A-Z][a-z]+\b/g,
+        organization: /\b[A-Z][A-Za-z0-9]+(\s[A-Z][A-Za-z0-9]+)*\b/g,
+        location: /\b[A-Z][a-z]+(\s[A-Z][a-z]+)*\b/g,
+      };
+      const re = entityPatterns[entityType] ?? /\b\w+\b/g;
+      const matches = text.match(re) ?? [];
+      const count = matches.length;
+      if (count <= threshold) return { violated: false, details: { count, threshold } };
+      return {
+        violated: true,
+        details: { entity_type: entityType, count, threshold },
+      };
+    }
+
+    case "and": {
+      const subRules = (rule.config.rules as PolicyRule[]) ?? [];
+      if (subRules.length === 0) return { violated: false, details: {} };
+      for (const subRule of subRules) {
+        const result = evaluateRule(subRule, text);
+        if (!result.violated) {
+          return { violated: false, details: { failed_rule: subRule.type } };
+        }
+      }
+      return { violated: true, details: { all_rules_violated: true } };
+    }
+
+    case "or": {
+      const subRules = (rule.config.rules as PolicyRule[]) ?? [];
+      if (subRules.length === 0) return { violated: false, details: {} };
+      let anyViolated = false;
+      for (const subRule of subRules) {
+        if (evaluateRule(subRule, text).violated) anyViolated = true;
+      }
+      if (!anyViolated) return { violated: false, details: {} };
+      return { violated: true, details: { or_rule_triggered: true } };
+    }
+
+    case "not": {
+      const subRule = rule.config.rule as PolicyRule | undefined;
+      if (!subRule) return { violated: false, details: {} };
+      const result = evaluateRule(subRule, text);
+      if (result.violated) return { violated: false, details: {} };
+      return { violated: true, details: { not_rule_triggered: true } };
     }
 
     default:

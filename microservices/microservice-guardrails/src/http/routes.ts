@@ -15,6 +15,12 @@ import {
   updatePolicy,
 } from "../lib/policy.js";
 import { listViolations } from "../lib/violations.js";
+import { queryAuditLog, getAuditStats } from "../lib/audit.js";
+import {
+  addDenylistEntry,
+  deleteDenylistEntry,
+  listDenylistEntries,
+} from "../lib/denylist.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -229,6 +235,138 @@ export function makeRouter(sql: Sql) {
           return apiError("MISSING_PARAM", "workspace_id is required");
         const entries = await listAllowlistEntries(sql, workspaceId);
         return json({ data: entries, count: entries.length });
+      }
+
+      // GET /guardrails/audit?workspace_id&actor&action&limit
+      if (method === "GET" && path === "/guardrails/audit") {
+        const workspaceId = url.searchParams.get("workspace_id") ?? undefined;
+        const actor = url.searchParams.get("actor") ?? undefined;
+        const action = url.searchParams.get("action") ?? undefined;
+        const limit = url.searchParams.get("limit")
+          ? parseInt(url.searchParams.get("limit")!, 10)
+          : 100;
+        const entries = await queryAuditLog(sql, {
+          workspaceId,
+          actor,
+          action,
+          limit,
+        });
+        return json({ data: entries, count: entries.length });
+      }
+
+      // GET /guardrails/audit/stats?workspace_id
+      if (method === "GET" && path === "/guardrails/audit/stats") {
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id is required");
+        const stats = await getAuditStats(sql, workspaceId);
+        return json(stats);
+      }
+
+      // GET /guardrails/denylist?workspace_id
+      if (method === "GET" && path === "/guardrails/denylist") {
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id is required");
+        const entries = await listDenylistEntries(sql, workspaceId);
+        return json({ data: entries, count: entries.length });
+      }
+
+      // POST /guardrails/denylist
+      if (method === "POST" && path === "/guardrails/denylist") {
+        const body = await req.json().catch(() => null);
+        if (!body || !body.workspace_id || !body.value)
+          return apiError("MISSING_PARAM", "workspace_id and value are required");
+        const entry = await addDenylistEntry(sql, {
+          workspace_id: body.workspace_id,
+          type: body.type ?? "ip_address",
+          value: body.value,
+          reason: body.reason,
+        });
+        return json(entry, 201);
+      }
+
+      // DELETE /guardrails/denylist/:id
+      if (
+        method === "DELETE" &&
+        path.match(/^\/guardrails\/denylist\/[^/]+$/)
+      ) {
+        const id = path.split("/").pop()!;
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId)
+          return apiError("MISSING_PARAM", "workspace_id is required");
+        await deleteDenylistEntry(sql, id, workspaceId);
+        return json({ deleted: true });
+      }
+
+      // GET /guardrails/quotas — list workspace quotas
+      if (method === "GET" && path === "/guardrails/quotas") {
+        const workspaceId = url.searchParams.get("workspace_id");
+        if (!workspaceId) return apiError("MISSING_PARAM", "workspace_id is required");
+        const { listWorkspaceQuotas } = await import("../lib/workspace-quotas.js");
+        return json(await listWorkspaceQuotas(sql, workspaceId));
+      }
+
+      // GET /guardrails/quotas/:workspace_id — get quota status
+      if (method === "GET" && path.match(/^\/guardrails\/quotas\/[^/]+$/)) {
+        const quotaWorkspaceId = path.split("/").pop()!;
+        const { checkWorkspaceQuota } = await import("../lib/workspace-quotas.js");
+        return json(await checkWorkspaceQuota(sql, quotaWorkspaceId));
+      }
+
+      // POST /guardrails/quotas — set workspace quota
+      if (method === "POST" && path === "/guardrails/quotas") {
+        const { setWorkspaceQuota } = await import("../lib/workspace-quotas.js");
+        const body = await req.json().catch(() => null);
+        if (!body || !body.workspace_id || body.limit === undefined) {
+          return apiError("MISSING_PARAM", "workspace_id and limit are required");
+        }
+        const result = await setWorkspaceQuota(sql, {
+          workspaceId: body.workspace_id,
+          limit: body.limit,
+          windowMs: body.window_ms,
+        });
+        return json(result, 201);
+      }
+
+      // DELETE /guardrails/quotas/:workspace_id — delete quota
+      if (method === "DELETE" && path.match(/^\/guardrails\/quotas\/[^/]+$/)) {
+        const { deleteWorkspaceQuota } = await import("../lib/workspace-quotas.js");
+        const quotaWorkspaceId = path.split("/").pop()!;
+        await deleteWorkspaceQuota(sql, quotaWorkspaceId);
+        return json({ deleted: true });
+      }
+
+      // GET /health/full — comprehensive health report
+      if (method === "GET" && path === "/health/full") {
+        const start = Date.now();
+        let dbOk = false;
+        try {
+          await sql`SELECT 1`;
+          dbOk = true;
+        } catch {}
+        return json({
+          ok: dbOk,
+          service: "microservice-guardrails",
+          db: dbOk,
+          latency_ms: Date.now() - start,
+          version: "0.0.1",
+        });
+      }
+
+      // GET /health/ready — readiness probe
+      if (method === "GET" && path === "/health/ready") {
+        let ready = false;
+        try {
+          await sql`SELECT 1`;
+          ready = true;
+        } catch {}
+        return json({ ready, service: "microservice-guardrails" }, ready ? 200 : 503);
+      }
+
+      // GET /health/live — liveness probe
+      if (method === "GET" && path === "/health/live") {
+        return json({ alive: true, service: "microservice-guardrails" });
       }
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);
