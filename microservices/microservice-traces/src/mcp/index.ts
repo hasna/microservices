@@ -1746,7 +1746,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
   ],
 }));
-
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const sql = getDb();
   const { name, arguments: args } = req.params;
