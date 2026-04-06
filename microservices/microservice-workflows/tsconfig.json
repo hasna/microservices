@@ -1,0 +1,47 @@
+{
+  "name": "@hasna/microservice-workflows",
+  "version": "0.0.1",
+  "description": "DAG-based workflow engine for durable, long-running fan-out workflows — part of @hasna/microservices",
+  "type": "module",
+  "bin": {
+    "microservice-workflows": "./bin/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/lib/index.js",
+      "types": "./dist/lib/index.d.ts"
+    }
+  },
+  "main": "./dist/lib/index.js",
+  "types": "./dist/lib/index.d.ts",
+  "files": ["bin/", "dist/", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "bun build ./src/cli/index.ts --outfile ./bin/cli.js --target bun && bun build ./src/mcp/index.ts --outfile ./bin/mcp.js --target bun && bun build ./src/lib/index.ts --outdir ./dist/lib --target bun",
+    "dev:cli": "bun run ./src/cli/index.ts",
+    "dev:mcp": "bun run ./src/mcp/index.ts",
+    "dev:http": "bun run ./src/http/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": ["microservice", "workflows", "dag", "orchestration", "saas", "postgresql", "mcp", "cli"],
+  "author": "Hasna",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "commander": "^12.1.0",
+    "postgres": "^3.4.5",
+    "zod": "^3.24.0"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  }
+}
