@@ -168,824 +168,17 @@ const text = (data: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
 });
 
+// ─── Citation Management ─────────────────────────────────────────────────────
+
 server.tool(
-  "knowledge_create_collection",
-  "Create a new knowledge collection for storing and retrieving documents",
+  "knowledge_delete_citations_for_document",
+  "Delete all citations involving a document (either as source or citing document)",
   {
-    workspace_id: z.string().describe("Workspace ID"),
-    name: z.string().describe("Collection name"),
-    description: z.string().optional().describe("Collection description"),
-    chunk_size: z.number().optional().default(1000).describe("Characters per chunk"),
-    chunk_overlap: z.number().optional().default(200).describe("Overlap between chunks"),
-    chunking_strategy: z.enum(["fixed", "paragraph", "sentence", "recursive"]).optional().default("recursive").describe("Chunking strategy"),
-    embedding_model: z.string().optional().default("text-embedding-3-small").describe("Embedding model"),
+    document_id: z.string().uuid().describe("Document ID"),
   },
-  async ({ workspace_id, name, chunk_size, chunk_overlap, chunking_strategy, embedding_model, ...rest }) =>
-    text(
-      await createCollection(sql, {
-        workspaceId: workspace_id,
-        name,
-        chunkSize: chunk_size,
-        chunkOverlap: chunk_overlap,
-        chunkingStrategy: chunking_strategy,
-        embeddingModel: embedding_model,
-        ...rest,
-      }),
-    ),
+  async ({ document_id }) => text({ deleted: await deleteCitationsForDocument(sql, document_id) }),
 );
 
-server.tool(
-  "knowledge_ingest",
-  "Ingest a document into a collection: chunk, embed, and index for retrieval",
-  {
-    collection_id: z.string().describe("Collection ID"),
-    title: z.string().describe("Document title"),
-    content: z.string().describe("Document content"),
-    source_type: z.enum(["text", "url", "file"]).optional().default("text").describe("Source type"),
-    source_url: z.string().optional().describe("Source URL if applicable"),
-    metadata: z.record(z.any()).optional().describe("Additional metadata"),
-  },
-  async ({ collection_id, title, content, source_type, source_url, metadata }) =>
-    text(
-      await ingestDocument(sql, collection_id, {
-        title,
-        content,
-        sourceType: source_type,
-        sourceUrl: source_url,
-        metadata,
-      }),
-    ),
-);
-
-server.tool(
-  "knowledge_retrieve",
-  "Retrieve relevant chunks from a collection using semantic, text, or hybrid search",
-  {
-    collection_id: z.string().describe("Collection ID"),
-    query: z.string().describe("Search query"),
-    mode: z.enum(["semantic", "text", "hybrid"]).optional().default("text").describe("Search mode"),
-    limit: z.number().optional().default(10).describe("Max results"),
-    min_score: z.number().optional().describe("Minimum relevance score"),
-  },
-  async ({ collection_id, query, ...opts }) =>
-    text(await retrieve(sql, collection_id, query, opts)),
-);
-
-server.tool(
-  "knowledge_list_collections",
-  "List all knowledge collections in a workspace",
-  { workspace_id: z.string().describe("Workspace ID") },
-  async ({ workspace_id }) => text(await listCollections(sql, workspace_id)),
-);
-
-server.tool(
-  "knowledge_list_documents",
-  "List all documents in a collection",
-  { collection_id: z.string().describe("Collection ID") },
-  async ({ collection_id }) => text(await listDocuments(sql, collection_id)),
-);
-
-server.tool(
-  "knowledge_delete_document",
-  "Delete a document and its chunks from a collection",
-  { id: z.string().describe("Document ID") },
-  async ({ id }) => text({ deleted: await deleteDocument(sql, id) }),
-);
-
-server.tool(
-  "knowledge_get_stats",
-  "Get statistics for a collection (doc count, chunk count, avg chunks, total tokens)",
-  { collection_id: z.string().describe("Collection ID") },
-  async ({ collection_id }) => text(await getCollectionStats(sql, collection_id)),
-);
-
-server.tool(
-  "knowledge_reindex",
-  "Re-chunk and re-embed all documents in a collection",
-  { collection_id: z.string().describe("Collection ID") },
-  async ({ collection_id }) => {
-    const { getCollection } = await import("../lib/collections.js");
-    const { chunkText, estimateTokens } = await import("../lib/chunking.js");
-    const { generateEmbedding } = await import("../lib/embeddings.js");
-
-    const collection = await getCollection(sql, collection_id);
-    if (!collection) throw new Error(`Collection not found: ${collection_id}`);
-
-    await sql`DELETE FROM knowledge.chunks WHERE collection_id = ${collection_id}`;
-    await sql`UPDATE knowledge.collections SET chunk_count = 0 WHERE id = ${collection_id}`;
-
-    const docs = await listDocuments(sql, collection_id);
-    let totalChunks = 0;
-
-    for (const doc of docs) {
-      try {
-        await sql`UPDATE knowledge.documents SET status = 'pending', chunk_count = 0, error = NULL WHERE id = ${doc.id}`;
-
-        const chunks = chunkText(doc.content, {
-          strategy: collection.chunking_strategy,
-          chunkSize: collection.chunk_size,
-          chunkOverlap: collection.chunk_overlap,
-        });
-
-        const hasPgvector = await checkPgvector(sql);
-
-        for (let i = 0; i < chunks.length; i++) {
-          const chunkContent = chunks[i]!;
-          const tokenCount = estimateTokens(chunkContent);
-          const embedding = await generateEmbedding(chunkContent);
-          const chunkMeta = {
-            ...(doc.metadata ?? {}),
-            chunk_index: i,
-            total_chunks: chunks.length,
-            document_title: doc.title,
-          };
-
-          if (hasPgvector && embedding) {
-            await sql`
-              INSERT INTO knowledge.chunks (document_id, collection_id, content, chunk_index, token_count, metadata, embedding)
-              VALUES (${doc.id}, ${collection_id}, ${chunkContent}, ${i}, ${tokenCount}, ${sql.json(chunkMeta)}, ${`[${embedding.join(",")}]`})
-            `;
-          } else {
-            await sql`
-              INSERT INTO knowledge.chunks (document_id, collection_id, content, chunk_index, token_count, metadata)
-              VALUES (${doc.id}, ${collection_id}, ${chunkContent}, ${i}, ${tokenCount}, ${sql.json(chunkMeta)})
-            `;
-          }
-        }
-
-        await sql`UPDATE knowledge.documents SET status = 'ready', chunk_count = ${chunks.length} WHERE id = ${doc.id}`;
-        totalChunks += chunks.length;
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        await sql`UPDATE knowledge.documents SET status = 'error', error = ${errorMsg} WHERE id = ${doc.id}`;
-      }
-    }
-
-    await sql`UPDATE knowledge.collections SET chunk_count = ${totalChunks} WHERE id = ${collection_id}`;
-    return text({ ok: true, documents: docs.length, chunks: totalChunks });
-  },
-);
-
-// ---------------------------------------------------------------------------
-// Incremental indexing tools
-// ---------------------------------------------------------------------------
-
-server.tool(
-  "knowledge_reindex_document",
-  "Re-index a document only if its content has changed (compares content hash). Returns null if unchanged.",
-  {
-    document_id: z.string().describe("Document ID to re-index"),
-    force: z.boolean().optional().default(false).describe("Force re-index even if content hash matches"),
-  },
-  async ({ document_id, force }) => {
-    if (force) {
-      const { forceReindexDocument } = await import("../lib/incremental.js");
-      return text(await forceReindexDocument(sql, document_id));
-    }
-    const result = await reindexIfChanged(sql, document_id);
-    return text({ reindexed: result !== null, document: result });
-  },
-);
-
-server.tool(
-  "knowledge_get_document_hash",
-  "Get the current content hash and stored hash for a document to check if it has changed",
-  { document_id: z.string().describe("Document ID") },
-  async ({ document_id }) => {
-    const [doc] = await sql`
-      SELECT id, content, content_hash FROM knowledge.documents WHERE id = ${document_id}
-    `;
-    if (!doc) return text({ error: "Document not found" });
-    const currentHash = await computeDocumentHash(doc.content);
-    return text({
-      document_id: doc.id,
-      current_hash: currentHash,
-      stored_hash: doc.content_hash,
-      changed: currentHash !== doc.content_hash,
-    });
-  },
-);
-
-// ---------------------------------------------------------------------------
-// Vision (multi-modal) tools
-// ---------------------------------------------------------------------------
-
-server.tool(
-  "knowledge_store_vision_chunk",
-  "Store an image/vision chunk for a document",
-  {
-    document_id: z.string().describe("Document ID"),
-    image_data: z.string().describe("Base64-encoded image data"),
-    mime_type: z.string().describe("MIME type (e.g., image/png, image/jpeg)"),
-    page_number: z.number().optional().describe("Page number if applicable"),
-    width: z.number().optional().describe("Image width in pixels"),
-    height: z.number().optional().describe("Image height in pixels"),
-    extracted_text: z.string().optional().describe("Extracted text from the image (OCR)"),
-  },
-  async ({ document_id, image_data, mime_type, page_number, width, height, extracted_text }) => {
-    const buffer = Buffer.from(image_data, "base64");
-    const chunk = await storeVisionChunk(sql, {
-      documentId: document_id,
-      imageData: buffer,
-      mimeType: mime_type,
-      pageNumber: page_number,
-      width: width,
-      height: height,
-      extractedText: extracted_text,
-    });
-    return text({
-      id: chunk.id,
-      document_id: chunk.document_id,
-      mime_type: chunk.mime_type,
-      page_number: chunk.page_number,
-      width: chunk.width,
-      height: chunk.height,
-      has_extracted_text: chunk.extracted_text !== null,
-      created_at: chunk.created_at,
-    });
-  },
-);
-
-server.tool(
-  "knowledge_get_vision_chunks",
-  "Get all vision chunks (images) for a document",
-  { document_id: z.string().describe("Document ID") },
-  async ({ document_id }) => {
-    const chunks = await getVisionChunks(sql, document_id);
-    return text(chunks.map((c) => ({
-      id: c.id,
-      document_id: c.document_id,
-      mime_type: c.mime_type,
-      page_number: c.page_number,
-      width: c.width,
-      height: c.height,
-      has_extracted_text: c.extracted_text !== null,
-      created_at: c.created_at,
-    })));
-  },
-);
-
-// ---------------------------------------------------------------------------
-// Citation tracking tools
-// ---------------------------------------------------------------------------
-
-server.tool(
-  "knowledge_add_citation",
-  "Add a citation relationship between two chunks",
-  {
-    document_id: z.string().describe("Source document ID (the document being cited)"),
-    chunk_id: z.string().describe("Source chunk ID"),
-    cited_by_document_id: z.string().describe("Document ID that is doing the citing"),
-    cited_by_chunk_id: z.string().describe("Chunk ID that is doing the citing"),
-    quote: z.string().optional().describe("Quoted text"),
-    context: z.string().optional().describe("Surrounding context"),
-    score: z.number().optional().describe("Citation score/relevance"),
-  },
-  async ({ document_id, chunk_id, cited_by_document_id, cited_by_chunk_id, quote, context, score }) =>
-    text(
-      await addCitation(sql, {
-        documentId: document_id,
-        chunkId: chunk_id,
-        citedByDocumentId: cited_by_document_id,
-        citedByChunkId: cited_by_chunk_id,
-        quote,
-        context,
-        score,
-      }),
-    ),
-);
-
-server.tool(
-  "knowledge_get_chunk_citations",
-  "Get all citations for a specific chunk",
-  { chunk_id: z.string().describe("Chunk ID") },
-  async ({ chunk_id }) => text(await getCitationsForChunk(sql, chunk_id)),
-);
-
-server.tool(
-  "knowledge_find_citing_documents",
-  "Find all documents that cite a given document",
-  {
-    document_id: z.string().describe("Document ID being cited"),
-    limit: z.number().optional().default(10).describe("Max results"),
-  },
-  async ({ document_id, limit }) => text(await findCitingDocuments(sql, document_id, limit)),
-);
-
-// ---------------------------------------------------------------------------
-// Chunking strategy tools
-// ---------------------------------------------------------------------------
-
-server.tool(
-  "knowledge_set_chunking_strategy",
-  "Set the chunking strategy for a document (metadata only; use rechunk to apply)",
-  {
-    document_id: z.string().describe("Document ID"),
-    strategy: z.enum(["fixed", "paragraph", "sentence", "recursive"]).describe("Chunking strategy"),
-  },
-  async ({ document_id, strategy }) =>
-    text(await setChunkingStrategy(sql, document_id, strategy)),
-);
-
-server.tool(
-  "knowledge_rechunk_document",
-  "Re-chunk a document with a new strategy, deleting old chunks and creating new ones",
-  {
-    document_id: z.string().describe("Document ID"),
-    strategy: z.enum(["fixed", "paragraph", "sentence", "recursive"]).optional().describe("Chunking strategy (uses document metadata if not provided)"),
-  },
-  async ({ document_id, strategy }) =>
-    text(await rechunkDocument(sql, document_id, strategy)),
-);
-
-// ── Feature 1: Cross-collection retrieval ─────────────────────────────────────
-
-server.tool(
-  "knowledge_cross_collection_retrieve",
-  "Search across multiple collections simultaneously and merge results by score",
-  {
-    collection_ids: z.array(z.string()).describe("Collection IDs to search"),
-    query: z.string().describe("Search query"),
-    mode: z.enum(["semantic", "text", "hybrid"]).optional().default("text").describe("Search mode"),
-    limit: z.number().optional().default(20).describe("Max total results"),
-    per_collection_limit: z.number().optional().default(10).describe("Max results per collection"),
-  },
-  async ({ collection_ids, query, mode, limit, per_collection_limit }) =>
-    text(await crossCollectionRetrieve(sql, collection_ids, query, {
-      mode,
-      limit,
-      perCollectionLimit: per_collection_limit,
-    })),
-);
-
-server.tool(
-  "knowledge_workspace_retrieve",
-  "Search across all collections in a workspace",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-    query: z.string().describe("Search query"),
-    mode: z.enum(["semantic", "text", "hybrid"]).optional().default("text").describe("Search mode"),
-    limit: z.number().optional().default(20).describe("Max total results"),
-  },
-  async ({ workspace_id, query, mode, limit }) =>
-    text(await workspaceRetrieve(sql, workspace_id, query, { mode, limit })),
-);
-
-// ── Feature 2: BM25 ranking ─────────────────────────────────────────────────
-
-server.tool(
-  "knowledge_bm25_search",
-  "Search using BM25 full-text ranking (alternative to vector search)",
-  {
-    collection_id: z.string().describe("Collection ID"),
-    query: z.string().describe("Search query"),
-    limit: z.number().optional().default(10).describe("Max results"),
-    k1: z.number().optional().describe("BM25 k1 term frequency saturation parameter"),
-    b: z.number().optional().describe("BM25 b document length normalization parameter"),
-  },
-  async ({ collection_id, query, limit, k1, b }) =>
-    text(await bm25Search(sql, collection_id, query, limit, { k1, b })),
-);
-
-server.tool(
-  "knowledge_hybrid_search",
-  "Hybrid search combining BM25 and semantic (vector) rankings using Reciprocal Rank Fusion",
-  {
-    collection_id: z.string().describe("Collection ID"),
-    query: z.string().describe("Search query"),
-    limit: z.number().optional().default(10).describe("Max results"),
-    semantic_weight: z.number().optional().default(0.5).describe("Weight for semantic scores (0-1)"),
-    bm25_weight: z.number().optional().default(0.5).describe("Weight for BM25 scores (0-1)"),
-  },
-  async ({ collection_id, query, limit, semantic_weight, bm25_weight }) =>
-    text(await hybridSearch(sql, collection_id, query, limit, semantic_weight, bm25_weight)),
-);
-
-// ── Feature 3: Document versioning ────────────────────────────────────────────
-
-server.tool(
-  "knowledge_create_version",
-  "Snapshot the current state of a document as a new version",
-  {
-    document_id: z.string().describe("Document ID"),
-    reason: z.string().optional().describe("Reason for creating version"),
-  },
-  async ({ document_id, reason }) => {
-    const [doc] = await sql`SELECT * FROM knowledge.documents WHERE id = ${document_id}`;
-    if (!doc) return text({ error: "Document not found" });
-    const { hashContent } = await import("../lib/documents.js");
-    const hash = await hashContent(doc.content);
-    return text(await createDocumentVersion(sql, {
-      documentId: document_id,
-      content: doc.content,
-      contentHash: hash,
-      metadataSnapshot: doc.metadata ?? {},
-      chunkCount: doc.chunk_count,
-      reason,
-    }));
-  },
-);
-
-server.tool(
-  "knowledge_list_versions",
-  "List all versions of a document, newest first",
-  {
-    document_id: z.string().describe("Document ID"),
-    limit: z.number().optional().default(20).describe("Max results"),
-    offset: z.number().optional().default(0).describe("Offset"),
-  },
-  async ({ document_id, limit, offset }) =>
-    text(await listDocumentVersions(sql, document_id, { limit, offset })),
-);
-
-server.tool(
-  "knowledge_get_version",
-  "Get a specific version of a document",
-  { document_id: z.string(), version_number: z.number().int().min(1) },
-  async ({ document_id, version_number }) =>
-    text(await getDocumentVersion(sql, document_id, version_number)),
-);
-
-server.tool(
-  "knowledge_restore_version",
-  "Restore a document to a previous version (creates backup of current state first)",
-  { document_id: z.string(), version_number: z.number().int().min(1) },
-  async ({ document_id, version_number }) => {
-    const result = await restoreDocumentVersion(sql, document_id, version_number);
-    return text(result);
-  },
-);
-
-server.tool(
-  "knowledge_compare_versions",
-  "Compare two versions of a document, showing word-level diff",
-  {
-    document_id: z.string(),
-    version_a: z.number().int().min(1).describe("Older version number"),
-    version_b: z.number().int().min(1).describe("Newer version number"),
-  },
-  async ({ document_id, version_a, version_b }) =>
-    text(await compareVersions(sql, document_id, version_a, version_b)),
-);
-
-server.tool(
-  "knowledge_prune_versions",
-  "Delete old versions, keeping only the most recent N",
-  {
-    document_id: z.string(),
-    keep_last: z.number().int().min(1).optional().default(10),
-  },
-  async ({ document_id, keep_last }) =>
-    text({ deleted: await pruneOldVersions(sql, document_id, keep_last) }),
-);
-
-// ---------------------------------------------------------------------------
-
-// Hybrid Retrieval tools (semantic + BM25 + cross-encoder reranking)
-server.tool(
-  "knowledge_hybrid_retrieve_reranked",
-  "Retrieve chunks using hybrid semantic+BM25 scoring with optional cross-encoder re-ranking",
-  {
-    collection_id: z.string().describe("Collection ID"),
-    query: z.string().describe("Search query"),
-    limit: z.number().optional().default(10).describe("Max results"),
-    semantic_weight: z.number().optional().default(0.5).describe("Weight for semantic scores (0-1)"),
-    bm25_weight: z.number().optional().default(0.5).describe("Weight for BM25 scores (0-1)"),
-    use_cross_encoder: z.boolean().optional().default(false).describe("Whether to apply cross-encoder re-ranking"),
-  },
-  async ({ collection_id, query, limit, semantic_weight, bm25_weight, use_cross_encoder }) => {
-    const { hybridRetrieveReranked } = await import("../lib/hybrid-retrieve.js");
-    return text(await hybridRetrieveReranked(sql, collection_id, query, {
-      limit: limit ?? 10,
-      semanticWeight: semantic_weight ?? 0.5,
-      bm25Weight: bm25_weight ?? 0.5,
-      useCrossEncoder: use_cross_encoder ?? false,
-    }));
-  },
-);
-
-// Citation Graph tools
-server.tool(
-  "knowledge_get_outgoing_citations",
-  "Get documents that a document cites (what it references)",
-  {
-    document_id: z.string().describe("Source document ID"),
-    limit: z.number().optional().default(20),
-  },
-  async ({ document_id, limit }) => {
-    const { getOutgoingCitations } = await import("../lib/citation-graph.js");
-    return text(await getOutgoingCitations(sql, document_id, limit ?? 20));
-  },
-);
-
-server.tool(
-  "knowledge_delta_report",
-  "Get a delta report of what changed between the last checkpoint and current index state for a document",
-  {
-    document_id: z.string().uuid(),
-    new_content_hash: z.string(),
-    new_chunk_count: z.number().int().nonnegative(),
-    new_total_tokens: z.number().int().nonnegative(),
-  },
-  async ({ document_id, new_content_hash, new_chunk_count, new_total_tokens }) => {
-    const result = await computeDelta(sql, document_id, new_content_hash, new_chunk_count, new_total_tokens);
-    return text(JSON.stringify(result));
-  },
-);
-
-server.tool(
-  "knowledge_get_incoming_citations",
-  "Get documents that cite a given document (who references it)",
-  {
-    document_id: z.string().describe("Target document ID"),
-    limit: z.number().optional().default(20),
-  },
-  async ({ document_id, limit }) => {
-    const { getIncomingCitations } = await import("../lib/citation-graph.js");
-    return text(await getIncomingCitations(sql, document_id, limit ?? 20));
-  },
-);
-
-server.tool(
-  "knowledge_find_root_sources",
-  "Find the root source documents in a citation chain (documents with no incoming citations)",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-    max_depth: z.number().optional().default(5).describe("Max traversal depth"),
-  },
-  async ({ workspace_id, max_depth }) => {
-    const { findRootSourceDocuments } = await import("../lib/citation-graph.js");
-    return text(await findRootSourceDocuments(sql, workspace_id, max_depth ?? 5));
-  },
-);
-
-server.tool(
-  "knowledge_find_citation_path",
-  "Find the citation path between two documents (if one cites the other directly or transitively)",
-  {
-    source_document_id: z.string().describe("Starting document"),
-    target_document_id: z.string().describe("Target document"),
-    max_depth: z.number().optional().default(5),
-  },
-  async ({ source_document_id, target_document_id, max_depth }) => {
-    const { findCitationPath } = await import("../lib/citation-graph.js");
-    return text(await findCitationPath(sql, source_document_id, target_document_id, max_depth ?? 5));
-  },
-);
-
-server.tool(
-  "knowledge_compute_impact_scores",
-  "Compute impact scores for all documents in a citation graph (direct + transitive citations weighted)",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-    min_impact: z.number().optional().default(1).describe("Minimum impact score to return"),
-  },
-  async ({ workspace_id, min_impact }) => {
-    const { computeImpactScores } = await import("../lib/citation-graph.js");
-    return text(await computeImpactScores(sql, workspace_id, min_impact ?? 1));
-  },
-);
-
-server.tool(
-  "knowledge_find_all_citing_documents",
-  "Find all documents that cite a given document directly or transitively (BFS citation traversal)",
-  {
-    document_id: z.string().describe("Document ID to find citers for"),
-    max_depth: z.number().optional().default(5).describe("Maximum traversal depth"),
-  },
-  async ({ document_id, max_depth }) => {
-    const { findAllCitingDocuments } = await import("../lib/citation-graph.js");
-    return text(await findAllCitingDocuments(sql, document_id, max_depth ?? 5));
-  },
-);
-
-server.tool(
-  "knowledge_update_document_metadata",
-  "Update the metadata fields on a document",
-  {
-    document_id: z.string().describe("Document ID to update"),
-    metadata: z.record(z.any()).describe("Metadata key-value pairs to set (merged with existing)"),
-  },
-  async ({ document_id, metadata }) =>
-    text(await updateDocumentMetadata(sql, document_id, metadata)),
-);
-
-server.tool(
-  "knowledge_queue_reindex",
-  "Queue a document for background re-indexing (chunking + embedding)",
-  {
-    document_id: z.string().describe("Document ID to reindex"),
-  },
-  async ({ document_id }) => {
-    await queueReindex(sql, document_id);
-    return text({ queued: true, document_id });
-  },
-);
-
-server.tool(
-  "knowledge_log_document_access",
-  "Log an access event for a document (read, search, retrieve, or embed)",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-    document_id: z.string().describe("Document ID"),
-    collection_id: z.string().describe("Collection ID"),
-    chunk_id: z.string().optional().describe("Chunk ID if accessing a specific chunk"),
-    access_type: z.enum(["read", "search", "retrieve", "embed"]).describe("Type of access"),
-    user_id: z.string().optional().describe("User performing the access"),
-  },
-  async ({ workspace_id, document_id, collection_id, chunk_id, access_type, user_id }) =>
-    text(await logDocumentAccess(sql, { workspaceId: workspace_id, documentId: document_id, collectionId: collection_id, chunkId: chunk_id ?? null, accessType: access_type, userId: user_id ?? null })),
-);
-
-server.tool(
-  "knowledge_get_popular_documents",
-  "Get most frequently accessed documents in a workspace over a time window",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-    collection_id: z.string().optional().describe("Filter by collection"),
-    time_window_hours: z.number().optional().default(168).describe("Time window in hours (default 168 = 1 week)"),
-    limit: z.number().optional().default(20).describe("Max results"),
-  },
-  async ({ workspace_id, collection_id, time_window_hours, limit }) =>
-    text(await getPopularDocuments(sql, workspace_id, collection_id ?? null, time_window_hours ?? 168, limit ?? 20)),
-);
-
-server.tool(
-  "knowledge_get_access_frequency",
-  "Get per-document access frequency metrics",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-    document_id: z.string().describe("Document ID"),
-  },
-  async ({ workspace_id, document_id }) =>
-    text(await getDocumentAccessFrequency(sql, workspace_id, document_id)),
-);
-
-server.tool(
-  "knowledge_get_hot_chunks",
-  "Get most frequently accessed chunks in a collection",
-  {
-    collection_id: z.string().describe("Collection ID"),
-    time_window_hours: z.number().optional().default(168).describe("Time window in hours"),
-    limit: z.number().optional().default(20).describe("Max results"),
-  },
-  async ({ collection_id, time_window_hours, limit }) =>
-    text(await getHotChunks(sql, collection_id, time_window_hours ?? 168, limit ?? 20)),
-);
-
-server.tool(
-  "knowledge_graph_walk",
-  "Traverse the citation graph starting from a document up to maxDepth hops",
-  {
-    start_document_id: z.string().describe("Starting document ID"),
-    max_depth: z.number().optional().default(3).describe("Max traversal depth"),
-    limit: z.number().optional().default(100).describe("Max nodes to return"),
-  },
-  async ({ start_document_id, max_depth, limit }) =>
-    text(await graphWalk(sql, start_document_id, max_depth ?? 3, limit ?? 100)),
-);
-
-server.tool(
-  "knowledge_compute_collection_importance",
-  "Compute importance scores for all documents in a collection based on citation centrality",
-  {
-    collection_id: z.string().describe("Collection ID"),
-  },
-  async ({ collection_id }) =>
-    text(await computeCollectionImportance(sql, collection_id)),
-);
-
-server.tool(
-  "knowledge_share_collection",
-  "Share a collection with another workspace with read, write, or admin permission",
-  {
-    collection_id: z.string().describe("Collection ID"),
-    target_workspace_id: z.string().describe("Workspace to share with"),
-    permission: z.enum(["read", "write", "admin"]).describe("Permission level"),
-    granted_by: z.string().describe("User granting the share"),
-  },
-  async ({ collection_id, target_workspace_id, permission, granted_by }) =>
-    text(await shareCollection(sql, { collectionId: collection_id, targetWorkspaceId: target_workspace_id, permission, grantedBy: granted_by })),
-);
-
-server.tool(
-  "knowledge_revoke_collection_share",
-  "Revoke a collection share from another workspace",
-  {
-    collection_id: z.string().describe("Collection ID"),
-    target_workspace_id: z.string().describe("Workspace to revoke share from"),
-  },
-  async ({ collection_id, target_workspace_id }) =>
-    text(await revokeCollectionShare(sql, collection_id, target_workspace_id)),
-);
-
-server.tool(
-  "knowledge_list_collection_shares",
-  "List all workspaces a collection is shared with",
-  {
-    collection_id: z.string().describe("Collection ID"),
-  },
-  async ({ collection_id }) =>
-    text(await listCollectionShares(sql, collection_id)),
-);
-
-server.tool(
-  "knowledge_list_workspace_collections",
-  "List all collections a workspace has access to (own + shared)",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-  },
-  async ({ workspace_id }) =>
-    text(await listWorkspaceCollections(sql, workspace_id)),
-);
-
-server.tool(
-  "knowledge_check_collection_permission",
-  "Check a workspace's permission level on a collection",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-    collection_id: z.string().describe("Collection ID"),
-  },
-  async ({ workspace_id, collection_id }) =>
-    text(await checkCollectionPermission(sql, workspace_id, collection_id)),
-);
-
-server.tool(
-  "knowledge_get_collection_access_list",
-  "Get all access grants for a collection (who has what permission)",
-  {
-    collection_id: z.string().describe("Collection ID"),
-  },
-  async ({ collection_id }) =>
-    text(await getCollectionAccessList(sql, collection_id)),
-);
-
-// --- Indexing job queue tools ---
-
-server.tool(
-  "knowledge_queue_indexing_job",
-  "Queue a document for background indexing",
-  {
-    document_id: z.string().describe("Document ID"),
-    workspace_id: z.string().describe("Workspace ID"),
-    priority: z.enum(["low", "normal", "high", "urgent"]).optional().default("normal").describe("Job priority"),
-    max_attempts: z.number().optional().default(3).describe("Max retry attempts"),
-  },
-  async ({ document_id, workspace_id, priority, max_attempts }) =>
-    text(await queueIndexingJob(sql, document_id, workspace_id, { priority, maxAttempts: max_attempts })),
-);
-
-server.tool(
-  "knowledge_list_indexing_jobs",
-  "List indexing jobs for a workspace",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-    status: z.enum(["pending", "processing", "completed", "failed", "cancelled"]).optional().describe("Filter by status"),
-    limit: z.number().optional().default(50).describe("Max results"),
-    offset: z.number().optional().default(0).describe("Offset"),
-  },
-  async ({ workspace_id, status, limit, offset }) =>
-    text(await listIndexingJobs(sql, workspace_id, { status, limit, offset })),
-);
-
-server.tool(
-  "knowledge_get_indexing_job",
-  "Get a specific indexing job by ID",
-  {
-    job_id: z.string().describe("Job ID"),
-  },
-  async ({ job_id }) => text(await getIndexingJob(sql, job_id)),
-);
-
-server.tool(
-  "knowledge_cancel_indexing_job",
-  "Cancel a pending or failed indexing job",
-  {
-    job_id: z.string().describe("Job ID"),
-  },
-  async ({ job_id }) => text(await cancelIndexingJob(sql, job_id)),
-);
-
-server.tool(
-  "knowledge_process_indexing_queue",
-  "Process N pending indexing jobs from the queue (for background workers)",
-  {
-    count: z.number().optional().default(5).describe("Number of jobs to process"),
-  },
-  async ({ count }) => {
-    const processed = await processIndexingQueue(sql, count);
-    return text({ processed });
-  },
-);
-
-server.tool(
-  "knowledge_indexing_queue_stats",
-  "Get indexing queue statistics for a workspace",
-  {
-    workspace_id: z.string().describe("Workspace ID"),
-  },
-  async ({ workspace_id }) => text(await getIndexingQueueStats(sql, workspace_id)),
-);
 
 // --- Citation provenance tools ---
 
@@ -1068,6 +261,330 @@ server.tool(
   async ({ citation_id, reason }) => text(await retractCitation(sql, citation_id, reason)),
 );
 
+
+// ─── Citation Verification ────────────────────────────────────────────────────
+
+server.tool(
+  "knowledge_set_citation_verified_status",
+  "Mark a citation as verified or retracted, optionally with notes",
+  {
+    citation_id: z.string().uuid().describe("Citation ID"),
+    verified: z.boolean().describe("Whether the citation is verified"),
+    notes: z.string().optional().describe("Optional verification notes"),
+  },
+  async ({ citation_id, verified, notes }) => {
+    await setCitationVerifiedStatus(sql, citation_id, verified, notes);
+    return text({ success: true });
+  },
+);
+
+
+// ─── Collection Diagnostics ─────────────────────────────────────────────────────
+
+server.tool(
+  "knowledge_get_collection_diagnostics",
+  "Get diagnostic information about a collection — chunk distribution by status, average chunk size, embedding coverage, indexing queue depth, and health flags",
+  {
+    collection_id: z.string().describe("Collection ID to diagnose"),
+  },
+  async ({ collection_id }) => {
+    const [stats] = await sql`
+      SELECT
+        COUNT(DISTINCT d.id)::int AS total_documents,
+        COUNT(DISTINCT c.id)::int AS total_chunks,
+        COUNT(DISTINCT CASE WHEN c.embedding IS NOT NULL THEN c.id END)::int AS chunks_with_embedding,
+        AVG(LENGTH(c.content))::int AS avg_chunk_size_bytes,
+        COUNT(DISTINCT CASE WHEN d.status = 'pending' THEN d.id END)::int AS pending_documents,
+        COUNT(DISTINCT CASE WHEN d.status = 'processing' THEN d.id END)::int AS processing_documents,
+        COUNT(DISTINCT CASE WHEN d.status = 'ready' THEN d.id END)::int AS ready_documents,
+        COUNT(DISTINCT CASE WHEN d.status = 'failed' THEN d.id END)::int AS failed_documents,
+        COUNT(DISTINCT CASE WHEN d.status = 'archived' THEN d.id END)::int AS archived_documents,
+        MIN(d.created_at) AS oldest_document,
+        MAX(d.updated_at) AS newest_document
+      FROM knowledge.documents d
+      LEFT JOIN knowledge.chunks c ON c.document_id = d.id
+      WHERE d.collection_id = ${collection_id}
+    `;
+    const [queueDepth] = await sql`
+      SELECT COUNT(*)::int AS queued_jobs
+      FROM knowledge.indexing_queue
+      WHERE collection_id = ${collection_id}
+        AND status IN ('queued', 'pending')
+    `;
+    const chunkSizeBuckets = await sql`
+      SELECT
+        CASE
+          WHEN LENGTH(c.content) < 256 THEN 'tiny_<256B'
+          WHEN LENGTH(c.content) < 512 THEN 'small_256-512B'
+          WHEN LENGTH(c.content) < 1024 THEN 'medium_512-1KB'
+          WHEN LENGTH(c.content) < 2048 THEN 'large_1-2KB'
+          ELSE 'xlarge_>2KB'
+        END AS size_bucket,
+        COUNT(*)::int AS chunk_count
+      FROM knowledge.chunks c
+      WHERE c.document_id IN (SELECT id FROM knowledge.documents WHERE collection_id = ${collection_id})
+      GROUP BY size_bucket
+    `;
+    const embeddingCoverage = stats.total_chunks > 0
+      ? (stats.chunks_with_embedding / stats.total_chunks * 100).toFixed(1)
+      : "0";
+    const healthFlags: string[] = [];
+    if (stats.failed_documents > 0) healthFlags.push(`failed_documents:${stats.failed_documents}`);
+    if (Number(queueDepth.queued_jobs) > 100) healthFlags.push(`large_queue:${queueDepth.queued_jobs}`);
+    if (Number(embeddingCoverage) < 50) healthFlags.push(`low_embedding_coverage:${embeddingCoverage}%`);
+    if (stats.pending_documents > stats.ready_documents) healthFlags.push(`backlogged_indexing`);
+    return text({
+      collection_id,
+      diagnostics: { ...stats, embedding_coverage_percent: embeddingCoverage, queue_depth: queueDepth },
+      chunk_size_distribution: chunkSizeBuckets,
+      health_flags: healthFlags,
+    });
+  },
+);
+
+server.tool(
+  "knowledge_estimate_indexing_cost",
+  "Estimate the token count and approximate cost to index a document before actually ingesting it — useful for budgeting",
+  {
+    collection_id: z.string().describe("Collection ID"),
+    content: z.string().describe("Document content to estimate"),
+    title: z.string().optional().describe("Document title"),
+    chunk_size: z.number().optional().describe("Target chunk size in characters (default: 500)"),
+  },
+  async ({ collection_id, content, title, chunk_size }) => {
+    const { estimateTokens } = await import("../lib/chunking.js");
+    const { hasEmbeddingKey } = await import("../lib/embeddings.js");
+    const targetChunkSize = chunk_size ?? 500;
+    const chunks = Math.ceil(content.length / targetChunkSize);
+    const totalTokens = estimateTokens(content);
+    const estimatedChunkTokens = Math.ceil(totalTokens / chunks);
+    const hasEmbeddings = await hasEmbeddingKey();
+    // Rough cost estimates (OpenAI ada-002 pricing approximation)
+    const embeddingCostPer1k = 0.0001;
+    const gpt4CostPer1k = 0.03;
+    const estimatedEmbeddingCost = hasEmbeddings
+      ? (totalTokens / 1000) * embeddingCostPer1k
+      : null;
+    const estimatedProcessingCost = (totalTokens / 1000) * gpt4CostPer1k;
+    return text({
+      collection_id,
+      title: title ?? "(untitled)",
+      content_length_chars: content.length,
+      estimated_total_tokens: totalTokens,
+      chunk_count: chunks,
+      avg_tokens_per_chunk: estimatedChunkTokens,
+      target_chunk_size: targetChunkSize,
+      embeddings_available: hasEmbeddings,
+      estimated_embedding_cost_usd: estimatedEmbeddingCost,
+      estimated_processing_cost_usd: estimatedProcessingCost,
+    });
+  },
+);
+
+server.tool(
+  "knowledge_bulk_archive_documents",
+  "Bulk archive documents in a collection — archives all documents older than a given date, or all documents in a given status",
+  {
+    collection_id: z.string().describe("Collection ID"),
+    older_than_days: z.number().optional().describe("Archive documents not updated in this many days"),
+    status: z.enum(["pending", "processing", "failed", "ready"]).optional().describe("Archive documents in this status"),
+    dry_run: z.boolean().optional().default(true).describe("If true, returns count without archiving"),
+    reason: z.string().optional().describe("Reason for archival (recorded in document metadata)"),
+  },
+  async ({ collection_id, older_than_days, status, dry_run, reason }) => {
+    let whereClause: string;
+    const params: unknown[] = [collection_id];
+    if (older_than_days) {
+      const cutoffDate = new Date(Date.now() - older_than_days * 86400000);
+      whereClause = `collection_id = $1 AND updated_at < $2 AND status != 'archived'`;
+      params.push(cutoffDate);
+    } else if (status) {
+      whereClause = `collection_id = $1 AND status = $2`;
+      params.push(status);
+    } else {
+      whereClause = `collection_id = $1 AND status != 'archived'`;
+    }
+    const countQuery = `SELECT COUNT(*)::int AS count FROM knowledge.documents WHERE ${whereClause}`;
+    const [countResult] = await sql.unsafe(countQuery, params) as [{ count: number }];
+    if (dry_run) {
+      return text({
+        collection_id,
+        dry_run: true,
+        would_archive: countResult.count,
+        filters: { older_than_days, status },
+        message: `Dry run — set dry_run=false to actually archive`,
+      });
+    }
+    const archivalReason = reason ?? `bulk_archive:${new Date().toISOString()}`;
+    const updateQuery = `
+      UPDATE knowledge.documents
+      SET status = 'archived', metadata = jsonb_set(COALESCE(metadata, '{}'), '{archival_reason}', $2)
+      WHERE ${whereClause}
+    `;
+    const result = await sql.unsafe(updateQuery, [...params, archivalReason]);
+    return text({
+      collection_id,
+      dry_run: false,
+      archived_count: result.count ?? countResult.count,
+      filters: { older_than_days, status },
+      archival_reason: archivalReason,
+    });
+  },
+);
+
+server.tool(
+  "knowledge_detect_conflicts",
+  "Detect contradictory facts across different sources for a specific entity",
+  {
+    entity_id: z.string().describe("Entity UUID to check for conflicts"),
+    workspace_id: z.string().describe("Workspace UUID"),
+  },
+  async ({ entity_id, workspace_id }) => {
+    const report = await detectEntityConflicts(sql, entity_id, workspace_id);
+    return text(report);
+  },
+);
+
+server.tool(
+  "knowledge_scan_conflicts",
+  "Scan all entities in a workspace for knowledge conflicts",
+  {
+    workspace_id: z.string().describe("Workspace UUID"),
+    limit: z.number().int().positive().optional().default(50).describe("Max entities to scan"),
+  },
+  async ({ workspace_id, limit }) => {
+    const reports = await scanWorkspaceConflicts(sql, workspace_id, limit);
+    return text({ conflicts: reports, count: reports.length });
+  },
+);
+
+server.tool(
+  "knowledge_conflict_stats",
+  "Get conflict statistics for a workspace",
+  {
+    workspace_id: z.string().describe("Workspace UUID"),
+  },
+  async ({ workspace_id }) => {
+    const stats = await getConflictStats(sql, workspace_id);
+    return text(stats);
+  },
+);
+
+server.tool(
+  "knowledge_log_search",
+  "Log a search query for analytics — tracks what users are searching for and how results are used",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    query: z.string().describe("Search query text"),
+    collection_id: z.string().optional().describe("Collection searched (if known)"),
+    result_count: z.number().int().nonnegative().optional().default(0).describe("Number of results returned"),
+    latency_ms: z.number().int().nonnegative().optional().describe("Search latency in milliseconds"),
+  },
+  async ({ workspace_id, query, collection_id, result_count, latency_ms }) => {
+    const entry = await logSearchQuery(sql, workspace_id, query, { collectionId: collection_id, resultCount: result_count, latencyMs: latency_ms });
+    return text({ logged: true, id: (entry as any).id });
+  },
+);
+
+server.tool(
+  "knowledge_record_search_clicks",
+  "Record clicks on search results — used to improve search ranking and analytics",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    query_id: z.string().describe("Search query ID from knowledge_log_search"),
+    chunk_id: z.string().describe("Chunk ID that was clicked"),
+    position: z.number().int().nonnegative().optional().describe("Position in result list (0-based)"),
+  },
+  async ({ workspace_id, query_id, chunk_id, position }) => {
+    await recordSearchClicks(sql, workspace_id, query_id, chunk_id, position);
+    return text({ recorded: true });
+  },
+);
+
+server.tool(
+  "knowledge_get_search_analytics",
+  "Get search analytics summary for a workspace — top queries, no-result queries, click-through rates",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    from_date: z.string().optional().describe("Start date (ISO-8601)"),
+    to_date: z.string().optional().describe("End date (ISO-8601)"),
+    limit: z.number().int().positive().optional().default(20).describe("Max top queries to return"),
+  },
+  async ({ workspace_id, from_date, to_date, limit }) => {
+    const analytics = await getSearchAnalytics(sql, workspace_id, { fromDate: from_date ? new Date(from_date) : undefined, toDate: to_date ? new Date(to_date) : undefined });
+    const topQueries = await getTopQueries(sql, workspace_id, limit);
+    const noResultQueries = await getNoResultQueries(sql, workspace_id, limit);
+    return text({ analytics, top_queries: topQueries, no_result_queries: noResultQueries });
+  },
+);
+
+server.tool(
+  "knowledge_find_related",
+  "Find documents semantically related to a given document or query — uses embedding centroids",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    document_id: z.string().optional().describe("Document ID to find related docs for"),
+    query: z.string().optional().describe("Query text to find related docs for (alternative to document_id)"),
+    collection_id: z.string().optional().describe("Collection to search in (required if using query)"),
+    limit: z.number().int().positive().optional().default(5).describe("Max related documents to return"),
+  },
+  async ({ workspace_id, document_id, query, collection_id, limit }) => {
+    let results;
+    if (document_id) {
+      results = await findRelatedDocuments(sql, workspace_id, document_id, limit);
+    } else if (query && collection_id) {
+      results = await findRelatedByQuery(sql, workspace_id, collection_id, query, limit);
+    } else {
+      return text({ error: "Provide either document_id or both query and collection_id" });
+    }
+    return text({ results });
+  },
+);
+
+server.tool(
+  "knowledge_classify_intent",
+  "Classify the intent behind a user query — determines what type of information the user is looking for",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    query: z.string().describe("Query text to classify"),
+  },
+  async ({ workspace_id, query }) => {
+    const classification = await classifyQueryIntent(sql, workspace_id, query);
+    return text(classification);
+  },
+);
+
+server.tool(
+  "knowledge_intent_distribution",
+  "Get distribution of query intents for a workspace — useful for understanding user behavior",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    from_date: z.string().optional().describe("Start date (ISO-8601)"),
+    to_date: z.string().optional().describe("End date (ISO-8601)"),
+  },
+  async ({ workspace_id, from_date, to_date }) => {
+    const distribution = await getIntentDistribution(sql, workspace_id, { fromDate: from_date ? new Date(from_date) : undefined, toDate: to_date ? new Date(to_date) : undefined });
+    const lowConfidence = await getLowConfidenceQueries(sql, workspace_id, 10);
+    return text({ distribution, low_confidence_queries: lowConfidence });
+  },
+);
+
+main().catch(console.error);
+
+// ─── Document Access Analytics ───────────────────────────────────────────────
+
+server.tool(
+  "knowledge_get_document_access_frequency",
+  "Get hourly access count for a document over a time window (for decay ranking)",
+  {
+    document_id: z.string().uuid().describe("Document ID"),
+    window_hours: z.number().optional().default(168).describe("Time window in hours (default 168 = 1 week)"),
+  },
+  async ({ document_id, window_hours }) =>
+    text(await getDocumentAccessFrequency(sql, document_id, window_hours)),
+);
+
+
 // --- Document processing tools ---
 
 server.tool(
@@ -1099,6 +616,37 @@ server.tool(
   async ({ content, filename, mime_type }) =>
     text(processDocument(content, filename, mime_type)),
 );
+
+
+// ─── Document Versioning ─────────────────────────────────────────────────────
+
+server.tool(
+  "knowledge_list_document_versions",
+  "List all historical versions of a document, newest first",
+  {
+    document_id: z.string().uuid().describe("Document ID"),
+    limit: z.number().optional().default(20).describe("Max versions to return"),
+    offset: z.number().optional().default(0).describe("Offset for pagination"),
+  },
+  async ({ document_id, limit, offset }) =>
+    text(await listDocumentVersions(sql, document_id, { limit, offset })),
+);
+
+server.tool(
+  "knowledge_create_document_version",
+  "Snapshot the current state of a document as a new version (call before updating)",
+  {
+    document_id: z.string().uuid().describe("Document ID"),
+    content: z.string().describe("Content to snapshot"),
+    content_hash: z.string().describe("Content hash"),
+    metadata_snapshot: z.record(z.any()).optional().describe("Metadata snapshot"),
+    chunk_count: z.number().int().nonnegative().describe("Current chunk count"),
+    reason: z.string().optional().describe("Reason for creating this version"),
+  },
+  async ({ document_id, content, content_hash, metadata_snapshot, chunk_count, reason }) =>
+    text(await createDocumentVersion(sql, { documentId: document_id, content, contentHash: content_hash, metadataSnapshot: metadata_snapshot ?? {}, chunkCount: chunk_count, reason })),
+);
+
 
 // ─── Incremental Indexing ───────────────────────────────────────────────────
 
@@ -1141,74 +689,6 @@ server.tool(
   async ({ content }) => text({ hash: await computeDocumentHash(content) }),
 );
 
-// ─── Document Versioning ─────────────────────────────────────────────────────
-
-server.tool(
-  "knowledge_list_document_versions",
-  "List all historical versions of a document, newest first",
-  {
-    document_id: z.string().uuid().describe("Document ID"),
-    limit: z.number().optional().default(20).describe("Max versions to return"),
-    offset: z.number().optional().default(0).describe("Offset for pagination"),
-  },
-  async ({ document_id, limit, offset }) =>
-    text(await listDocumentVersions(sql, document_id, { limit, offset })),
-);
-
-server.tool(
-  "knowledge_create_document_version",
-  "Snapshot the current state of a document as a new version (call before updating)",
-  {
-    document_id: z.string().uuid().describe("Document ID"),
-    content: z.string().describe("Content to snapshot"),
-    content_hash: z.string().describe("Content hash"),
-    metadata_snapshot: z.record(z.any()).optional().describe("Metadata snapshot"),
-    chunk_count: z.number().int().nonnegative().describe("Current chunk count"),
-    reason: z.string().optional().describe("Reason for creating this version"),
-  },
-  async ({ document_id, content, content_hash, metadata_snapshot, chunk_count, reason }) =>
-    text(await createDocumentVersion(sql, { documentId: document_id, content, contentHash: content_hash, metadataSnapshot: metadata_snapshot ?? {}, chunkCount: chunk_count, reason })),
-);
-
-// ─── Citation Management ─────────────────────────────────────────────────────
-
-server.tool(
-  "knowledge_delete_citations_for_document",
-  "Delete all citations involving a document (either as source or citing document)",
-  {
-    document_id: z.string().uuid().describe("Document ID"),
-  },
-  async ({ document_id }) => text({ deleted: await deleteCitationsForDocument(sql, document_id) }),
-);
-
-// ─── Document Access Analytics ───────────────────────────────────────────────
-
-server.tool(
-  "knowledge_get_document_access_frequency",
-  "Get hourly access count for a document over a time window (for decay ranking)",
-  {
-    document_id: z.string().uuid().describe("Document ID"),
-    window_hours: z.number().optional().default(168).describe("Time window in hours (default 168 = 1 week)"),
-  },
-  async ({ document_id, window_hours }) =>
-    text(await getDocumentAccessFrequency(sql, document_id, window_hours)),
-);
-
-// ─── Citation Verification ────────────────────────────────────────────────────
-
-server.tool(
-  "knowledge_set_citation_verified_status",
-  "Mark a citation as verified or retracted, optionally with notes",
-  {
-    citation_id: z.string().uuid().describe("Citation ID"),
-    verified: z.boolean().describe("Whether the citation is verified"),
-    notes: z.string().optional().describe("Optional verification notes"),
-  },
-  async ({ citation_id, verified, notes }) => {
-    await setCitationVerifiedStatus(sql, citation_id, verified, notes);
-    return text({ success: true });
-  },
-);
 
 // ─── Index Checkpoints ────────────────────────────────────────────────────────
 
@@ -1278,6 +758,75 @@ server.tool(
     return text(JSON.stringify({ deleted: result }));
   },
 );
+
+
+// --- Indexing job queue tools ---
+
+server.tool(
+  "knowledge_queue_indexing_job",
+  "Queue a document for background indexing",
+  {
+    document_id: z.string().describe("Document ID"),
+    workspace_id: z.string().describe("Workspace ID"),
+    priority: z.enum(["low", "normal", "high", "urgent"]).optional().default("normal").describe("Job priority"),
+    max_attempts: z.number().optional().default(3).describe("Max retry attempts"),
+  },
+  async ({ document_id, workspace_id, priority, max_attempts }) =>
+    text(await queueIndexingJob(sql, document_id, workspace_id, { priority, maxAttempts: max_attempts })),
+);
+
+server.tool(
+  "knowledge_list_indexing_jobs",
+  "List indexing jobs for a workspace",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    status: z.enum(["pending", "processing", "completed", "failed", "cancelled"]).optional().describe("Filter by status"),
+    limit: z.number().optional().default(50).describe("Max results"),
+    offset: z.number().optional().default(0).describe("Offset"),
+  },
+  async ({ workspace_id, status, limit, offset }) =>
+    text(await listIndexingJobs(sql, workspace_id, { status, limit, offset })),
+);
+
+server.tool(
+  "knowledge_get_indexing_job",
+  "Get a specific indexing job by ID",
+  {
+    job_id: z.string().describe("Job ID"),
+  },
+  async ({ job_id }) => text(await getIndexingJob(sql, job_id)),
+);
+
+server.tool(
+  "knowledge_cancel_indexing_job",
+  "Cancel a pending or failed indexing job",
+  {
+    job_id: z.string().describe("Job ID"),
+  },
+  async ({ job_id }) => text(await cancelIndexingJob(sql, job_id)),
+);
+
+server.tool(
+  "knowledge_process_indexing_queue",
+  "Process N pending indexing jobs from the queue (for background workers)",
+  {
+    count: z.number().optional().default(5).describe("Number of jobs to process"),
+  },
+  async ({ count }) => {
+    const processed = await processIndexingQueue(sql, count);
+    return text({ processed });
+  },
+);
+
+server.tool(
+  "knowledge_indexing_queue_stats",
+  "Get indexing queue statistics for a workspace",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+  },
+  async ({ workspace_id }) => text(await getIndexingQueueStats(sql, workspace_id)),
+);
+
 
 // ─── Multi-Modal Enrichment ────────────────────────────────────────────────────
 
@@ -2685,294 +2234,757 @@ server.tool(
   },
 );
 
-// ─── Collection Diagnostics ─────────────────────────────────────────────────────
 
 server.tool(
-  "knowledge_get_collection_diagnostics",
-  "Get diagnostic information about a collection — chunk distribution by status, average chunk size, embedding coverage, indexing queue depth, and health flags",
+  "knowledge_create_collection",
+  "Create a new knowledge collection for storing and retrieving documents",
   {
-    collection_id: z.string().describe("Collection ID to diagnose"),
+    workspace_id: z.string().describe("Workspace ID"),
+    name: z.string().describe("Collection name"),
+    description: z.string().optional().describe("Collection description"),
+    chunk_size: z.number().optional().default(1000).describe("Characters per chunk"),
+    chunk_overlap: z.number().optional().default(200).describe("Overlap between chunks"),
+    chunking_strategy: z.enum(["fixed", "paragraph", "sentence", "recursive"]).optional().default("recursive").describe("Chunking strategy"),
+    embedding_model: z.string().optional().default("text-embedding-3-small").describe("Embedding model"),
   },
+  async ({ workspace_id, name, chunk_size, chunk_overlap, chunking_strategy, embedding_model, ...rest }) =>
+    text(
+      await createCollection(sql, {
+        workspaceId: workspace_id,
+        name,
+        chunkSize: chunk_size,
+        chunkOverlap: chunk_overlap,
+        chunkingStrategy: chunking_strategy,
+        embeddingModel: embedding_model,
+        ...rest,
+      }),
+    ),
+);
+
+server.tool(
+  "knowledge_ingest",
+  "Ingest a document into a collection: chunk, embed, and index for retrieval",
+  {
+    collection_id: z.string().describe("Collection ID"),
+    title: z.string().describe("Document title"),
+    content: z.string().describe("Document content"),
+    source_type: z.enum(["text", "url", "file"]).optional().default("text").describe("Source type"),
+    source_url: z.string().optional().describe("Source URL if applicable"),
+    metadata: z.record(z.any()).optional().describe("Additional metadata"),
+  },
+  async ({ collection_id, title, content, source_type, source_url, metadata }) =>
+    text(
+      await ingestDocument(sql, collection_id, {
+        title,
+        content,
+        sourceType: source_type,
+        sourceUrl: source_url,
+        metadata,
+      }),
+    ),
+);
+
+server.tool(
+  "knowledge_retrieve",
+  "Retrieve relevant chunks from a collection using semantic, text, or hybrid search",
+  {
+    collection_id: z.string().describe("Collection ID"),
+    query: z.string().describe("Search query"),
+    mode: z.enum(["semantic", "text", "hybrid"]).optional().default("text").describe("Search mode"),
+    limit: z.number().optional().default(10).describe("Max results"),
+    min_score: z.number().optional().describe("Minimum relevance score"),
+  },
+  async ({ collection_id, query, ...opts }) =>
+    text(await retrieve(sql, collection_id, query, opts)),
+);
+
+server.tool(
+  "knowledge_list_collections",
+  "List all knowledge collections in a workspace",
+  { workspace_id: z.string().describe("Workspace ID") },
+  async ({ workspace_id }) => text(await listCollections(sql, workspace_id)),
+);
+
+server.tool(
+  "knowledge_list_documents",
+  "List all documents in a collection",
+  { collection_id: z.string().describe("Collection ID") },
+  async ({ collection_id }) => text(await listDocuments(sql, collection_id)),
+);
+
+server.tool(
+  "knowledge_delete_document",
+  "Delete a document and its chunks from a collection",
+  { id: z.string().describe("Document ID") },
+  async ({ id }) => text({ deleted: await deleteDocument(sql, id) }),
+);
+
+server.tool(
+  "knowledge_get_stats",
+  "Get statistics for a collection (doc count, chunk count, avg chunks, total tokens)",
+  { collection_id: z.string().describe("Collection ID") },
+  async ({ collection_id }) => text(await getCollectionStats(sql, collection_id)),
+);
+
+server.tool(
+  "knowledge_reindex",
+  "Re-chunk and re-embed all documents in a collection",
+  { collection_id: z.string().describe("Collection ID") },
   async ({ collection_id }) => {
-    const [stats] = await sql`
-      SELECT
-        COUNT(DISTINCT d.id)::int AS total_documents,
-        COUNT(DISTINCT c.id)::int AS total_chunks,
-        COUNT(DISTINCT CASE WHEN c.embedding IS NOT NULL THEN c.id END)::int AS chunks_with_embedding,
-        AVG(LENGTH(c.content))::int AS avg_chunk_size_bytes,
-        COUNT(DISTINCT CASE WHEN d.status = 'pending' THEN d.id END)::int AS pending_documents,
-        COUNT(DISTINCT CASE WHEN d.status = 'processing' THEN d.id END)::int AS processing_documents,
-        COUNT(DISTINCT CASE WHEN d.status = 'ready' THEN d.id END)::int AS ready_documents,
-        COUNT(DISTINCT CASE WHEN d.status = 'failed' THEN d.id END)::int AS failed_documents,
-        COUNT(DISTINCT CASE WHEN d.status = 'archived' THEN d.id END)::int AS archived_documents,
-        MIN(d.created_at) AS oldest_document,
-        MAX(d.updated_at) AS newest_document
-      FROM knowledge.documents d
-      LEFT JOIN knowledge.chunks c ON c.document_id = d.id
-      WHERE d.collection_id = ${collection_id}
+    const { getCollection } = await import("../lib/collections.js");
+    const { chunkText, estimateTokens } = await import("../lib/chunking.js");
+    const { generateEmbedding } = await import("../lib/embeddings.js");
+
+    const collection = await getCollection(sql, collection_id);
+    if (!collection) throw new Error(`Collection not found: ${collection_id}`);
+
+    await sql`DELETE FROM knowledge.chunks WHERE collection_id = ${collection_id}`;
+    await sql`UPDATE knowledge.collections SET chunk_count = 0 WHERE id = ${collection_id}`;
+
+    const docs = await listDocuments(sql, collection_id);
+    let totalChunks = 0;
+
+    for (const doc of docs) {
+      try {
+        await sql`UPDATE knowledge.documents SET status = 'pending', chunk_count = 0, error = NULL WHERE id = ${doc.id}`;
+
+        const chunks = chunkText(doc.content, {
+          strategy: collection.chunking_strategy,
+          chunkSize: collection.chunk_size,
+          chunkOverlap: collection.chunk_overlap,
+        });
+
+        const hasPgvector = await checkPgvector(sql);
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkContent = chunks[i]!;
+          const tokenCount = estimateTokens(chunkContent);
+          const embedding = await generateEmbedding(chunkContent);
+          const chunkMeta = {
+            ...(doc.metadata ?? {}),
+            chunk_index: i,
+            total_chunks: chunks.length,
+            document_title: doc.title,
+          };
+
+          if (hasPgvector && embedding) {
+            await sql`
+              INSERT INTO knowledge.chunks (document_id, collection_id, content, chunk_index, token_count, metadata, embedding)
+              VALUES (${doc.id}, ${collection_id}, ${chunkContent}, ${i}, ${tokenCount}, ${sql.json(chunkMeta)}, ${`[${embedding.join(",")}]`})
+            `;
+          } else {
+            await sql`
+              INSERT INTO knowledge.chunks (document_id, collection_id, content, chunk_index, token_count, metadata)
+              VALUES (${doc.id}, ${collection_id}, ${chunkContent}, ${i}, ${tokenCount}, ${sql.json(chunkMeta)})
+            `;
+          }
+        }
+
+        await sql`UPDATE knowledge.documents SET status = 'ready', chunk_count = ${chunks.length} WHERE id = ${doc.id}`;
+        totalChunks += chunks.length;
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        await sql`UPDATE knowledge.documents SET status = 'error', error = ${errorMsg} WHERE id = ${doc.id}`;
+      }
+    }
+
+    await sql`UPDATE knowledge.collections SET chunk_count = ${totalChunks} WHERE id = ${collection_id}`;
+    return text({ ok: true, documents: docs.length, chunks: totalChunks });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Incremental indexing tools
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "knowledge_reindex_document",
+  "Re-index a document only if its content has changed (compares content hash). Returns null if unchanged.",
+  {
+    document_id: z.string().describe("Document ID to re-index"),
+    force: z.boolean().optional().default(false).describe("Force re-index even if content hash matches"),
+  },
+  async ({ document_id, force }) => {
+    if (force) {
+      const { forceReindexDocument } = await import("../lib/incremental.js");
+      return text(await forceReindexDocument(sql, document_id));
+    }
+    const result = await reindexIfChanged(sql, document_id);
+    return text({ reindexed: result !== null, document: result });
+  },
+);
+
+server.tool(
+  "knowledge_get_document_hash",
+  "Get the current content hash and stored hash for a document to check if it has changed",
+  { document_id: z.string().describe("Document ID") },
+  async ({ document_id }) => {
+    const [doc] = await sql`
+      SELECT id, content, content_hash FROM knowledge.documents WHERE id = ${document_id}
     `;
-    const [queueDepth] = await sql`
-      SELECT COUNT(*)::int AS queued_jobs
-      FROM knowledge.indexing_queue
-      WHERE collection_id = ${collection_id}
-        AND status IN ('queued', 'pending')
-    `;
-    const chunkSizeBuckets = await sql`
-      SELECT
-        CASE
-          WHEN LENGTH(c.content) < 256 THEN 'tiny_<256B'
-          WHEN LENGTH(c.content) < 512 THEN 'small_256-512B'
-          WHEN LENGTH(c.content) < 1024 THEN 'medium_512-1KB'
-          WHEN LENGTH(c.content) < 2048 THEN 'large_1-2KB'
-          ELSE 'xlarge_>2KB'
-        END AS size_bucket,
-        COUNT(*)::int AS chunk_count
-      FROM knowledge.chunks c
-      WHERE c.document_id IN (SELECT id FROM knowledge.documents WHERE collection_id = ${collection_id})
-      GROUP BY size_bucket
-    `;
-    const embeddingCoverage = stats.total_chunks > 0
-      ? (stats.chunks_with_embedding / stats.total_chunks * 100).toFixed(1)
-      : "0";
-    const healthFlags: string[] = [];
-    if (stats.failed_documents > 0) healthFlags.push(`failed_documents:${stats.failed_documents}`);
-    if (Number(queueDepth.queued_jobs) > 100) healthFlags.push(`large_queue:${queueDepth.queued_jobs}`);
-    if (Number(embeddingCoverage) < 50) healthFlags.push(`low_embedding_coverage:${embeddingCoverage}%`);
-    if (stats.pending_documents > stats.ready_documents) healthFlags.push(`backlogged_indexing`);
+    if (!doc) return text({ error: "Document not found" });
+    const currentHash = await computeDocumentHash(doc.content);
     return text({
-      collection_id,
-      diagnostics: { ...stats, embedding_coverage_percent: embeddingCoverage, queue_depth: queueDepth },
-      chunk_size_distribution: chunkSizeBuckets,
-      health_flags: healthFlags,
+      document_id: doc.id,
+      current_hash: currentHash,
+      stored_hash: doc.content_hash,
+      changed: currentHash !== doc.content_hash,
+    });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Vision (multi-modal) tools
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "knowledge_store_vision_chunk",
+  "Store an image/vision chunk for a document",
+  {
+    document_id: z.string().describe("Document ID"),
+    image_data: z.string().describe("Base64-encoded image data"),
+    mime_type: z.string().describe("MIME type (e.g., image/png, image/jpeg)"),
+    page_number: z.number().optional().describe("Page number if applicable"),
+    width: z.number().optional().describe("Image width in pixels"),
+    height: z.number().optional().describe("Image height in pixels"),
+    extracted_text: z.string().optional().describe("Extracted text from the image (OCR)"),
+  },
+  async ({ document_id, image_data, mime_type, page_number, width, height, extracted_text }) => {
+    const buffer = Buffer.from(image_data, "base64");
+    const chunk = await storeVisionChunk(sql, {
+      documentId: document_id,
+      imageData: buffer,
+      mimeType: mime_type,
+      pageNumber: page_number,
+      width: width,
+      height: height,
+      extractedText: extracted_text,
+    });
+    return text({
+      id: chunk.id,
+      document_id: chunk.document_id,
+      mime_type: chunk.mime_type,
+      page_number: chunk.page_number,
+      width: chunk.width,
+      height: chunk.height,
+      has_extracted_text: chunk.extracted_text !== null,
+      created_at: chunk.created_at,
     });
   },
 );
 
 server.tool(
-  "knowledge_estimate_indexing_cost",
-  "Estimate the token count and approximate cost to index a document before actually ingesting it — useful for budgeting",
+  "knowledge_get_vision_chunks",
+  "Get all vision chunks (images) for a document",
+  { document_id: z.string().describe("Document ID") },
+  async ({ document_id }) => {
+    const chunks = await getVisionChunks(sql, document_id);
+    return text(chunks.map((c) => ({
+      id: c.id,
+      document_id: c.document_id,
+      mime_type: c.mime_type,
+      page_number: c.page_number,
+      width: c.width,
+      height: c.height,
+      has_extracted_text: c.extracted_text !== null,
+      created_at: c.created_at,
+    })));
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Citation tracking tools
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "knowledge_add_citation",
+  "Add a citation relationship between two chunks",
+  {
+    document_id: z.string().describe("Source document ID (the document being cited)"),
+    chunk_id: z.string().describe("Source chunk ID"),
+    cited_by_document_id: z.string().describe("Document ID that is doing the citing"),
+    cited_by_chunk_id: z.string().describe("Chunk ID that is doing the citing"),
+    quote: z.string().optional().describe("Quoted text"),
+    context: z.string().optional().describe("Surrounding context"),
+    score: z.number().optional().describe("Citation score/relevance"),
+  },
+  async ({ document_id, chunk_id, cited_by_document_id, cited_by_chunk_id, quote, context, score }) =>
+    text(
+      await addCitation(sql, {
+        documentId: document_id,
+        chunkId: chunk_id,
+        citedByDocumentId: cited_by_document_id,
+        citedByChunkId: cited_by_chunk_id,
+        quote,
+        context,
+        score,
+      }),
+    ),
+);
+
+server.tool(
+  "knowledge_get_chunk_citations",
+  "Get all citations for a specific chunk",
+  { chunk_id: z.string().describe("Chunk ID") },
+  async ({ chunk_id }) => text(await getCitationsForChunk(sql, chunk_id)),
+);
+
+server.tool(
+  "knowledge_find_citing_documents",
+  "Find all documents that cite a given document",
+  {
+    document_id: z.string().describe("Document ID being cited"),
+    limit: z.number().optional().default(10).describe("Max results"),
+  },
+  async ({ document_id, limit }) => text(await findCitingDocuments(sql, document_id, limit)),
+);
+
+// ---------------------------------------------------------------------------
+// Chunking strategy tools
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "knowledge_set_chunking_strategy",
+  "Set the chunking strategy for a document (metadata only; use rechunk to apply)",
+  {
+    document_id: z.string().describe("Document ID"),
+    strategy: z.enum(["fixed", "paragraph", "sentence", "recursive"]).describe("Chunking strategy"),
+  },
+  async ({ document_id, strategy }) =>
+    text(await setChunkingStrategy(sql, document_id, strategy)),
+);
+
+server.tool(
+  "knowledge_rechunk_document",
+  "Re-chunk a document with a new strategy, deleting old chunks and creating new ones",
+  {
+    document_id: z.string().describe("Document ID"),
+    strategy: z.enum(["fixed", "paragraph", "sentence", "recursive"]).optional().describe("Chunking strategy (uses document metadata if not provided)"),
+  },
+  async ({ document_id, strategy }) =>
+    text(await rechunkDocument(sql, document_id, strategy)),
+);
+
+// ── Feature 1: Cross-collection retrieval ─────────────────────────────────────
+
+server.tool(
+  "knowledge_cross_collection_retrieve",
+  "Search across multiple collections simultaneously and merge results by score",
+  {
+    collection_ids: z.array(z.string()).describe("Collection IDs to search"),
+    query: z.string().describe("Search query"),
+    mode: z.enum(["semantic", "text", "hybrid"]).optional().default("text").describe("Search mode"),
+    limit: z.number().optional().default(20).describe("Max total results"),
+    per_collection_limit: z.number().optional().default(10).describe("Max results per collection"),
+  },
+  async ({ collection_ids, query, mode, limit, per_collection_limit }) =>
+    text(await crossCollectionRetrieve(sql, collection_ids, query, {
+      mode,
+      limit,
+      perCollectionLimit: per_collection_limit,
+    })),
+);
+
+server.tool(
+  "knowledge_workspace_retrieve",
+  "Search across all collections in a workspace",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    query: z.string().describe("Search query"),
+    mode: z.enum(["semantic", "text", "hybrid"]).optional().default("text").describe("Search mode"),
+    limit: z.number().optional().default(20).describe("Max total results"),
+  },
+  async ({ workspace_id, query, mode, limit }) =>
+    text(await workspaceRetrieve(sql, workspace_id, query, { mode, limit })),
+);
+
+// ── Feature 2: BM25 ranking ─────────────────────────────────────────────────
+
+server.tool(
+  "knowledge_bm25_search",
+  "Search using BM25 full-text ranking (alternative to vector search)",
   {
     collection_id: z.string().describe("Collection ID"),
-    content: z.string().describe("Document content to estimate"),
-    title: z.string().optional().describe("Document title"),
-    chunk_size: z.number().optional().describe("Target chunk size in characters (default: 500)"),
+    query: z.string().describe("Search query"),
+    limit: z.number().optional().default(10).describe("Max results"),
+    k1: z.number().optional().describe("BM25 k1 term frequency saturation parameter"),
+    b: z.number().optional().describe("BM25 b document length normalization parameter"),
   },
-  async ({ collection_id, content, title, chunk_size }) => {
-    const { estimateTokens } = await import("../lib/chunking.js");
-    const { hasEmbeddingKey } = await import("../lib/embeddings.js");
-    const targetChunkSize = chunk_size ?? 500;
-    const chunks = Math.ceil(content.length / targetChunkSize);
-    const totalTokens = estimateTokens(content);
-    const estimatedChunkTokens = Math.ceil(totalTokens / chunks);
-    const hasEmbeddings = await hasEmbeddingKey();
-    // Rough cost estimates (OpenAI ada-002 pricing approximation)
-    const embeddingCostPer1k = 0.0001;
-    const gpt4CostPer1k = 0.03;
-    const estimatedEmbeddingCost = hasEmbeddings
-      ? (totalTokens / 1000) * embeddingCostPer1k
-      : null;
-    const estimatedProcessingCost = (totalTokens / 1000) * gpt4CostPer1k;
-    return text({
-      collection_id,
-      title: title ?? "(untitled)",
-      content_length_chars: content.length,
-      estimated_total_tokens: totalTokens,
-      chunk_count: chunks,
-      avg_tokens_per_chunk: estimatedChunkTokens,
-      target_chunk_size: targetChunkSize,
-      embeddings_available: hasEmbeddings,
-      estimated_embedding_cost_usd: estimatedEmbeddingCost,
-      estimated_processing_cost_usd: estimatedProcessingCost,
-    });
-  },
+  async ({ collection_id, query, limit, k1, b }) =>
+    text(await bm25Search(sql, collection_id, query, limit, { k1, b })),
 );
 
 server.tool(
-  "knowledge_bulk_archive_documents",
-  "Bulk archive documents in a collection — archives all documents older than a given date, or all documents in a given status",
+  "knowledge_hybrid_search",
+  "Hybrid search combining BM25 and semantic (vector) rankings using Reciprocal Rank Fusion",
   {
     collection_id: z.string().describe("Collection ID"),
-    older_than_days: z.number().optional().describe("Archive documents not updated in this many days"),
-    status: z.enum(["pending", "processing", "failed", "ready"]).optional().describe("Archive documents in this status"),
-    dry_run: z.boolean().optional().default(true).describe("If true, returns count without archiving"),
-    reason: z.string().optional().describe("Reason for archival (recorded in document metadata)"),
+    query: z.string().describe("Search query"),
+    limit: z.number().optional().default(10).describe("Max results"),
+    semantic_weight: z.number().optional().default(0.5).describe("Weight for semantic scores (0-1)"),
+    bm25_weight: z.number().optional().default(0.5).describe("Weight for BM25 scores (0-1)"),
   },
-  async ({ collection_id, older_than_days, status, dry_run, reason }) => {
-    let whereClause: string;
-    const params: unknown[] = [collection_id];
-    if (older_than_days) {
-      const cutoffDate = new Date(Date.now() - older_than_days * 86400000);
-      whereClause = `collection_id = $1 AND updated_at < $2 AND status != 'archived'`;
-      params.push(cutoffDate);
-    } else if (status) {
-      whereClause = `collection_id = $1 AND status = $2`;
-      params.push(status);
-    } else {
-      whereClause = `collection_id = $1 AND status != 'archived'`;
-    }
-    const countQuery = `SELECT COUNT(*)::int AS count FROM knowledge.documents WHERE ${whereClause}`;
-    const [countResult] = await sql.unsafe(countQuery, params) as [{ count: number }];
-    if (dry_run) {
-      return text({
-        collection_id,
-        dry_run: true,
-        would_archive: countResult.count,
-        filters: { older_than_days, status },
-        message: `Dry run — set dry_run=false to actually archive`,
-      });
-    }
-    const archivalReason = reason ?? `bulk_archive:${new Date().toISOString()}`;
-    const updateQuery = `
-      UPDATE knowledge.documents
-      SET status = 'archived', metadata = jsonb_set(COALESCE(metadata, '{}'), '{archival_reason}', $2)
-      WHERE ${whereClause}
-    `;
-    const result = await sql.unsafe(updateQuery, [...params, archivalReason]);
-    return text({
-      collection_id,
-      dry_run: false,
-      archived_count: result.count ?? countResult.count,
-      filters: { older_than_days, status },
-      archival_reason: archivalReason,
-    });
-  },
+  async ({ collection_id, query, limit, semantic_weight, bm25_weight }) =>
+    text(await hybridSearch(sql, collection_id, query, limit, semantic_weight, bm25_weight)),
 );
 
+// ── Feature 3: Document versioning ────────────────────────────────────────────
+
 server.tool(
-  "knowledge_detect_conflicts",
-  "Detect contradictory facts across different sources for a specific entity",
+  "knowledge_create_version",
+  "Snapshot the current state of a document as a new version",
   {
-    entity_id: z.string().describe("Entity UUID to check for conflicts"),
-    workspace_id: z.string().describe("Workspace UUID"),
+    document_id: z.string().describe("Document ID"),
+    reason: z.string().optional().describe("Reason for creating version"),
   },
-  async ({ entity_id, workspace_id }) => {
-    const report = await detectEntityConflicts(sql, entity_id, workspace_id);
-    return text(report);
+  async ({ document_id, reason }) => {
+    const [doc] = await sql`SELECT * FROM knowledge.documents WHERE id = ${document_id}`;
+    if (!doc) return text({ error: "Document not found" });
+    const { hashContent } = await import("../lib/documents.js");
+    const hash = await hashContent(doc.content);
+    return text(await createDocumentVersion(sql, {
+      documentId: document_id,
+      content: doc.content,
+      contentHash: hash,
+      metadataSnapshot: doc.metadata ?? {},
+      chunkCount: doc.chunk_count,
+      reason,
+    }));
   },
 );
 
 server.tool(
-  "knowledge_scan_conflicts",
-  "Scan all entities in a workspace for knowledge conflicts",
+  "knowledge_list_versions",
+  "List all versions of a document, newest first",
   {
-    workspace_id: z.string().describe("Workspace UUID"),
-    limit: z.number().int().positive().optional().default(50).describe("Max entities to scan"),
+    document_id: z.string().describe("Document ID"),
+    limit: z.number().optional().default(20).describe("Max results"),
+    offset: z.number().optional().default(0).describe("Offset"),
   },
-  async ({ workspace_id, limit }) => {
-    const reports = await scanWorkspaceConflicts(sql, workspace_id, limit);
-    return text({ conflicts: reports, count: reports.length });
+  async ({ document_id, limit, offset }) =>
+    text(await listDocumentVersions(sql, document_id, { limit, offset })),
+);
+
+server.tool(
+  "knowledge_get_version",
+  "Get a specific version of a document",
+  { document_id: z.string(), version_number: z.number().int().min(1) },
+  async ({ document_id, version_number }) =>
+    text(await getDocumentVersion(sql, document_id, version_number)),
+);
+
+server.tool(
+  "knowledge_restore_version",
+  "Restore a document to a previous version (creates backup of current state first)",
+  { document_id: z.string(), version_number: z.number().int().min(1) },
+  async ({ document_id, version_number }) => {
+    const result = await restoreDocumentVersion(sql, document_id, version_number);
+    return text(result);
   },
 );
 
 server.tool(
-  "knowledge_conflict_stats",
-  "Get conflict statistics for a workspace",
+  "knowledge_compare_versions",
+  "Compare two versions of a document, showing word-level diff",
   {
-    workspace_id: z.string().describe("Workspace UUID"),
+    document_id: z.string(),
+    version_a: z.number().int().min(1).describe("Older version number"),
+    version_b: z.number().int().min(1).describe("Newer version number"),
   },
-  async ({ workspace_id }) => {
-    const stats = await getConflictStats(sql, workspace_id);
-    return text(stats);
-  },
+  async ({ document_id, version_a, version_b }) =>
+    text(await compareVersions(sql, document_id, version_a, version_b)),
 );
 
 server.tool(
-  "knowledge_log_search",
-  "Log a search query for analytics — tracks what users are searching for and how results are used",
+  "knowledge_prune_versions",
+  "Delete old versions, keeping only the most recent N",
   {
-    workspace_id: z.string().describe("Workspace ID"),
-    query: z.string().describe("Search query text"),
-    collection_id: z.string().optional().describe("Collection searched (if known)"),
-    result_count: z.number().int().nonnegative().optional().default(0).describe("Number of results returned"),
-    latency_ms: z.number().int().nonnegative().optional().describe("Search latency in milliseconds"),
+    document_id: z.string(),
+    keep_last: z.number().int().min(1).optional().default(10),
   },
-  async ({ workspace_id, query, collection_id, result_count, latency_ms }) => {
-    const entry = await logSearchQuery(sql, workspace_id, query, { collectionId: collection_id, resultCount: result_count, latencyMs: latency_ms });
-    return text({ logged: true, id: (entry as any).id });
-  },
+  async ({ document_id, keep_last }) =>
+    text({ deleted: await pruneOldVersions(sql, document_id, keep_last) }),
 );
 
+// ---------------------------------------------------------------------------
+
+// Hybrid Retrieval tools (semantic + BM25 + cross-encoder reranking)
 server.tool(
-  "knowledge_record_search_clicks",
-  "Record clicks on search results — used to improve search ranking and analytics",
+  "knowledge_hybrid_retrieve_reranked",
+  "Retrieve chunks using hybrid semantic+BM25 scoring with optional cross-encoder re-ranking",
   {
-    workspace_id: z.string().describe("Workspace ID"),
-    query_id: z.string().describe("Search query ID from knowledge_log_search"),
-    chunk_id: z.string().describe("Chunk ID that was clicked"),
-    position: z.number().int().nonnegative().optional().describe("Position in result list (0-based)"),
+    collection_id: z.string().describe("Collection ID"),
+    query: z.string().describe("Search query"),
+    limit: z.number().optional().default(10).describe("Max results"),
+    semantic_weight: z.number().optional().default(0.5).describe("Weight for semantic scores (0-1)"),
+    bm25_weight: z.number().optional().default(0.5).describe("Weight for BM25 scores (0-1)"),
+    use_cross_encoder: z.boolean().optional().default(false).describe("Whether to apply cross-encoder re-ranking"),
   },
-  async ({ workspace_id, query_id, chunk_id, position }) => {
-    await recordSearchClicks(sql, workspace_id, query_id, chunk_id, position);
-    return text({ recorded: true });
+  async ({ collection_id, query, limit, semantic_weight, bm25_weight, use_cross_encoder }) => {
+    const { hybridRetrieveReranked } = await import("../lib/hybrid-retrieve.js");
+    return text(await hybridRetrieveReranked(sql, collection_id, query, {
+      limit: limit ?? 10,
+      semanticWeight: semantic_weight ?? 0.5,
+      bm25Weight: bm25_weight ?? 0.5,
+      useCrossEncoder: use_cross_encoder ?? false,
+    }));
   },
 );
 
+// Citation Graph tools
 server.tool(
-  "knowledge_get_search_analytics",
-  "Get search analytics summary for a workspace — top queries, no-result queries, click-through rates",
+  "knowledge_get_outgoing_citations",
+  "Get documents that a document cites (what it references)",
   {
-    workspace_id: z.string().describe("Workspace ID"),
-    from_date: z.string().optional().describe("Start date (ISO-8601)"),
-    to_date: z.string().optional().describe("End date (ISO-8601)"),
-    limit: z.number().int().positive().optional().default(20).describe("Max top queries to return"),
+    document_id: z.string().describe("Source document ID"),
+    limit: z.number().optional().default(20),
   },
-  async ({ workspace_id, from_date, to_date, limit }) => {
-    const analytics = await getSearchAnalytics(sql, workspace_id, { fromDate: from_date ? new Date(from_date) : undefined, toDate: to_date ? new Date(to_date) : undefined });
-    const topQueries = await getTopQueries(sql, workspace_id, limit);
-    const noResultQueries = await getNoResultQueries(sql, workspace_id, limit);
-    return text({ analytics, top_queries: topQueries, no_result_queries: noResultQueries });
+  async ({ document_id, limit }) => {
+    const { getOutgoingCitations } = await import("../lib/citation-graph.js");
+    return text(await getOutgoingCitations(sql, document_id, limit ?? 20));
   },
 );
 
 server.tool(
-  "knowledge_find_related",
-  "Find documents semantically related to a given document or query — uses embedding centroids",
+  "knowledge_delta_report",
+  "Get a delta report of what changed between the last checkpoint and current index state for a document",
   {
-    workspace_id: z.string().describe("Workspace ID"),
-    document_id: z.string().optional().describe("Document ID to find related docs for"),
-    query: z.string().optional().describe("Query text to find related docs for (alternative to document_id)"),
-    collection_id: z.string().optional().describe("Collection to search in (required if using query)"),
-    limit: z.number().int().positive().optional().default(5).describe("Max related documents to return"),
+    document_id: z.string().uuid(),
+    new_content_hash: z.string(),
+    new_chunk_count: z.number().int().nonnegative(),
+    new_total_tokens: z.number().int().nonnegative(),
   },
-  async ({ workspace_id, document_id, query, collection_id, limit }) => {
-    let results;
-    if (document_id) {
-      results = await findRelatedDocuments(sql, workspace_id, document_id, limit);
-    } else if (query && collection_id) {
-      results = await findRelatedByQuery(sql, workspace_id, collection_id, query, limit);
-    } else {
-      return text({ error: "Provide either document_id or both query and collection_id" });
-    }
-    return text({ results });
+  async ({ document_id, new_content_hash, new_chunk_count, new_total_tokens }) => {
+    const result = await computeDelta(sql, document_id, new_content_hash, new_chunk_count, new_total_tokens);
+    return text(JSON.stringify(result));
   },
 );
 
 server.tool(
-  "knowledge_classify_intent",
-  "Classify the intent behind a user query — determines what type of information the user is looking for",
+  "knowledge_get_incoming_citations",
+  "Get documents that cite a given document (who references it)",
   {
-    workspace_id: z.string().describe("Workspace ID"),
-    query: z.string().describe("Query text to classify"),
+    document_id: z.string().describe("Target document ID"),
+    limit: z.number().optional().default(20),
   },
-  async ({ workspace_id, query }) => {
-    const classification = await classifyQueryIntent(sql, workspace_id, query);
-    return text(classification);
+  async ({ document_id, limit }) => {
+    const { getIncomingCitations } = await import("../lib/citation-graph.js");
+    return text(await getIncomingCitations(sql, document_id, limit ?? 20));
   },
 );
 
 server.tool(
-  "knowledge_intent_distribution",
-  "Get distribution of query intents for a workspace — useful for understanding user behavior",
+  "knowledge_find_root_sources",
+  "Find the root source documents in a citation chain (documents with no incoming citations)",
   {
     workspace_id: z.string().describe("Workspace ID"),
-    from_date: z.string().optional().describe("Start date (ISO-8601)"),
-    to_date: z.string().optional().describe("End date (ISO-8601)"),
+    max_depth: z.number().optional().default(5).describe("Max traversal depth"),
   },
-  async ({ workspace_id, from_date, to_date }) => {
-    const distribution = await getIntentDistribution(sql, workspace_id, { fromDate: from_date ? new Date(from_date) : undefined, toDate: to_date ? new Date(to_date) : undefined });
-    const lowConfidence = await getLowConfidenceQueries(sql, workspace_id, 10);
-    return text({ distribution, low_confidence_queries: lowConfidence });
+  async ({ workspace_id, max_depth }) => {
+    const { findRootSourceDocuments } = await import("../lib/citation-graph.js");
+    return text(await findRootSourceDocuments(sql, workspace_id, max_depth ?? 5));
   },
 );
 
-main().catch(console.error);
+server.tool(
+  "knowledge_find_citation_path",
+  "Find the citation path between two documents (if one cites the other directly or transitively)",
+  {
+    source_document_id: z.string().describe("Starting document"),
+    target_document_id: z.string().describe("Target document"),
+    max_depth: z.number().optional().default(5),
+  },
+  async ({ source_document_id, target_document_id, max_depth }) => {
+    const { findCitationPath } = await import("../lib/citation-graph.js");
+    return text(await findCitationPath(sql, source_document_id, target_document_id, max_depth ?? 5));
+  },
+);
+
+server.tool(
+  "knowledge_compute_impact_scores",
+  "Compute impact scores for all documents in a citation graph (direct + transitive citations weighted)",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    min_impact: z.number().optional().default(1).describe("Minimum impact score to return"),
+  },
+  async ({ workspace_id, min_impact }) => {
+    const { computeImpactScores } = await import("../lib/citation-graph.js");
+    return text(await computeImpactScores(sql, workspace_id, min_impact ?? 1));
+  },
+);
+
+server.tool(
+  "knowledge_find_all_citing_documents",
+  "Find all documents that cite a given document directly or transitively (BFS citation traversal)",
+  {
+    document_id: z.string().describe("Document ID to find citers for"),
+    max_depth: z.number().optional().default(5).describe("Maximum traversal depth"),
+  },
+  async ({ document_id, max_depth }) => {
+    const { findAllCitingDocuments } = await import("../lib/citation-graph.js");
+    return text(await findAllCitingDocuments(sql, document_id, max_depth ?? 5));
+  },
+);
+
+server.tool(
+  "knowledge_update_document_metadata",
+  "Update the metadata fields on a document",
+  {
+    document_id: z.string().describe("Document ID to update"),
+    metadata: z.record(z.any()).describe("Metadata key-value pairs to set (merged with existing)"),
+  },
+  async ({ document_id, metadata }) =>
+    text(await updateDocumentMetadata(sql, document_id, metadata)),
+);
+
+server.tool(
+  "knowledge_queue_reindex",
+  "Queue a document for background re-indexing (chunking + embedding)",
+  {
+    document_id: z.string().describe("Document ID to reindex"),
+  },
+  async ({ document_id }) => {
+    await queueReindex(sql, document_id);
+    return text({ queued: true, document_id });
+  },
+);
+
+server.tool(
+  "knowledge_log_document_access",
+  "Log an access event for a document (read, search, retrieve, or embed)",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    document_id: z.string().describe("Document ID"),
+    collection_id: z.string().describe("Collection ID"),
+    chunk_id: z.string().optional().describe("Chunk ID if accessing a specific chunk"),
+    access_type: z.enum(["read", "search", "retrieve", "embed"]).describe("Type of access"),
+    user_id: z.string().optional().describe("User performing the access"),
+  },
+  async ({ workspace_id, document_id, collection_id, chunk_id, access_type, user_id }) =>
+    text(await logDocumentAccess(sql, { workspaceId: workspace_id, documentId: document_id, collectionId: collection_id, chunkId: chunk_id ?? null, accessType: access_type, userId: user_id ?? null })),
+);
+
+server.tool(
+  "knowledge_get_popular_documents",
+  "Get most frequently accessed documents in a workspace over a time window",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    collection_id: z.string().optional().describe("Filter by collection"),
+    time_window_hours: z.number().optional().default(168).describe("Time window in hours (default 168 = 1 week)"),
+    limit: z.number().optional().default(20).describe("Max results"),
+  },
+  async ({ workspace_id, collection_id, time_window_hours, limit }) =>
+    text(await getPopularDocuments(sql, workspace_id, collection_id ?? null, time_window_hours ?? 168, limit ?? 20)),
+);
+
+server.tool(
+  "knowledge_get_access_frequency",
+  "Get per-document access frequency metrics",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    document_id: z.string().describe("Document ID"),
+  },
+  async ({ workspace_id, document_id }) =>
+    text(await getDocumentAccessFrequency(sql, workspace_id, document_id)),
+);
+
+server.tool(
+  "knowledge_get_hot_chunks",
+  "Get most frequently accessed chunks in a collection",
+  {
+    collection_id: z.string().describe("Collection ID"),
+    time_window_hours: z.number().optional().default(168).describe("Time window in hours"),
+    limit: z.number().optional().default(20).describe("Max results"),
+  },
+  async ({ collection_id, time_window_hours, limit }) =>
+    text(await getHotChunks(sql, collection_id, time_window_hours ?? 168, limit ?? 20)),
+);
+
+server.tool(
+  "knowledge_graph_walk",
+  "Traverse the citation graph starting from a document up to maxDepth hops",
+  {
+    start_document_id: z.string().describe("Starting document ID"),
+    max_depth: z.number().optional().default(3).describe("Max traversal depth"),
+    limit: z.number().optional().default(100).describe("Max nodes to return"),
+  },
+  async ({ start_document_id, max_depth, limit }) =>
+    text(await graphWalk(sql, start_document_id, max_depth ?? 3, limit ?? 100)),
+);
+
+server.tool(
+  "knowledge_compute_collection_importance",
+  "Compute importance scores for all documents in a collection based on citation centrality",
+  {
+    collection_id: z.string().describe("Collection ID"),
+  },
+  async ({ collection_id }) =>
+    text(await computeCollectionImportance(sql, collection_id)),
+);
+
+server.tool(
+  "knowledge_share_collection",
+  "Share a collection with another workspace with read, write, or admin permission",
+  {
+    collection_id: z.string().describe("Collection ID"),
+    target_workspace_id: z.string().describe("Workspace to share with"),
+    permission: z.enum(["read", "write", "admin"]).describe("Permission level"),
+    granted_by: z.string().describe("User granting the share"),
+  },
+  async ({ collection_id, target_workspace_id, permission, granted_by }) =>
+    text(await shareCollection(sql, { collectionId: collection_id, targetWorkspaceId: target_workspace_id, permission, grantedBy: granted_by })),
+);
+
+server.tool(
+  "knowledge_revoke_collection_share",
+  "Revoke a collection share from another workspace",
+  {
+    collection_id: z.string().describe("Collection ID"),
+    target_workspace_id: z.string().describe("Workspace to revoke share from"),
+  },
+  async ({ collection_id, target_workspace_id }) =>
+    text(await revokeCollectionShare(sql, collection_id, target_workspace_id)),
+);
+
+server.tool(
+  "knowledge_list_collection_shares",
+  "List all workspaces a collection is shared with",
+  {
+    collection_id: z.string().describe("Collection ID"),
+  },
+  async ({ collection_id }) =>
+    text(await listCollectionShares(sql, collection_id)),
+);
+
+server.tool(
+  "knowledge_list_workspace_collections",
+  "List all collections a workspace has access to (own + shared)",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+  },
+  async ({ workspace_id }) =>
+    text(await listWorkspaceCollections(sql, workspace_id)),
+);
+
+server.tool(
+  "knowledge_check_collection_permission",
+  "Check a workspace's permission level on a collection",
+  {
+    workspace_id: z.string().describe("Workspace ID"),
+    collection_id: z.string().describe("Collection ID"),
+  },
+  async ({ workspace_id, collection_id }) =>
+    text(await checkCollectionPermission(sql, workspace_id, collection_id)),
+);
+
+server.tool(
+  "knowledge_get_collection_access_list",
+  "Get all access grants for a collection (who has what permission)",
+  {
+    collection_id: z.string().describe("Collection ID"),
+  },
+  async ({ collection_id }) =>
+    text(await getCollectionAccessList(sql, collection_id)),
+);
+
+
