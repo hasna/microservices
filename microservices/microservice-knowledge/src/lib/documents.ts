@@ -8,7 +8,7 @@ export interface Document {
   id: string;
   collection_id: string;
   title: string;
-  source_type: "text" | "url" | "file";
+  source_type: "text" | "url" | "file" | "image" | "audio" | "video";
   source_url: string | null;
   content: string;
   content_hash: string | null;
@@ -16,6 +16,8 @@ export interface Document {
   chunk_count: number;
   status: "pending" | "processing" | "ready" | "error";
   error: string | null;
+  version: number;
+  last_reindexed_at: Date | null;
   created_at: Date;
 }
 
@@ -71,4 +73,40 @@ export async function hashContent(content: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function getDocumentByHash(
+  sql: Sql,
+  collectionId: string,
+  contentHash: string,
+): Promise<Document | null> {
+  const [doc] = await sql<Document[]>`
+    SELECT * FROM knowledge.documents
+    WHERE collection_id = ${collectionId} AND content_hash = ${contentHash}
+  `;
+  return doc ?? null;
+}
+
+export async function getDocumentById(
+  sql: Sql,
+  id: string,
+): Promise<Document | null> {
+  const [doc] = await sql<Document[]>`
+    SELECT * FROM knowledge.documents WHERE id = ${id}
+  `;
+  return doc ?? null;
+}
+
+export async function updateDocumentMetadata(
+  sql: Sql,
+  id: string,
+  metadata: Record<string, any>,
+): Promise<Document | null> {
+  const [doc] = await sql<Document[]>`
+    UPDATE knowledge.documents
+    SET metadata = ${sql.json(metadata)}
+    WHERE id = ${id}
+    RETURNING *
+  `;
+  return doc ?? null;
 }

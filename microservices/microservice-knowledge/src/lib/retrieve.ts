@@ -10,6 +10,7 @@ export interface RetrieveOptions {
   minScore?: number;
   metadataFilter?: any;
   mode?: "semantic" | "text" | "hybrid";
+  includeCitations?: boolean;
 }
 
 export interface RetrievedChunk {
@@ -19,6 +20,9 @@ export interface RetrievedChunk {
     chunk_index: number;
     token_count: number | null;
     metadata: any;
+    citation_id: string | null;
+    source_section: string | null;
+    page_number: number | null;
   };
   score: number;
   document: {
@@ -26,6 +30,13 @@ export interface RetrievedChunk {
     title: string;
     source_url: string | null;
     source_type: string;
+  };
+  citation?: {
+    citationId: string | null;
+    sourceSection: string | null;
+    pageNumber: number | null;
+    documentTitle: string;
+    documentUrl: string | null;
   };
 }
 
@@ -88,6 +99,9 @@ async function semanticSearch(
       chunk_index: number;
       token_count: number | null;
       chunk_metadata: any;
+      citation_id: string | null;
+      source_section: string | null;
+      page_number: number | null;
       score: number;
       doc_id: string;
       doc_title: string;
@@ -101,6 +115,9 @@ async function semanticSearch(
       c.chunk_index,
       c.token_count,
       c.metadata AS chunk_metadata,
+      c.citation_id,
+      c.source_section,
+      c.page_number,
       1 - (c.embedding <=> ${embeddingStr}::vector) AS score,
       d.id AS doc_id,
       d.title AS doc_title,
@@ -117,22 +134,7 @@ async function semanticSearch(
 
   return rows
     .filter((r) => !minScore || r.score >= minScore)
-    .map((r) => ({
-      chunk: {
-        id: r.chunk_id,
-        content: r.chunk_content,
-        chunk_index: r.chunk_index,
-        token_count: r.token_count,
-        metadata: r.chunk_metadata,
-      },
-      score: r.score,
-      document: {
-        id: r.doc_id,
-        title: r.doc_title,
-        source_url: r.doc_source_url,
-        source_type: r.doc_source_type,
-      },
-    }));
+    .map((r) => buildRetrievedChunk(r));
 }
 
 async function textSearch(
@@ -148,6 +150,9 @@ async function textSearch(
       chunk_index: number;
       token_count: number | null;
       chunk_metadata: any;
+      citation_id: string | null;
+      source_section: string | null;
+      page_number: number | null;
       score: number;
       doc_id: string;
       doc_title: string;
@@ -161,6 +166,9 @@ async function textSearch(
       c.chunk_index,
       c.token_count,
       c.metadata AS chunk_metadata,
+      c.citation_id,
+      c.source_section,
+      c.page_number,
       ts_rank(c.fts_vector, plainto_tsquery('english', ${query})) AS score,
       d.id AS doc_id,
       d.title AS doc_title,
@@ -175,13 +183,34 @@ async function textSearch(
     LIMIT ${limit}
   `;
 
-  return rows.map((r) => ({
+  return rows.map(buildRetrievedChunk);
+}
+
+function buildRetrievedChunk(r: {
+  chunk_id: string;
+  chunk_content: string;
+  chunk_index: number;
+  token_count: number | null;
+  chunk_metadata: any;
+  citation_id: string | null;
+  source_section: string | null;
+  page_number: number | null;
+  score: number;
+  doc_id: string;
+  doc_title: string;
+  doc_source_url: string | null;
+  doc_source_type: string;
+}): RetrievedChunk {
+  const result: RetrievedChunk = {
     chunk: {
       id: r.chunk_id,
       content: r.chunk_content,
       chunk_index: r.chunk_index,
       token_count: r.token_count,
       metadata: r.chunk_metadata,
+      citation_id: r.citation_id,
+      source_section: r.source_section,
+      page_number: r.page_number,
     },
     score: r.score,
     document: {
@@ -190,7 +219,19 @@ async function textSearch(
       source_url: r.doc_source_url,
       source_type: r.doc_source_type,
     },
-  }));
+  };
+
+  if (r.citation_id || r.source_section || r.page_number) {
+    result.citation = {
+      citationId: r.citation_id,
+      sourceSection: r.source_section,
+      pageNumber: r.page_number,
+      documentTitle: r.doc_title,
+      documentUrl: r.doc_source_url,
+    };
+  }
+
+  return result;
 }
 
 async function checkPgvector(sql: Sql): Promise<boolean> {
