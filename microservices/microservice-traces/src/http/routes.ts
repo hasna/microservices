@@ -7,6 +7,15 @@ import { z } from "zod";
 import { getTrace, getTraceTree, listTraces } from "../lib/query.js";
 import { getTraceStats } from "../lib/stats.js";
 import { endSpan, endTrace, startSpan, startTrace } from "../lib/tracing.js";
+import {
+  generateGrafanaDashboard,
+  type GrafanaDashboard,
+} from "../lib/grafana-dashboard.js";
+import {
+  exportPrometheusMetrics,
+  toPrometheusTextFormat,
+} from "../lib/prometheus-export.js";
+import { getDatadogStatsForWorkspace } from "../lib/datadog-export.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -214,6 +223,70 @@ export function makeRouter(sql: Sql) {
           : undefined;
         const stats = await getTraceStats(sql, workspaceId, since);
         return json(stats);
+      }
+
+      // GET /traces/export/grafana/:workspace_id — generate Grafana dashboard JSON
+      if (
+        method === "GET" &&
+        path.match(/^\/traces\/export\/grafana\/[^/]+$/)
+      ) {
+        const workspaceId = path.split("/")[4];
+        const title = url.searchParams.get("title") ?? "Hasna Traces Overview";
+        const uid = url.searchParams.get("uid") ?? undefined;
+        const refreshInterval = url.searchParams.get("refresh_interval") ?? "5m";
+        const dashboard: GrafanaDashboard = generateGrafanaDashboard({
+          workspaceId,
+          title,
+          uid,
+          refreshInterval,
+        });
+        return new Response(JSON.stringify(dashboard, null, 2), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Disposition": `attachment; filename="grafana-traces-${workspaceId}.json"`,
+            ...corsHeaders,
+          },
+        });
+      }
+
+      // GET /traces/metrics/prometheus/:workspace_id — Prometheus text format metrics
+      if (
+        method === "GET" &&
+        path.match(/^\/traces\/metrics\/prometheus\/[^/]+$/)
+      ) {
+        const workspaceId = path.split("/")[4];
+        const since = url.searchParams.get("since")
+          ? new Date(url.searchParams.get("since")!)
+          : undefined;
+        const promMetrics = await exportPrometheusMetrics(sql, workspaceId, since);
+        const text = toPrometheusTextFormat(promMetrics.metrics);
+        return new Response(text, {
+          status: 200,
+          headers: {
+            "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+            ...corsHeaders,
+          },
+        });
+      }
+
+      // GET /traces/export/datadog/:workspace_id — Datadog APM stats
+      if (
+        method === "GET" &&
+        path.match(/^\/traces\/export\/datadog\/[^/]+$/)
+      ) {
+        const workspaceId = path.split("/")[4];
+        const since = url.searchParams.get("since")
+          ? new Date(url.searchParams.get("since")!)
+          : undefined;
+        const stats = await getDatadogStatsForWorkspace(sql, workspaceId, since);
+        return json({
+          workspace_id: workspaceId,
+          stats,
+          period: since
+            ? { since: since.toISOString(), until: new Date().toISOString() }
+            : { since: "7d ago", until: "now" },
+        });
       }
 
       return apiError("NOT_FOUND", "Not found", undefined, 404);
