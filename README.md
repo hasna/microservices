@@ -145,6 +145,18 @@ For AI agents — add to your Claude config:
 
 Tools: `list_microservices`, `search_microservices`, `install_microservice`, `microservice_status`, `run_microservice_command`, `remove_microservice`, `get_microservice_info`
 
+## HTTP mode
+
+Run a shared Streamable HTTP MCP server (stateless, `127.0.0.1` only):
+
+```bash
+microservices-mcp --http
+# or: MCP_HTTP=1 microservices-mcp
+# default port: 8825 (override with --port or MCP_HTTP_PORT)
+```
+
+Endpoints: `GET /health`, `POST /mcp` (Streamable HTTP).
+
 ## PostgreSQL Schema Isolation
 
 Each service owns its schema — all on one PostgreSQL instance:
