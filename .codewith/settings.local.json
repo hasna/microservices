@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(find /home/hasna/workspace/hasna/opensource/opensourcedev/open-microservices/microservices/microservice-agents/src -type f -name *.ts)"
-    ]
-  }
-}

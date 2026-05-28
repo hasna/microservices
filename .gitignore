@@ -9,3 +9,5 @@ bin/
 .env
 .secrets/
 .connect/
+.claude/scheduled_tasks.lock
+.codewith/
