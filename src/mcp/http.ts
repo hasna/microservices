@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 export const MCP_HTTP_SERVICE_NAME = "microservices";
-export const DEFAULT_MCP_HTTP_PORT = 8825;
+export const DEFAULT_MCP_HTTP_PORT = 8868;
 
 export type ConnectableMcpServer = {
   connect: (transport: StreamableHTTPServerTransport) => Promise<void>;
@@ -14,6 +14,13 @@ export function isHttpMode(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return argv.includes("--http") || env.MCP_HTTP === "1";
+}
+
+export function isStdioMode(
+  argv: string[] = process.argv,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return argv.includes("--stdio") || env.MCP_STDIO === "1";
 }
 
 export function resolveMcpHttpPort(

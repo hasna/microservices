@@ -20,7 +20,7 @@ import {
   searchMicroservices,
 } from "../lib/registry.js";
 import { runMicroserviceCommand } from "../lib/runner.js";
-import { isHttpMode, resolveMcpHttpPort, startMcpHttpServer } from "./http.js";
+import { isStdioMode, resolveMcpHttpPort, startMcpHttpServer } from "./http.js";
 
 function hasFlag(...flags: string[]): boolean {
   return process.argv.some((arg) => flags.includes(arg));
@@ -617,22 +617,18 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (isHttpMode()) {
-    const handle = await startMcpHttpServer(buildServer, {
-      port: resolveMcpHttpPort(),
-    });
-    process.on("SIGINT", () => {
-      void handle.close().finally(() => process.exit(0));
-    });
-    process.on("SIGTERM", () => {
-      void handle.close().finally(() => process.exit(0));
-    });
+  if (isStdioMode()) {
+    const server = buildServer();
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
     return;
   }
-
-  const server = buildServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  // Default: shared Streamable HTTP server (one process per MCP, many agents).
+  const handle = await startMcpHttpServer(buildServer, {
+    port: resolveMcpHttpPort(),
+  });
+  process.on("SIGINT", () => { void handle.close().finally(() => process.exit(0)); });
+  process.on("SIGTERM", () => { void handle.close().finally(() => process.exit(0)); });
 }
 
 main().catch(console.error);
