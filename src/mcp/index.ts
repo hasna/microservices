@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * @hasna/microservices hub MCP server.
  * Provides tools to manage all @hasna/microservice-* packages.
