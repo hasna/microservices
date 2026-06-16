@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { registerEventsCommands } from "@hasna/events/commander";
 /**
  * @hasna/microservices hub CLI
  * Manages all @hasna/microservice-* packages.
@@ -639,5 +640,6 @@ program
     `),
     );
   });
+registerEventsCommands(program, { source: "microservices" });
 
 program.parse();

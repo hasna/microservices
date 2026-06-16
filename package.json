@@ -1,6 +1,6 @@
 {
   "name": "@hasna/microservices",
-  "version": "0.0.26",
+  "version": "0.0.27",
   "description": "21 production-grade microservice building blocks for AI-native SaaS — auth, billing, LLM gateway, agent registry, RAG, guardrails, tracing, and more. Each with PostgreSQL, HTTP API, MCP server, and CLI.",
   "type": "module",
   "bin": {
@@ -63,6 +63,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@hasna/events": "^0.1.6",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
