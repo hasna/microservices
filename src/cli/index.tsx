@@ -16,6 +16,7 @@ import {
   installMicroservices,
   microserviceExists,
   removeMicroservice,
+  resolveMicroserviceBinary,
 } from "../lib/installer.js";
 import { getPackageVersion } from "../lib/package-info.js";
 import {
@@ -168,7 +169,10 @@ program
         process.exit(1);
       }
 
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const rl = createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
       try {
         const answer = await rl.question(
           `Remove ${name} from your global Bun installation? [y/N] `,
@@ -203,7 +207,7 @@ program
     const payload = targets.map((n) => getMicroserviceStatus(n));
 
     if (opts.json) {
-      printJson(name ? payload[0] ?? null : payload);
+      printJson(name ? (payload[0] ?? null) : payload);
       return;
     }
 
@@ -332,7 +336,15 @@ program
       const color = colors[i % colors.length];
       const prefix = color(`[${m.name.padEnd(10)}] `);
 
-      const proc = spawn(m.binary, ["serve"], {
+      const binaryPath = resolveMicroserviceBinary(m.name);
+      if (!binaryPath) {
+        console.error(
+          `${prefix}${chalk.red("Failed to start:")} could not resolve ${m.binary}`,
+        );
+        continue;
+      }
+
+      const proc = spawn(binaryPath, ["serve"], {
         env: process.env,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -376,7 +388,11 @@ program
       return;
     }
     if (!opts.db) {
-      console.error(chalk.red("--db <url> is required. Example: microservices init-all --db postgres://localhost/myapp"));
+      console.error(
+        chalk.red(
+          "--db <url> is required. Example: microservices init-all --db postgres://localhost/myapp",
+        ),
+      );
       process.exit(1);
     }
     process.env.DATABASE_URL = opts.db;
@@ -525,12 +541,16 @@ program
 
       if (service.missingRequired.length > 0) {
         console.log(
-          chalk.red(`  Required missing: ${service.missingRequired.join(", ")}`),
+          chalk.red(
+            `  Required missing: ${service.missingRequired.join(", ")}`,
+          ),
         );
       }
       if (service.missingOptional.length > 0) {
         console.log(
-          chalk.gray(`  Optional missing: ${service.missingOptional.join(", ")}`),
+          chalk.gray(
+            `  Optional missing: ${service.missingOptional.join(", ")}`,
+          ),
         );
       }
       if (

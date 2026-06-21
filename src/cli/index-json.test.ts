@@ -1,4 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 function runCli(args: string[]) {
   return Bun.spawnSync(["bun", "run", "./src/cli/index.tsx", ...args], {
@@ -115,7 +125,100 @@ describe("CLI JSON output", () => {
   test("remove --yes returns non-zero when target is not installed", () => {
     const result = runCli(["remove", "does-not-exist", "--yes"]);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr.toString()).toContain("Failed to remove does-not-exist");
+    expect(result.stderr.toString()).toContain(
+      "Failed to remove does-not-exist",
+    );
   });
 
+  test("serve-all starts binaries resolved from BUN_INSTALL even when they are not on PATH", async () => {
+    const temp = mkdtempSync(join(tmpdir(), "open-microservices-serve-all-"));
+    const binDir = join(temp, "bin");
+    const binaryPath = join(binDir, "microservice-auth");
+
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      binaryPath,
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "serve" ]; then',
+        '  echo "ready-from-auth"',
+        "  while true; do sleep 1; done",
+        "fi",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(binaryPath, 0o755);
+
+    try {
+      const output = await new Promise<{ stdout: string; stderr: string }>(
+        (resolve, reject) => {
+          const proc = spawn(
+            "bun",
+            ["run", "./src/cli/index.tsx", "serve-all"],
+            {
+              cwd: process.cwd(),
+              env: {
+                ...process.env,
+                BUN_INSTALL: temp,
+                PATH: process.env.PATH ?? "",
+              },
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+          let stdout = "";
+          let stderr = "";
+          let settled = false;
+
+          const finish = (
+            callback: (output: { stdout: string; stderr: string }) => void,
+          ) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            proc.kill("SIGINT");
+            callback({ stdout, stderr });
+          };
+
+          const timeout = setTimeout(() => {
+            finish((output) => {
+              reject(
+                new Error(
+                  `Timed out waiting for serve-all output.\nstdout:\n${output.stdout}\nstderr:\n${output.stderr}`,
+                ),
+              );
+            });
+          }, 5000);
+
+          proc.stdout.on("data", (chunk: Buffer) => {
+            stdout += chunk.toString();
+            if (stdout.includes("ready-from-auth")) {
+              finish(resolve);
+            }
+          });
+          proc.stderr.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+          });
+          proc.on("error", (error) => {
+            finish(() => reject(error));
+          });
+          proc.on("exit", (code) => {
+            if (!settled) {
+              finish((output) => {
+                reject(
+                  new Error(
+                    `serve-all exited before starting fake service with code ${code}.\nstdout:\n${output.stdout}\nstderr:\n${output.stderr}`,
+                  ),
+                );
+              });
+            }
+          });
+        },
+      );
+
+      expect(output.stdout).toContain("ready-from-auth");
+      expect(output.stderr).not.toContain("Failed to start");
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
 });
