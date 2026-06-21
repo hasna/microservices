@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -12,10 +13,67 @@ import {
   getBunGlobalBinDir,
   getInstalledMicroservices,
   getMicroserviceStatus,
+  installMicroservice,
   microserviceExists,
+  removeMicroservice,
   resolveMicroserviceBinary,
 } from "./installer.js";
-import { MICROSERVICES } from "./registry.js";
+import { MICROSERVICES, type MicroserviceMeta } from "./registry.js";
+
+function withEnv<T>(updates: NodeJS.ProcessEnv, run: () => T): T {
+  const previous = new Map<string, string | undefined>();
+  for (const key of Object.keys(updates)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = updates[key];
+  }
+
+  try {
+    return run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+function withInjectedMicroservice<T>(
+  name: string,
+  packageName: string,
+  run: () => T,
+): T {
+  const service: MicroserviceMeta = {
+    name,
+    displayName: "Shell Safe",
+    description: "Injected test-only service metadata",
+    category: "Infrastructure",
+    package: packageName,
+    binary: `microservice-${name}`,
+    schemaPrefix: name,
+    tags: ["test"],
+    requiredEnv: [],
+  };
+
+  MICROSERVICES.push(service);
+
+  try {
+    return run();
+  } finally {
+    const index = MICROSERVICES.lastIndexOf(service);
+    if (index !== -1) {
+      MICROSERVICES.splice(index, 1);
+    }
+  }
+}
+
+function writeFakeBun(binDir: string): void {
+  const fakeBun = join(binDir, "bun");
+  writeFileSync(fakeBun, "#!/usr/bin/env bash\nexit 0\n");
+  chmodSync(fakeBun, 0o755);
+}
 
 describe("Installer", () => {
   test("getInstalledMicroservices returns array", () => {
@@ -83,6 +141,67 @@ describe("Installer", () => {
       } else {
         process.env.BUN_INSTALL = previous;
       }
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  test("installMicroservice does not evaluate package names through a shell", () => {
+    const temp = mkdtempSync(join(tmpdir(), "open-microservices-shell-"));
+    const binDir = join(temp, "bin");
+    const marker = join(temp, "shell-injection-ran");
+
+    mkdirSync(binDir, { recursive: true });
+    writeFakeBun(binDir);
+
+    try {
+      withEnv(
+        {
+          BUN_INSTALL: temp,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        },
+        () =>
+          withInjectedMicroservice(
+            "shell-safe-install",
+            `@hasna/microservice-shell-safe; touch ${marker}`,
+            () => {
+              installMicroservice("shell-safe-install", {
+                force: true,
+              });
+
+              expect(existsSync(marker)).toBe(false);
+            },
+          ),
+      );
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  test("removeMicroservice does not evaluate package names through a shell", () => {
+    const temp = mkdtempSync(join(tmpdir(), "open-microservices-shell-"));
+    const binDir = join(temp, "bin");
+    const marker = join(temp, "shell-injection-ran");
+
+    mkdirSync(binDir, { recursive: true });
+    writeFakeBun(binDir);
+
+    try {
+      withEnv(
+        {
+          BUN_INSTALL: temp,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        },
+        () =>
+          withInjectedMicroservice(
+            "shell-safe-remove",
+            `@hasna/microservice-shell-safe; touch ${marker}`,
+            () => {
+              removeMicroservice("shell-safe-remove");
+              expect(existsSync(marker)).toBe(false);
+            },
+          ),
+      );
+    } finally {
       rmSync(temp, { recursive: true, force: true });
     }
   });

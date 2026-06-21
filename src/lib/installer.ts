@@ -6,7 +6,7 @@
  * Run     = `microservice-<name> <command>`
  */
 
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { join } from "node:path";
 import {
@@ -27,7 +27,9 @@ export interface InstallOptions {
   force?: boolean;
 }
 
-export function getBunGlobalBinDir(env: NodeJS.ProcessEnv = process.env): string {
+export function getBunGlobalBinDir(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const bunInstall = env.BUN_INSTALL?.trim();
   if (bunInstall) {
     return join(bunInstall, "bin");
@@ -35,7 +37,9 @@ export function getBunGlobalBinDir(env: NodeJS.ProcessEnv = process.env): string
 
   const home = env.HOME?.trim();
   if (!home) {
-    throw new Error("Unable to determine Bun global bin path: HOME is not set.");
+    throw new Error(
+      "Unable to determine Bun global bin path: HOME is not set.",
+    );
   }
 
   return join(home, ".bun", "bin");
@@ -110,7 +114,7 @@ export function installMicroservice(
   }
 
   try {
-    execSync(`bun install -g ${meta.package}`, { stdio: "pipe" });
+    execFileSync("bun", ["install", "-g", meta.package], { stdio: "pipe" });
     const version = getMicroserviceVersion(name);
     return { microservice: name, success: true, version: version ?? undefined };
   } catch (error) {
@@ -148,7 +152,7 @@ export function removeMicroservice(name: string): boolean {
   const meta = getMicroservice(name);
   if (!meta) return false;
   try {
-    execSync(`bun remove -g ${meta.package}`, { stdio: "pipe" });
+    execFileSync("bun", ["remove", "-g", meta.package], { stdio: "pipe" });
     return true;
   } catch {
     return false;
