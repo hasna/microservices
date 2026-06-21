@@ -33,6 +33,27 @@ await migrate(sql)
 // const record = await createRecord(sql, { ... })
 ```
 
+## SDK-Safe Detectors
+
+For application runtimes that only need pure guardrail detection, use the
+detector subpath. It does not import Postgres, HTTP, CLI, or MCP runtime code.
+
+```ts
+import {
+  detectPromptInjection,
+  detectPromptLeak,
+  redactPiiText,
+  redactSensitiveText,
+  scanPii,
+} from '@hasna/microservice-guardrails/detectors'
+
+const injectionReasons = detectPromptInjection(input)
+const leakReasons = detectPromptLeak(output)
+const redacted = redactSensitiveText(toolResult)
+const piiMatches = scanPii(output)
+const piiRedacted = redactPiiText(output)
+```
+
 ## Environment Variables
 
 | Variable | Required | Description |

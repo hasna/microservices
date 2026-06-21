@@ -10,6 +10,10 @@
     ".": {
       "import": "./dist/lib/index.js",
       "types": "./dist/lib/index.d.ts"
+    },
+    "./detectors": {
+      "import": "./dist/lib/detectors.js",
+      "types": "./dist/lib/detectors.d.ts"
     }
   },
   "main": "./dist/lib/index.js",
@@ -21,7 +25,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "bun build ./src/cli/index.ts --outfile ./bin/cli.js --target bun && bun build ./src/mcp/index.ts --outfile ./bin/mcp.js --target bun && bun build ./src/lib/index.ts --outdir ./dist/lib --target bun",
+    "build": "bun build ./src/cli/index.ts --outfile ./bin/cli.js --target bun && bun build ./src/mcp/index.ts --outfile ./bin/mcp.js --target bun && bun build ./src/lib/index.ts --outdir ./dist/lib --target bun && bun build ./src/lib/detectors.ts --outdir ./dist/lib --target bun && tsc --declaration --emitDeclarationOnly --target ES2022 --module ESNext --moduleResolution bundler --strict --esModuleInterop --skipLibCheck --types bun --outDir ./dist/lib ./src/lib/detectors.ts",
     "dev:cli": "bun run ./src/cli/index.ts",
     "dev:http": "bun run ./src/http/index.ts",
     "dev:mcp": "bun run ./src/mcp/index.ts",
