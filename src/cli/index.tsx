@@ -152,6 +152,10 @@ program
       }
     }
     console.log();
+
+    if (results.some((result) => !result.success)) {
+      process.exit(1);
+    }
   });
 // Remove a microservice
 program
@@ -390,7 +394,7 @@ program
     if (!opts.db) {
       console.error(
         chalk.red(
-          "--db <url> is required. Example: microservices init-all --db postgres://localhost/myapp",
+          "--db <url> is required. Example: microservices init-all --db <postgres-connection-url>",
         ),
       );
       process.exit(1);

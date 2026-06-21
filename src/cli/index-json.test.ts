@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import {
   chmodSync,
@@ -10,9 +10,22 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+const isolatedBunInstall = mkdtempSync(
+  join(tmpdir(), "open-microservices-cli-"),
+);
+mkdirSync(join(isolatedBunInstall, "bin"), { recursive: true });
+
+afterAll(() => {
+  rmSync(isolatedBunInstall, { recursive: true, force: true });
+});
+
 function runCli(args: string[]) {
   return Bun.spawnSync(["bun", "run", "./src/cli/index.tsx", ...args], {
     cwd: process.cwd(),
+    env: {
+      ...process.env,
+      BUN_INSTALL: isolatedBunInstall,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -128,6 +141,12 @@ describe("CLI JSON output", () => {
     expect(result.stderr.toString()).toContain(
       "Failed to remove does-not-exist",
     );
+  });
+
+  test("install returns non-zero when any target fails", () => {
+    const result = runCli(["install", "does-not-exist"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.toString()).toContain("does-not-exist");
   });
 
   test("serve-all starts binaries resolved from BUN_INSTALL even when they are not on PATH", async () => {
