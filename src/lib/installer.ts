@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   getMicroservice,
   MICROSERVICES,
+  normalizeMicroserviceName,
   type MicroserviceMeta,
 } from "./registry.js";
 
@@ -168,11 +169,12 @@ export function getMicroserviceStatus(name: string): {
   version: string | null;
   meta: MicroserviceMeta | undefined;
 } {
+  const meta = getMicroservice(name);
   return {
-    name: name.replace("microservice-", ""),
+    name: meta?.name ?? normalizeMicroserviceName(name),
     installed: microserviceExists(name),
     version: getMicroserviceVersion(name),
-    meta: getMicroservice(name),
+    meta,
   };
 }
 

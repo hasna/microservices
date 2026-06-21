@@ -48,7 +48,7 @@ docker-compose up -d
 bun install -g @hasna/microservice-auth
 
 # 2. Initialize and migrate your PostgreSQL
-microservices init-all --db postgres://postgres:password@localhost:5432/microservices
+microservices init-all --db "$DATABASE_URL"
 
 # 3. Start the HTTP APIs
 microservices serve-all
@@ -64,7 +64,7 @@ microservice-auth mcp
 ```ts
 import { migrate, register, login } from '@hasna/microservice-auth'
 
-const sql = getDb('postgres://postgres:password@localhost:5432/microservices')
+const sql = getDb(process.env.DATABASE_URL!)
 await migrate(sql)
 
 const { user, access_token, session } = await register(sql, {
@@ -186,7 +186,7 @@ bun install && bun test   # 127 tests, 0 failures
 With a real database:
 
 ```bash
-DATABASE_URL=postgres://localhost/test_ms JWT_SECRET=test-secret bun test src/integration.test.ts
+DATABASE_URL="$DATABASE_URL" JWT_SECRET="$JWT_SECRET" bun test src/integration.test.ts
 ```
 
 ## License

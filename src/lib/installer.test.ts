@@ -93,6 +93,13 @@ describe("Installer", () => {
     expect(status.meta?.package).toBe("@hasna/microservice-auth");
   });
 
+  test("getMicroserviceStatus accepts full npm package names", () => {
+    const status = getMicroserviceStatus("@hasna/microservice-auth");
+    expect(status.name).toBe("auth");
+    expect(typeof status.installed).toBe("boolean");
+    expect(status.meta?.package).toBe("@hasna/microservice-auth");
+  });
+
   test("getMicroserviceStatus returns unknown=false meta for nonexistent", () => {
     const status = getMicroserviceStatus("nonexistent");
     expect(status.installed).toBe(false);

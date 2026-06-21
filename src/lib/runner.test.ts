@@ -32,4 +32,28 @@ describe("Runner", () => {
       rmSync(temp, { recursive: true, force: true });
     }
   });
+
+  test("accepts full npm package names when resolving targets", async () => {
+    const temp = mkdtempSync(join(tmpdir(), "open-microservices-runner-"));
+    const previous = process.env.BUN_INSTALL;
+    process.env.BUN_INSTALL = temp;
+
+    try {
+      const result = await runMicroserviceCommand(
+        "@hasna/microservice-auth",
+        ["status"],
+      );
+      expect(result.success).toBe(false);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("microservice-auth is not installed");
+      expect(result.stderr).toContain("@hasna/microservice-auth");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.BUN_INSTALL;
+      } else {
+        process.env.BUN_INSTALL = previous;
+      }
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
 });

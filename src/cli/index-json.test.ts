@@ -117,6 +117,20 @@ describe("CLI JSON output", () => {
     expect(typeof parsed.installed).toBe("boolean");
   });
 
+  test("info --json accepts full npm package names", () => {
+    const result = runCli(["info", "@hasna/microservice-auth", "--json"]);
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout.toString()) as {
+      name: string;
+      package: string;
+      binary: string;
+    };
+    expect(parsed.name).toBe("auth");
+    expect(parsed.package).toBe("@hasna/microservice-auth");
+    expect(parsed.binary).toBe("microservice-auth");
+  });
+
   test("check-env --json returns summary payload", () => {
     const result = runCli(["check-env", "--json"]);
     expect(result.exitCode).toBe(0);

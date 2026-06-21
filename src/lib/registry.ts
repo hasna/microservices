@@ -483,8 +483,19 @@ export const MICROSERVICES: MicroserviceMeta[] = [
 /**
  * Get a microservice by name
  */
+export function normalizeMicroserviceName(name: string): string {
+  const key = name.trim().toLowerCase();
+  if (key.startsWith("@hasna/microservice-")) {
+    return key.slice("@hasna/microservice-".length);
+  }
+  if (key.startsWith("microservice-")) {
+    return key.slice("microservice-".length);
+  }
+  return key;
+}
+
 export function getMicroservice(name: string): MicroserviceMeta | undefined {
-  const key = name.replace("microservice-", "");
+  const key = normalizeMicroserviceName(name);
   return MICROSERVICES.find((m) => m.name === key);
 }
 

@@ -16,7 +16,7 @@
  *
  * Quick start:
  *   npx @hasna/microservices install auth teams billing
- *   microservices init-all --db postgres://postgres:password@localhost:5432/microservices
+ *   microservices init-all --db "$DATABASE_URL"
  *   microservices serve-all
  */
 
@@ -38,6 +38,7 @@ export {
   getMicroservicesByCategory,
   MICROSERVICES,
   type MicroserviceMeta,
+  normalizeMicroserviceName,
   searchMicroservices,
 } from "./lib/registry.js";
 

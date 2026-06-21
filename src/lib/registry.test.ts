@@ -57,6 +57,12 @@ describe("Registry", () => {
     expect(ms?.name).toBe("billing");
   });
 
+  test("getMicroservice finds full npm package names", () => {
+    const ms = getMicroservice("@hasna/microservice-auth");
+    expect(ms).toBeDefined();
+    expect(ms?.name).toBe("auth");
+  });
+
   test("getMicroservice returns undefined for unknown", () => {
     expect(getMicroservice("nonexistent")).toBeUndefined();
   });
