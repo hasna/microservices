@@ -47,6 +47,44 @@ export function upsertClaudeMcpConfig(
   return JSON.stringify(config, null, 2);
 }
 
+function tomlBasicString(value: string): string {
+  let escaped = "";
+
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    switch (char) {
+      case "\b":
+        escaped += "\\b";
+        break;
+      case "\t":
+        escaped += "\\t";
+        break;
+      case "\n":
+        escaped += "\\n";
+        break;
+      case "\f":
+        escaped += "\\f";
+        break;
+      case "\r":
+        escaped += "\\r";
+        break;
+      case '"':
+        escaped += '\\"';
+        break;
+      case "\\":
+        escaped += "\\\\";
+        break;
+      default:
+        escaped +=
+          code <= 0x1f || code === 0x7f
+            ? `\\u${code.toString(16).padStart(4, "0")}`
+            : char;
+    }
+  }
+
+  return `"${escaped}"`;
+}
+
 export function upsertCodexMcpConfig(
   content: string | undefined,
   command: string,
@@ -59,7 +97,7 @@ export function upsertCodexMcpConfig(
   const trimmed = existing.trimEnd();
   const prefix = trimmed.length > 0 ? `${trimmed}\n\n` : "";
   return {
-    content: `${prefix}[mcp_servers.microservices]\ncommand = "${command}"\n`,
+    content: `${prefix}[mcp_servers.microservices]\ncommand = ${tomlBasicString(command)}\n`,
     alreadyRegistered: false,
   };
 }

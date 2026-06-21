@@ -56,6 +56,19 @@ describe("config utils", () => {
     expect(second.content).toBe(first.content);
   });
 
+  test("upsertCodexMcpConfig escapes command paths as TOML strings", () => {
+    const command = `/tmp/with"quote\\line\nand${String.fromCharCode(0x7f)}del/microservices-mcp`;
+    const result = upsertCodexMcpConfig(undefined, command);
+
+    expect(result.content).toContain(
+      'command = "/tmp/with\\"quote\\\\line\\nand\\u007fdel/microservices-mcp"',
+    );
+    const parsed = Bun.TOML.parse(result.content) as {
+      mcp_servers: { microservices: { command: string } };
+    };
+    expect(parsed.mcp_servers.microservices.command).toBe(command);
+  });
+
   test("upsertClaudeMcpConfig writes stdio server config", () => {
     const content = upsertClaudeMcpConfig(undefined, "microservices-mcp");
     const parsed = JSON.parse(content) as {
