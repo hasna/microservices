@@ -20,7 +20,12 @@ import {
   searchMicroservices,
 } from "../lib/registry.js";
 import { runMicroserviceCommand } from "../lib/runner.js";
-import { isStdioMode, resolveMcpHttpPort, startMcpHttpServer } from "./http.js";
+import {
+  DEFAULT_MCP_HTTP_PORT,
+  isStdioMode,
+  resolveMcpHttpPort,
+  startMcpHttpServer,
+} from "./http.js";
 
 function hasFlag(...flags: string[]): boolean {
   return process.argv.some((arg) => flags.includes(arg));
@@ -34,7 +39,7 @@ Microservices MCP server (stdio transport by default)
 
 Options:
   --http           Serve MCP over Streamable HTTP (127.0.0.1)
-  --port <number>  HTTP port (default: 8825, env: MCP_HTTP_PORT)
+  --port <number>  HTTP port (default: ${DEFAULT_MCP_HTTP_PORT}, env: MCP_HTTP_PORT)
   -h, --help       Show help
   -V, --version    Show version
 `,
@@ -631,4 +636,9 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => { void handle.close().finally(() => process.exit(0)); });
 }
 
-main().catch(console.error);
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

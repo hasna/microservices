@@ -1,14 +1,46 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createServer as createNetServer } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { buildServer } from "./index.js";
 import {
   DEFAULT_MCP_HTTP_PORT,
   isHttpMode,
   resolveMcpHttpPort,
   startMcpHttpServer,
 } from "./http.js";
+import { buildServer } from "./index.js";
+
+async function withBusyPort<T>(
+  run: (port: number) => Promise<T> | T,
+): Promise<T> {
+  const server = createNetServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected TCP server to bind to a port");
+  }
+
+  try {
+    return await run(address.port);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+}
+
+function childEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.MCP_HTTP;
+  delete env.MCP_HTTP_PORT;
+  delete env.MCP_STDIO;
+  return { ...env, ...overrides };
+}
 
 describe("mcp http transport", () => {
   test("defaults port to 8868", () => {
@@ -22,6 +54,56 @@ describe("mcp http transport", () => {
     expect(isHttpMode(["node"], {})).toBe(false);
     expect(isHttpMode(["node", "--http"], {})).toBe(true);
     expect(isHttpMode(["node"], { MCP_HTTP: "1" })).toBe(true);
+  });
+
+  test("importing the module does not start the HTTP server", async () => {
+    await withBusyPort(async (port) => {
+      const result = Bun.spawnSync(
+        ["bun", "-e", "await import('./src/mcp/index.ts')"],
+        {
+          cwd: process.cwd(),
+          env: childEnv({ MCP_HTTP_PORT: String(port) }),
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toBe("");
+    });
+  });
+
+  test("CLI exits non-zero when configured HTTP port is unavailable", async () => {
+    await withBusyPort(async (port) => {
+      const result = Bun.spawnSync(["bun", "run", "./src/mcp/index.ts"], {
+        cwd: process.cwd(),
+        env: childEnv({ MCP_HTTP_PORT: String(port) }),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr.toString()).toContain("EADDRINUSE");
+    });
+  });
+
+  test("CLI help reports the configured default HTTP port", () => {
+    const result = Bun.spawnSync(
+      ["bun", "run", "./src/mcp/index.ts", "--help"],
+      {
+        cwd: process.cwd(),
+        env: childEnv(),
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain(
+      `HTTP port (default: ${DEFAULT_MCP_HTTP_PORT}, env: MCP_HTTP_PORT)`,
+    );
+    expect(result.stderr.toString()).toBe("");
   });
 });
 
