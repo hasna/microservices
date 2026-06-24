@@ -12,6 +12,16 @@ import { createInterface } from "node:readline/promises";
 import chalk from "chalk";
 import { Command } from "commander";
 import {
+  DEFAULT_LIST_LIMIT,
+  DEFAULT_OUTPUT_MAX_CHARS,
+  DEFAULT_SEARCH_LIMIT,
+  formatPageHint,
+  formatTruncationHint,
+  paginate,
+  parseIntegerOption,
+  summarizeOutput,
+} from "../lib/compact-output.js";
+import {
   getMicroserviceStatus,
   installMicroservices,
   microserviceExists,
@@ -32,6 +42,49 @@ function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+function parseCliInteger(
+  value: string | undefined,
+  label: string,
+  defaultValue: number | null,
+): number | null {
+  try {
+    return parseIntegerOption(value, { label, defaultValue, minimum: 0 });
+  } catch (error) {
+    console.error(
+      chalk.red(error instanceof Error ? error.message : String(error)),
+    );
+    process.exit(1);
+  }
+}
+
+function writePossiblyTruncated(
+  text: string,
+  stream: NodeJS.WriteStream,
+  {
+    compact,
+    verbose,
+    maxChars,
+  }: {
+    compact?: boolean;
+    verbose?: boolean;
+    maxChars: number;
+  },
+): void {
+  const shouldTruncate = !verbose && (compact || stream.isTTY);
+  if (!shouldTruncate) {
+    stream.write(`${text}\n`);
+    return;
+  }
+
+  const summary = summarizeOutput(text, { maxChars });
+  stream.write(`${summary.text}\n`);
+  if (summary.truncated) {
+    stream.write(
+      `${formatTruncationHint(summary, "use --verbose for full output")}\n`,
+    );
+  }
+}
+
 program
   .name("microservices")
   .description("Production-grade microservice building blocks for SaaS apps")
@@ -45,6 +98,7 @@ program
   .option("--category <name>", "Filter by category (case-insensitive)")
   .option("--limit <n>", "Limit number of results")
   .option("--offset <n>", "Skip the first N results")
+  .option("--verbose", "Show package, schema, env, and tag details")
   .option("--json", "Print machine-readable JSON output")
   .action(
     (opts: {
@@ -52,19 +106,15 @@ program
       category?: string;
       limit?: string;
       offset?: string;
+      verbose?: boolean;
       json?: boolean;
     }) => {
-      const limit = opts.limit === undefined ? null : Number(opts.limit);
-      const offset = opts.offset === undefined ? 0 : Number(opts.offset);
-
-      if (limit !== null && (!Number.isInteger(limit) || limit < 0)) {
-        console.error(chalk.red("--limit must be a non-negative integer"));
-        process.exit(1);
-      }
-      if (!Number.isInteger(offset) || offset < 0) {
-        console.error(chalk.red("--offset must be a non-negative integer"));
-        process.exit(1);
-      }
+      const offset = parseCliInteger(opts.offset, "--offset", 0) ?? 0;
+      const limit = parseCliInteger(
+        opts.limit,
+        "--limit",
+        opts.json ? null : DEFAULT_LIST_LIMIT,
+      );
 
       const categoryFilter = opts.category?.trim().toLowerCase();
       let services = opts.installed
@@ -77,17 +127,17 @@ program
         );
       }
 
-      const start = offset;
-      const end = limit === null ? undefined : offset + limit;
-      const page = services.slice(start, end);
+      const page = paginate(services, { limit, offset });
       const payload = page.map((m) => ({
         name: m.name,
         displayName: m.displayName,
         binary: m.binary,
         package: m.package,
         category: m.category,
+        schemaPrefix: m.schemaPrefix,
         installed: microserviceExists(m.name),
         description: m.description,
+        requiredEnv: m.requiredEnv,
       }));
 
       if (opts.json) {
@@ -110,10 +160,24 @@ program
         console.log(
           `  ${status}  ${chalk.cyan(m.binary.padEnd(22))}  ${m.description.slice(0, 60)}`,
         );
+        if (opts.verbose) {
+          console.log(
+            chalk.gray(
+              `      package: ${m.package}  schema: ${m.schemaPrefix}.*  env: ${m.requiredEnv.join(", ")}`,
+            ),
+          );
+        }
       }
       console.log(
         chalk.gray(
-          `Showing ${payload.length} of ${services.length} result(s) (offset ${offset}${limit === null ? "" : `, limit ${limit}`}).`,
+          formatPageHint({
+            shown: payload.length,
+            total: services.length,
+            limit,
+            offset,
+            detailHint:
+              "Use --limit, --offset, --verbose, or `microservices info <name>` for more.",
+          }),
         ),
       );
       console.log();
@@ -205,60 +269,165 @@ program
 program
   .command("status [name]")
   .description("Show installation status")
+  .option("--limit <n>", "Limit number of rows when checking every service")
+  .option("--offset <n>", "Skip rows when checking every service")
+  .option("--verbose", "Show required environment variables")
   .option("--json", "Print machine-readable JSON output")
-  .action((name: string | undefined, opts: { json?: boolean }) => {
-    const targets = name ? [name] : MICROSERVICES.map((m) => m.name);
-    const payload = targets.map((n) => getMicroserviceStatus(n));
+  .action(
+    (
+      name: string | undefined,
+      opts: {
+        limit?: string;
+        offset?: string;
+        verbose?: boolean;
+        json?: boolean;
+      },
+    ) => {
+      const targets = name ? [name] : MICROSERVICES.map((m) => m.name);
+      const payload = targets.map((n) => getMicroserviceStatus(n));
 
-    if (opts.json) {
-      printJson(name ? (payload[0] ?? null) : payload);
-      return;
-    }
+      if (opts.json) {
+        printJson(name ? (payload[0] ?? null) : payload);
+        return;
+      }
 
-    console.log(chalk.bold("\nMicroservice status:\n"));
-    for (const [index, n] of targets.entries()) {
-      const s = payload[index];
-      const icon = s.installed ? chalk.green("✓") : chalk.gray("✗");
-      const ver = s.version ? chalk.gray(`v${s.version}`) : "";
-      const env = s.meta?.requiredEnv.join(", ") ?? "";
-      console.log(
-        `  ${icon} ${n.padEnd(20)} ${ver.padEnd(12)} ${env ? chalk.gray(`needs: ${env}`) : ""}`,
-      );
-    }
-    console.log();
-  });
+      const offset = name
+        ? 0
+        : (parseCliInteger(opts.offset, "--offset", 0) ?? 0);
+      const limit = name
+        ? null
+        : parseCliInteger(opts.limit, "--limit", DEFAULT_LIST_LIMIT);
+      const visible = name ? payload : paginate(payload, { limit, offset });
+
+      console.log(chalk.bold("\nMicroservice status:\n"));
+      for (const s of visible) {
+        const icon = s.installed ? chalk.green("✓") : chalk.gray("✗");
+        const ver = s.version ? chalk.gray(`v${s.version}`) : "";
+        const env = s.meta?.requiredEnv.join(", ") ?? "";
+        console.log(
+          `  ${icon} ${s.name.padEnd(20)} ${ver.padEnd(12)}${opts.verbose && env ? chalk.gray(` needs: ${env}`) : ""}`,
+        );
+      }
+      if (!name) {
+        const installedCount = payload.filter(
+          (service) => service.installed,
+        ).length;
+        console.log(
+          chalk.gray(
+            `\n${installedCount}/${payload.length} installed. ${formatPageHint({
+              shown: visible.length,
+              total: payload.length,
+              limit,
+              offset,
+              detailHint:
+                "Use --limit, --offset, --verbose, or `microservices info <name>` for details.",
+            })}`,
+          ),
+        );
+      } else if (!opts.verbose) {
+        console.log(
+          chalk.gray(
+            "  Use --verbose or `microservices info <name>` for env details.",
+          ),
+        );
+      }
+      console.log();
+    },
+  );
 
 // Run a command on an installed microservice
 program
   .command("run <name> [args...]")
   .description("Run a command on an installed microservice")
-  .action(async (name: string, args: string[]) => {
-    const result = await runMicroserviceCommand(name, args);
-    if (result.stdout) process.stdout.write(`${result.stdout}\n`);
-    if (result.stderr) process.stderr.write(`${result.stderr}\n`);
-    process.exit(result.exitCode);
-  });
+  .option("--compact", "Truncate child stdout/stderr even when output is piped")
+  .option("--verbose", "Print full child stdout/stderr without truncation")
+  .option(
+    "--max-output-chars <n>",
+    "Max characters per output stream before truncation",
+    String(DEFAULT_OUTPUT_MAX_CHARS),
+  )
+  .action(
+    async (
+      name: string,
+      args: string[],
+      opts: { compact?: boolean; verbose?: boolean; maxOutputChars?: string },
+    ) => {
+      const result = await runMicroserviceCommand(name, args);
+      const maxChars =
+        parseCliInteger(
+          opts.maxOutputChars,
+          "--max-output-chars",
+          DEFAULT_OUTPUT_MAX_CHARS,
+        ) ?? DEFAULT_OUTPUT_MAX_CHARS;
+      if (result.stdout) {
+        writePossiblyTruncated(result.stdout, process.stdout, {
+          compact: opts.compact,
+          verbose: opts.verbose,
+          maxChars,
+        });
+      }
+      if (result.stderr) {
+        writePossiblyTruncated(result.stderr, process.stderr, {
+          compact: opts.compact,
+          verbose: opts.verbose,
+          maxChars,
+        });
+      }
+      process.exit(result.exitCode);
+    },
+  );
 
 // Search microservices
 program
   .command("search <query>")
   .description("Search microservices by name or keyword")
+  .option("--limit <n>", "Limit human-readable results")
+  .option("--verbose", "Show package and tags for each match")
   .option("--json", "Print machine-readable JSON output")
-  .action((query: string, opts: { json?: boolean }) => {
-    const results = searchMicroservices(query);
-    if (opts.json) {
-      printJson(results);
-      return;
-    }
+  .action(
+    (
+      query: string,
+      opts: { limit?: string; verbose?: boolean; json?: boolean },
+    ) => {
+      const results = searchMicroservices(query);
+      const limit = parseCliInteger(
+        opts.limit,
+        "--limit",
+        opts.json ? null : DEFAULT_SEARCH_LIMIT,
+      );
+      const visible = paginate(results, { limit });
+      if (opts.json) {
+        printJson(visible);
+        return;
+      }
 
-    if (results.length === 0) {
-      console.log(chalk.gray(`No microservices matching "${query}"`));
-      return;
-    }
-    for (const m of results) {
-      console.log(`  ${chalk.cyan(m.name.padEnd(20))}  ${m.description}`);
-    }
-  });
+      if (results.length === 0) {
+        console.log(chalk.gray(`No microservices matching "${query}"`));
+        return;
+      }
+      for (const m of visible) {
+        console.log(`  ${chalk.cyan(m.name.padEnd(20))}  ${m.description}`);
+        if (opts.verbose) {
+          console.log(
+            chalk.gray(
+              `      package: ${m.package}  tags: ${m.tags.join(", ")}`,
+            ),
+          );
+        }
+      }
+      console.log(
+        chalk.gray(
+          formatPageHint({
+            shown: visible.length,
+            total: results.length,
+            limit,
+            detailHint:
+              "Use --limit, --verbose, or `microservices info <name>` for details.",
+          }),
+        ),
+      );
+    },
+  );
 
 // Migrate all installed microservices
 program
