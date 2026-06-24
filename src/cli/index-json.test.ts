@@ -32,6 +32,19 @@ function runCli(args: string[]) {
 }
 
 describe("CLI JSON output", () => {
+  test("list defaults to compact capped human output", () => {
+    const result = runCli(["list"]);
+    expect(result.exitCode).toBe(0);
+
+    const stdout = result.stdout.toString();
+    const serviceRows = stdout
+      .split("\n")
+      .filter((line) => line.includes("microservice-"));
+    expect(serviceRows).toHaveLength(20);
+    expect(stdout).toContain("Showing 20 of 21");
+    expect(stdout).toContain("Use --limit, --offset, --verbose");
+  });
+
   test("list --json returns paginated payload", () => {
     const result = runCli(["list", "--json"]);
     expect(result.exitCode).toBe(0);
@@ -91,6 +104,18 @@ describe("CLI JSON output", () => {
     expect(parsed.name).toBe("auth");
     expect(typeof parsed.installed).toBe("boolean");
     expect(parsed.meta?.package).toBe("@hasna/microservice-auth");
+  });
+
+  test("status human output hides env details unless verbose", () => {
+    const compact = runCli(["status", "auth"]);
+    expect(compact.exitCode).toBe(0);
+    expect(compact.stdout.toString()).not.toContain("DATABASE_URL");
+    expect(compact.stdout.toString()).toContain("Use --verbose");
+
+    const verbose = runCli(["status", "auth", "--verbose"]);
+    expect(verbose.exitCode).toBe(0);
+    expect(verbose.stdout.toString()).toContain("DATABASE_URL");
+    expect(verbose.stdout.toString()).toContain("JWT_SECRET");
   });
 
   test("search --json returns matching results", () => {
@@ -161,6 +186,60 @@ describe("CLI JSON output", () => {
     const result = runCli(["install", "does-not-exist"]);
     expect(result.exitCode).toBe(1);
     expect(result.stdout.toString()).toContain("does-not-exist");
+  });
+
+  test("run preserves piped child output unless compact is requested", () => {
+    const binaryPath = join(isolatedBunInstall, "bin", "microservice-auth");
+    writeFileSync(
+      binaryPath,
+      [
+        "#!/usr/bin/env bash",
+        "for i in $(seq 1 8); do",
+        '  echo "line-$i abcdefghijklmnopqrstuvwxyz"',
+        "done",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(binaryPath, 0o755);
+
+    try {
+      const passthrough = runCli([
+        "run",
+        "--max-output-chars",
+        "60",
+        "auth",
+        "list",
+      ]);
+      expect(passthrough.exitCode).toBe(0);
+      expect(passthrough.stdout.toString()).toContain("line-8");
+      expect(passthrough.stdout.toString()).not.toContain("output truncated");
+
+      const compact = runCli([
+        "run",
+        "--compact",
+        "--max-output-chars",
+        "60",
+        "auth",
+        "list",
+      ]);
+      expect(compact.exitCode).toBe(0);
+      expect(compact.stdout.toString()).toContain("output truncated");
+      expect(compact.stdout.toString()).toContain("use --verbose");
+
+      const verbose = runCli([
+        "run",
+        "--verbose",
+        "--max-output-chars",
+        "60",
+        "auth",
+        "list",
+      ]);
+      expect(verbose.exitCode).toBe(0);
+      expect(verbose.stdout.toString()).toContain("line-8");
+      expect(verbose.stdout.toString()).not.toContain("output truncated");
+    } finally {
+      rmSync(binaryPath, { force: true });
+    }
   });
 
   test("serve-all starts binaries resolved from BUN_INSTALL even when they are not on PATH", async () => {

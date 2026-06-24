@@ -120,13 +120,47 @@ await enqueue(sql, { type: 'onboarding.setup', payload: { userId: user.id } })
 
 ```bash
 microservices list                    # List all available microservices
+microservices list --limit 50         # Show more rows
 microservices install auth teams      # Install specific services
 microservices install --all           # Install all 21
 microservices status                  # Check what's installed
+microservices status --verbose        # Include required env vars
 microservices info auth               # Detailed info + required env
 microservices migrate-all             # Run migrations on all installed
 microservices run auth status         # Run any CLI command on a service
+microservices run --compact auth list # Truncate noisy downstream output
 microservices search stripe           # Search by keyword
+```
+
+### Compact Output Defaults
+
+The hub CLI is compact by default so it stays readable in human terminals and
+does not flood agent context. List, status, and search commands show essential
+columns, cap human-readable rows by default, and print a short hint for the next
+detail path.
+
+Use gradual disclosure when you need more:
+
+```bash
+microservices list --limit 50 --offset 20
+microservices list --verbose
+microservices status auth --verbose
+microservices info auth
+microservices search billing --limit 25 --verbose
+microservices list --json
+```
+
+`microservices run` preserves full child output when stdout/stderr are piped, so
+it remains safe for scripts and JSON consumers. For human terminals it uses a
+compact excerpt when output is long; use `--compact` to force compact output in
+agent/piped sessions, `--verbose` for the full child output, or
+`--max-output-chars <n>` to tune the excerpt size.
+
+If a child command needs a flag with the same name as a wrapper flag, separate
+child arguments with `--`:
+
+```bash
+microservices run auth -- --verbose list
 ```
 
 ## Hub MCP Server
@@ -144,6 +178,15 @@ For AI agents — add to your Claude config:
 ```
 
 Tools: `list_microservices`, `search_microservices`, `install_microservice`, `microservice_status`, `run_microservice_command`, `remove_microservice`, `get_microservice_info`
+
+MCP tools also use compact output by default. For agent workflows, start with
+the default list/status/search tools, then request details explicitly:
+
+- `limit` / `offset` for pagination.
+- `verbose: true` for extra columns and env details.
+- `json: true` for the full machine-readable payload.
+- `get_microservice_info` for one service.
+- `run_microservice_command` with `verbose: true` for full child stdout/stderr.
 
 ## HTTP mode
 

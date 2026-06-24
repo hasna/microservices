@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer as createNetServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -10,6 +19,14 @@ import {
   startMcpHttpServer,
 } from "./http.js";
 import { buildServer } from "./index.js";
+
+function firstText(result: Awaited<ReturnType<Client["callTool"]>>): string {
+  const content = result.content;
+  if (!Array.isArray(content)) throw new Error("Expected content array");
+  const first = content[0];
+  if (!first || first.type !== "text") throw new Error("Expected text content");
+  return String(first.text);
+}
 
 async function withBusyPort<T>(
   run: (port: number) => Promise<T> | T,
@@ -110,17 +127,144 @@ describe("mcp http transport", () => {
 describe("mcp buildServer stdio registration", () => {
   test("registers tools over in-memory transport", async () => {
     const server = buildServer();
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
 
     const client = new Client({ name: "test", version: "0.0.0" });
     await client.connect(clientTransport);
 
     const tools = await client.listTools();
-    expect(tools.tools.some((tool) => tool.name === "list_microservices")).toBe(true);
+    expect(tools.tools.some((tool) => tool.name === "list_microservices")).toBe(
+      true,
+    );
 
     await client.close();
     await server.close();
+  });
+
+  test("list_microservices is compact by default and preserves json detail path", async () => {
+    const server = buildServer();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(clientTransport);
+
+    const compact = await client.callTool({
+      name: "list_microservices",
+      arguments: {},
+    });
+    const compactText = firstText(compact);
+    expect(compactText).toContain("Microservices (21 total)");
+    expect(compactText).toContain("Use limit/offset");
+    expect(compactText).not.toContain('"requiredEnv"');
+    expect(compactText.length).toBeLessThan(2500);
+
+    const detailed = await client.callTool({
+      name: "list_microservices",
+      arguments: { json: true },
+    });
+    const parsed = JSON.parse(firstText(detailed)) as Array<{
+      name: string;
+      requiredEnv: string[];
+    }>;
+    expect(parsed).toHaveLength(21);
+    expect(parsed[0]?.requiredEnv).toContain("DATABASE_URL");
+
+    await client.close();
+    await server.close();
+  });
+
+  test("microservice_status hides required env until verbose or json", async () => {
+    const server = buildServer();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(clientTransport);
+
+    const compact = await client.callTool({
+      name: "microservice_status",
+      arguments: { name: "auth" },
+    });
+    expect(firstText(compact)).not.toContain("DATABASE_URL");
+
+    const verbose = await client.callTool({
+      name: "microservice_status",
+      arguments: { name: "auth", verbose: true },
+    });
+    expect(firstText(verbose)).toContain("DATABASE_URL");
+
+    const detailed = await client.callTool({
+      name: "microservice_status",
+      arguments: { name: "auth", json: true },
+    });
+    expect(JSON.parse(firstText(detailed)).meta.requiredEnv).toContain(
+      "DATABASE_URL",
+    );
+
+    await client.close();
+    await server.close();
+  });
+
+  test("bulk migrate keeps full child output for json detail path", async () => {
+    const temp = mkdtempSync(join(tmpdir(), "open-microservices-mcp-bin-"));
+    const binDir = join(temp, "bin");
+    const binaryPath = join(binDir, "microservice-auth");
+    const previous = process.env.BUN_INSTALL;
+
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      binaryPath,
+      [
+        "#!/usr/bin/env bash",
+        "for i in $(seq 1 8); do",
+        '  echo "migrate-line-$i abcdefghijklmnopqrstuvwxyz"',
+        "done",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(binaryPath, 0o755);
+    process.env.BUN_INSTALL = temp;
+
+    const server = buildServer();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(clientTransport);
+
+    try {
+      const compact = await client.callTool({
+        name: "migrate_all_microservices",
+        arguments: {},
+      });
+      expect(firstText(compact)).toContain("...");
+
+      const detailed = await client.callTool({
+        name: "migrate_all_microservices",
+        arguments: { json: true },
+      });
+      const parsed = JSON.parse(firstText(detailed)) as {
+        results: Array<{ output: string }>;
+      };
+      expect(parsed.results).toHaveLength(1);
+      expect(parsed.results[0]?.output).toContain("migrate-line-8");
+      expect(parsed.results[0]?.output).not.toContain("...");
+    } finally {
+      await client.close();
+      await server.close();
+      if (previous === undefined) {
+        delete process.env.BUN_INSTALL;
+      } else {
+        process.env.BUN_INSTALL = previous;
+      }
+      rmSync(temp, { recursive: true, force: true });
+    }
   });
 });
 
@@ -149,7 +293,9 @@ describe("mcp streamable http server", () => {
     await client.connect(transport);
 
     const tools = await client.listTools();
-    expect(tools.tools.some((tool) => tool.name === "list_microservices")).toBe(true);
+    expect(tools.tools.some((tool) => tool.name === "list_microservices")).toBe(
+      true,
+    );
 
     const result = await client.callTool({
       name: "list_microservices",
