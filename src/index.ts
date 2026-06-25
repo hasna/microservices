@@ -32,6 +32,18 @@ export {
   removeMicroservice,
 } from "./lib/installer.js";
 export {
+  buildOpenPackageSecretPath,
+  createAllProductionStorageContracts,
+  createProductionStorageContract,
+  envPrefixForService,
+  formatProductionStorageContract,
+  normalizeOpenServiceName,
+  type ProductionContractValidation,
+  type ProductionStorageContract,
+  type SecretKind,
+  validateProductionStorageContract,
+} from "./lib/production-contract.js";
+export {
   CATEGORIES,
   type Category,
   getMicroservice,

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import {
   chmodSync,
@@ -19,17 +19,56 @@ afterAll(() => {
   rmSync(isolatedBunInstall, { recursive: true, force: true });
 });
 
-function runCli(args: string[]) {
+type CliEnv = Record<string, string>;
+
+const tempDirs: string[] = [];
+
+function createCliEnv(
+  overrides: Record<string, string> = {},
+  unset: string[] = [],
+): CliEnv {
+  const env: CliEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string") env[key] = value;
+  }
+  for (const key of unset) {
+    delete env[key];
+  }
+  return { ...env, ...overrides };
+}
+
+function createBunInstallWithBinaries(binaries: string[] = []): string {
+  const temp = mkdtempSync(join(tmpdir(), "open-microservices-cli-"));
+  const binDir = join(temp, "bin");
+  tempDirs.push(temp);
+  mkdirSync(binDir, { recursive: true });
+
+  for (const binary of binaries) {
+    const binaryPath = join(binDir, binary);
+    writeFileSync(binaryPath, "#!/usr/bin/env bash\necho 0.0.1\n");
+    chmodSync(binaryPath, 0o755);
+  }
+
+  return temp;
+}
+
+function runCli(
+  args: string[],
+  env = createCliEnv({ BUN_INSTALL: isolatedBunInstall }),
+) {
   return Bun.spawnSync(["bun", "run", "./src/cli/index.tsx", ...args], {
     cwd: process.cwd(),
-    env: {
-      ...process.env,
-      BUN_INSTALL: isolatedBunInstall,
-    },
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
 }
+
+afterEach(() => {
+  for (const tempDir of tempDirs.splice(0)) {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 
 describe("CLI JSON output", () => {
   test("list --json returns paginated payload", () => {
@@ -142,6 +181,111 @@ describe("CLI JSON output", () => {
     expect(typeof parsed.summary.installed).toBe("number");
     expect(typeof parsed.summary.allOk).toBe("boolean");
     expect(Array.isArray(parsed.services)).toBe(true);
+  });
+
+  test("prod-plan --json normalizes package aliases to canonical service names", () => {
+    const result = runCli(["prod-plan", "connect", "--json"]);
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout.toString()) as {
+      ok: boolean;
+      contracts: Array<{
+        service: string;
+        secrets: { env: string };
+        database: { urlEnv: string };
+        objectStorage: { bucket: string };
+      }>;
+      validations: Array<{ ok: boolean }>;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.validations.every((validation) => validation.ok)).toBe(true);
+    expect(parsed.contracts[0]).toMatchObject({
+      service: "connectors",
+      secrets: {
+        env: "hasna/xyz/opensource/connectors/prod/env",
+      },
+      database: {
+        urlEnv: "HASNA_CONNECTORS_DATABASE_URL",
+      },
+      objectStorage: {
+        bucket: "hasna-xyz-opensource-connectors-prod",
+      },
+    });
+  });
+
+  test("prod-plan --all --json returns valid contracts for every registered service", () => {
+    const result = runCli(["prod-plan", "--all", "--json"]);
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout.toString()) as {
+      count: number;
+      ok: boolean;
+      contracts: Array<{ service: string }>;
+      validations: Array<{ ok: boolean }>;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.count).toBe(parsed.contracts.length);
+    expect(parsed.validations.every((validation) => validation.ok)).toBe(true);
+    expect(
+      parsed.contracts.some((contract) => contract.service === "auth"),
+    ).toBe(true);
+  });
+
+  test("check-env --json returns summary payload when no services are installed", () => {
+    const bunInstall = createBunInstallWithBinaries();
+    const result = runCli(
+      ["check-env", "--json"],
+      createCliEnv({ BUN_INSTALL: bunInstall }),
+    );
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout.toString()) as {
+      summary: {
+        installed: number;
+        totalMissingRequired: number;
+        allOk: boolean;
+      };
+      services: unknown[];
+    };
+    expect(parsed.summary).toEqual({
+      installed: 0,
+      totalMissingRequired: 0,
+      allOk: true,
+    });
+    expect(parsed.services).toEqual([]);
+  });
+
+  test("check-env --json exits non-zero when installed services miss required env", () => {
+    const bunInstall = createBunInstallWithBinaries(["microservice-auth"]);
+    const result = runCli(
+      ["check-env", "--json"],
+      createCliEnv({ BUN_INSTALL: bunInstall }, ["DATABASE_URL", "JWT_SECRET"]),
+    );
+    expect(result.exitCode).toBe(1);
+
+    const parsed = JSON.parse(result.stdout.toString()) as {
+      summary: {
+        installed: number;
+        totalMissingRequired: number;
+        allOk: boolean;
+      };
+      services: Array<{
+        name: string;
+        missingRequired: string[];
+        ok: boolean;
+      }>;
+    };
+    expect(parsed.summary).toEqual({
+      installed: 1,
+      totalMissingRequired: 2,
+      allOk: false,
+    });
+    expect(parsed.services).toHaveLength(1);
+    expect(parsed.services[0]).toMatchObject({
+      name: "auth",
+      missingRequired: ["DATABASE_URL", "JWT_SECRET"],
+      ok: false,
+    });
   });
   test("remove without --yes fails in non-interactive mode", () => {
     const result = runCli(["remove", "auth"]);

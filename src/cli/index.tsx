@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { registerEventsCommands } from "@hasna/events/commander";
 /**
  * @hasna/microservices hub CLI
  * Manages all @hasna/microservice-* packages.
@@ -9,6 +8,7 @@ import { registerEventsCommands } from "@hasna/events/commander";
 import fs from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
+import { registerEventsCommands } from "@hasna/events/commander";
 import chalk from "chalk";
 import { Command } from "commander";
 import {
@@ -19,6 +19,12 @@ import {
   resolveMicroserviceBinary,
 } from "../lib/installer.js";
 import { getPackageVersion } from "../lib/package-info.js";
+import {
+  createAllProductionStorageContracts,
+  createProductionStorageContract,
+  formatProductionStorageContract,
+  validateProductionStorageContract,
+} from "../lib/production-contract.js";
 import {
   getMicroservice,
   MICROSERVICES,
@@ -474,6 +480,70 @@ program
     console.log(`  Tags:        ${m.tags.join(", ")}`);
     console.log();
   });
+
+// Production storage and secrets contract
+program
+  .command("prod-plan [service]")
+  .description(
+    "Show the production RDS/S3/secret contract for one service or all microservices",
+  )
+  .option("--all", "Show every registered microservice")
+  .option("--env <name>", "Environment name", "prod")
+  .option("--json", "Print machine-readable JSON output")
+  .action(
+    (
+      service: string | undefined,
+      opts: { all?: boolean; env: string; json?: boolean },
+    ) => {
+      try {
+        const contracts =
+          opts.all || !service
+            ? createAllProductionStorageContracts({ environment: opts.env })
+            : [
+                createProductionStorageContract(service, {
+                  environment: opts.env,
+                }),
+              ];
+        const validations = contracts.map(validateProductionStorageContract);
+        const ok = validations.every((validation) => validation.ok);
+
+        if (opts.json) {
+          printJson({
+            environment: opts.env,
+            count: contracts.length,
+            ok,
+            contracts,
+            validations,
+          });
+          if (!ok) process.exit(1);
+          return;
+        }
+
+        console.log(
+          chalk.bold(`\nProduction storage contract (${opts.env})\n`),
+        );
+        for (const contract of contracts) {
+          console.log(formatProductionStorageContract(contract));
+          console.log();
+        }
+        if (!ok) {
+          for (const validation of validations.filter((item) => !item.ok)) {
+            console.error(
+              chalk.red(
+                `${validation.service}: ${validation.errors.join("; ")}`,
+              ),
+            );
+          }
+          process.exit(1);
+        }
+      } catch (error) {
+        console.error(
+          chalk.red(error instanceof Error ? error.message : String(error)),
+        );
+        process.exit(1);
+      }
+    },
+  );
 
 // Check environment variables for all installed microservices
 program
