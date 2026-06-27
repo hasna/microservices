@@ -1,6 +1,6 @@
 {
   "name": "@hasna/microservices",
-  "version": "0.0.34",
+  "version": "0.0.35",
   "description": "21 production-grade microservice building blocks for AI-native SaaS — auth, billing, LLM gateway, agent registry, RAG, guardrails, tracing, and more. Each with PostgreSQL, HTTP API, MCP server, and CLI.",
   "type": "module",
   "bin": {
@@ -35,7 +35,7 @@
     "clean": "rm -rf dist bin microservices/*/dist microservices/*/bin node_modules microservices/*/node_modules",
     "pre-commit": "bun run lint && bun run format",
     "prepublishOnly": "bun run build:all",
-    "postinstall": "true"
+    "postinstall": "mkdir -p $HOME/.hasna/microservices 2>/dev/null || true"
   },
   "keywords": [
     "microservices",
