@@ -64,6 +64,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@types/bun": "latest",
+    "postgres": "^3.4.5",
     "typescript": "^5"
   },
   "dependencies": {

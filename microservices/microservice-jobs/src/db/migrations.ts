@@ -11,9 +11,9 @@ export async function migrate(sql: Sql): Promise<void> {
 async function run(sql: Sql, name: string, fn: (sql: Sql) => Promise<void>) {
   const [e] = await sql`SELECT id FROM jobs._migrations WHERE name = ${name}`;
   if (e) return;
-  await sql.begin(async (tx: any) => {
-    await fn(tx as any);
-    await (tx as any)`INSERT INTO jobs._migrations (name) VALUES (${name})`;
+  await sql.begin(async (tx) => {
+    await fn(tx as Sql);
+    await tx`INSERT INTO jobs._migrations (name) VALUES (${name})`;
   });
 }
 
@@ -105,8 +105,8 @@ async function m003(sql: Sql) {
       completed_jobs INT NOT NULL DEFAULT 0,
       failed_jobs   INT NOT NULL DEFAULT 0,
       result        JSONB,
-      created_at    TIMESTAMMTZ NOT NULL DEFAULT NOW(),
-      updated_at    TIMESTAMMTZ NOT NULL DEFAULT NOW()
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`;
   await sql`CREATE INDEX ON jobs.batches (status)`;
 }
