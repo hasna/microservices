@@ -116,6 +116,52 @@ await enqueue(sql, { type: 'onboarding.setup', payload: { userId: user.id } })
 | `GITHUB_CLIENT_ID` | auth (OAuth) | Optional |
 | `GOOGLE_CLIENT_ID` | auth (OAuth) | Optional |
 
+## Production OSS Remote Storage Boundary
+
+`open-microservices` is the production runtime catalog for the open package
+ecosystem, but it does not replace repo-native local storage. Each `open-[name]`
+package still owns its local-first default and, when needed, its own optional
+remote adapter.
+
+For direct internal OSS remote mode, use service-prefixed env names and
+opensource-first AWS names:
+
+| Item | Standard |
+|------|----------|
+| Storage mode | `HASNA_[SERVICE]_STORAGE_MODE=local|remote|hybrid` |
+| RDS URL | `HASNA_[SERVICE]_DATABASE_URL` |
+| RDS schema | `HASNA_[SERVICE]_DATABASE_SCHEMA` |
+| S3 bucket | `hasna-xyz-opensource-[service]-prod` |
+| S3 env | `HASNA_[SERVICE]_S3_BUCKET`, `HASNA_[SERVICE]_S3_PREFIX`, `HASNA_[SERVICE]_AWS_REGION` |
+| Secrets | `hasna/xyz/opensource/[service]/prod/{env,rds,s3}` |
+
+Canonical service names are plural where the package is plural. For example,
+`connect`, `connector`, and `open-connectors` all resolve to `connectors`, so
+production secrets live under `hasna/xyz/opensource/connectors/prod/...`.
+
+Direct OSS remote databases are for internal cross-machine open package state.
+SaaS wrappers such as `platform-todos` and `platform-skills` keep tenant data,
+accounts, billing, queues, workers, deploy config, and observability in the
+wrapper/platform database. Do not point an open package direct remote adapter at
+a SaaS tenant database.
+
+Use the hub CLI to inspect the generated contract:
+
+```bash
+microservices prod-plan todos
+microservices prod-plan connect --json
+microservices prod-plan --all
+```
+
+The same contract surface is exported for agents and downstream packages:
+
+```ts
+import { createMicroservicesStorageContract } from "@hasna/microservices/storage";
+
+const contract = createMicroservicesStorageContract("open-connectors");
+console.log(contract.database.urlEnv); // HASNA_CONNECTORS_DATABASE_URL
+```
+
 ## Hub CLI
 
 ```bash
@@ -124,6 +170,7 @@ microservices install auth teams      # Install specific services
 microservices install --all           # Install all 21
 microservices status                  # Check what's installed
 microservices info auth               # Detailed info + required env
+microservices prod-plan todos         # Show RDS/S3/secrets naming for an open package
 microservices migrate-all             # Run migrations on all installed
 microservices run auth status         # Run any CLI command on a service
 microservices search stripe           # Search by keyword

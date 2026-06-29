@@ -7,6 +7,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import type { Sql } from "postgres";
 import {
   getMicroservice,
   MICROSERVICES,
@@ -196,7 +197,7 @@ describe("Full SaaS flow (PostgreSQL required)", () => {
     return;
   }
 
-  let sql: any;
+  let sql: Sql;
   const testEmail = `test-${Date.now()}@example.com`;
   let userId: string;
   let workspaceId: string;
@@ -205,7 +206,9 @@ describe("Full SaaS flow (PostgreSQL required)", () => {
   beforeAll(async () => {
     process.env.JWT_SECRET ??= "test-jwt-secret-at-least-32-chars!!";
     const postgres = (await import("postgres")).default;
-    sql = postgres(DB_URL!, { max: 5, onnotice: () => {} });
+    const databaseUrl = DB_URL ?? "";
+    sql = postgres(databaseUrl, { max: 5, onnotice: () => {} });
+    await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`;
   });
 
   afterAll(async () => {
@@ -317,10 +320,8 @@ describe("Full SaaS flow (PostgreSQL required)", () => {
 
     const events = await queryEvents(sql, { workspaceId, limit: 10 });
     expect(events.length).toBeGreaterThanOrEqual(2);
-    expect(events.some((e: any) => e.action === "user.registered")).toBe(true);
-    expect(events.some((e: any) => e.action === "workspace.created")).toBe(
-      true,
-    );
+    expect(events.some((e) => e.action === "user.registered")).toBe(true);
+    expect(events.some((e) => e.action === "workspace.created")).toBe(true);
   });
 
   it("Step 6: Create and evaluate a feature flag (flags)", async () => {

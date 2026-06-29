@@ -17,12 +17,16 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./storage": {
+      "import": "./dist/storage.js",
+      "types": "./dist/storage.d.ts"
     }
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "bun build ./src/cli/index.tsx --outfile ./bin/index.js --target bun && bun build ./src/mcp/index.ts --outfile ./bin/mcp.js --target bun && bun build ./src/index.ts --outdir ./dist --target bun",
+    "build": "bun build ./src/cli/index.tsx --outfile ./bin/index.js --target bun && bun build ./src/mcp/index.ts --outfile ./bin/mcp.js --target bun && bun build ./src/index.ts --outdir ./dist --target bun && bun build ./src/storage.ts --outdir ./dist --target bun && tsc --emitDeclarationOnly",
     "build:all": "bun run build && bun run --filter '*' build",
     "dev": "bun run ./src/cli/index.tsx",
     "gateway": "bun run gateway.ts",
@@ -60,6 +64,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@types/bun": "latest",
+    "postgres": "^3.4.5",
     "typescript": "^5"
   },
   "dependencies": {
